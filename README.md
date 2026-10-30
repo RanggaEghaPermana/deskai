@@ -102,6 +102,25 @@ packaging/build-deb.sh  # builds dist/focusdock_<version>_all.deb
 `focusdock` command, and `setup/` is the setup window. GNOME only loads extension code when you log
 in, so test extension changes in `dev/nested.sh`.
 
-## License
+## Reporting bugs
 
-[GPL-3.0-or-later](LICENSE)
+Open an [issue](https://github.com/RanggaEghaPermana/focusdock/issues) with your distribution, what
+happened, and the output of `focusdock doctor`. Check the output for anything private before posting.
+
+## Contributing
+
+Pull requests are welcome. Contributions are accepted under the same license as the project. Please
+test changes in `dev/nested.sh`, and say which GNOME version you tested on.
+
+## Terms and license
+
+FocusDock is free software, licensed under [GPL-3.0-or-later](LICENSE).
+
+- You can use it for anything, including commercial work, at no cost.
+- You can study it, change it and share it.
+- If you distribute it or a changed version, you have to keep this license and provide the source code.
+- It comes **with no warranty**. You use it at your own risk.
+
+This is an early release. FocusDock uses parts of GNOME Shell that can change, so a new GNOME version
+may break it until it's updated. It isn't affiliated with GNOME, Anthropic, Google or Meta; their names
+and products belong to their owners.
