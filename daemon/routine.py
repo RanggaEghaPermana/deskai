@@ -49,6 +49,7 @@ SETTINGS = {
 }
 WORK_HOURS = (6, 19)  # activity that counts as "work" when learning
 LOOKBACK_DAYS = 10
+PROJECT_LOOKBACK_DAYS = 60     # asked for a project by name: its last day could be a while back
 SERVER_LOOKBACK_DAYS = 21
 
 # Background commands that start a dev server (or a worker next to it).
@@ -85,10 +86,24 @@ SESSION_RE = re.compile(r'"sessionId":"([^"]+)"')
 PERM_RE = re.compile(r'"permissionMode":"([^"]+)"')
 
 
-def scan_sessions(since):
+def project_folders():
+    """Your projects, newest first: the folder each one's Claude Code sessions ran in → their transcripts."""
+    found = {}
+    dated = [(max((p.stat().st_mtime for p in d.glob("*.jsonl")), default=0), d) for d in project_dirs()]
+    for _mtime, folder in sorted(dated, key=lambda pair: pair[0], reverse=True):
+        for path in folder.glob("*.jsonl"):
+            with open(path, encoding="utf-8", errors="replace") as f:
+                cwd = next((m.group(1) for m in map(CWD_RE.search, f) if m), None)
+            if cwd and os.path.isdir(cwd):
+                found.setdefault(cwd, folder)
+                break
+    return found
+
+
+def scan_sessions(since, folders=None):
     """Every transcript entry since `since`: (local time, cwd, session id, permission mode, file)."""
     entries = []
-    for folder in project_dirs():
+    for folder in project_dirs() if folders is None else folders:
         for path in folder.glob("*.jsonl"):
             if datetime.datetime.fromtimestamp(path.stat().st_mtime, local_tz()) < since:
                 continue
@@ -267,6 +282,17 @@ def usual_mode(day):
     return max(focus, key=focus.get) if focus else None
 
 
+def claude_running(session_id):
+    """Whether that conversation is already open somewhere (resuming it twice would fork it)."""
+    for info in (Path.home() / ".claude" / "sessions").glob("*.json"):
+        try:
+            if json.loads(info.read_text()).get("sessionId") == session_id and Path(f"/proc/{info.stem}").exists():
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def find_claude():
     for candidate in [shutil.which("claude"), str(Path.home() / ".local/bin/claude"),
                       *sorted(map(str, Path.home().glob(".nvm/versions/node/*/bin/claude")), reverse=True)]:
@@ -296,17 +322,26 @@ def save(plan):
     brain.write_json_atomic(ROUTINE_FILE, plan)
 
 
-def learn(today=None):
-    """A fresh plan from your last workday, keeping your settings. None when there's nothing to go on."""
+def learn(today=None, project=None):
+    """A fresh plan from your last workday, or from your last day in `project`, keeping your settings.
+    None when there's nothing to go on."""
     plan = load()
     today = today or datetime.date.today()
-    since = datetime.datetime.combine(today - datetime.timedelta(days=LOOKBACK_DAYS), datetime.time(), local_tz())
-    entries = scan_sessions(since)
-    day = last_workday(entries, today, plan["days"])
-    if not day:
-        return None
-    work = [e for e in entries if e[0].date() == day and WORK_HOURS[0] <= e[0].hour < WORK_HOURS[1]]
-    project = Counter(e[1] for e in work).most_common(1)[0][0]
+    back = PROJECT_LOOKBACK_DAYS if project else LOOKBACK_DAYS
+    since = datetime.datetime.combine(today - datetime.timedelta(days=back), datetime.time(), local_tz())
+    if project:
+        folder = project_folders().get(project)
+        entries = [e for e in scan_sessions(since, [folder]) if e[1] == project] if folder else []
+        if not entries:
+            return None
+        day = max(e[0] for e in entries).date()
+    else:
+        entries = scan_sessions(since)
+        day = last_workday(entries, today, plan["days"])
+        if not day:
+            return None
+        work = [e for e in entries if e[0].date() == day and WORK_HOURS[0] <= e[0].hour < WORK_HOURS[1]]
+        project = Counter(e[1] for e in work).most_common(1)[0][0]
     # The conversation you were in last in that project (what `claude --continue` would pick).
     last = max((e for e in entries if e[1] == project), key=lambda e: e[0])
 
@@ -413,6 +448,35 @@ def unit_name(project, command):
     return f"deskai-{slug.strip('-')[:60]}"
 
 
+def start_server(step, env):
+    """Starts a dev server as a user service, so it keeps running and its logs are in the journal."""
+    unit = unit_name(step["cwd"], step["command"])
+    subprocess.run(["systemctl", "--user", "reset-failed", unit], capture_output=True)
+    subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
+    result = subprocess.run(
+        ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit}",
+         f"--description=DeskAI: {step['command']}", f"--working-directory={step['cwd']}",
+         f"--setenv=PATH={env['PATH']}", "bash", "-c", step["command"]],
+        capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        # No user systemd to run it under: a plain background process, logging to a file.
+        log.warning("routine: %s as a user service failed (%s), starting it directly", unit, result.stderr.strip())
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_DIR / f"{unit}.log", "ab") as out:
+            subprocess.Popen(["bash", "-c", step["command"]], cwd=step["cwd"], env=env,
+                             stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+    return unit
+
+
+def terminal_args(cwd, inner):
+    """A new terminal window at `cwd` running the shell command `inner`."""
+    terminal = shutil.which("ptyxis") or shutil.which("gnome-terminal")
+    if terminal and terminal.endswith("ptyxis"):
+        return [terminal, "--new-window", "-d", cwd, "-x", f"bash -c {shlex.quote(inner)}"]
+    return [terminal or "x-terminal-emulator", f"--working-directory={cwd}", "--", "bash", "-c", inner]
+
+
 def already_set_up(plan):
     """Every server of the plan already answers."""
     ports = [s["port"] for s in plan["steps"] if s["type"] == "server" and s.get("port")]
@@ -459,24 +523,7 @@ def run(plan, progress, set_mode):
                 if step.get("port") and port_open(step["port"]):
                     progress(step, "skipped")
                     continue
-                unit = unit_name(step["cwd"], step["command"])
-                subprocess.run(["systemctl", "--user", "reset-failed", unit], capture_output=True)
-                subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
-                result = subprocess.run(
-                    ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit}",
-                     f"--description=DeskAI: {step['command']}", f"--working-directory={step['cwd']}",
-                     f"--setenv=PATH={env['PATH']}", "bash", "-c", step["command"]],
-                    capture_output=True, text=True, timeout=30)
-                if result.returncode != 0:
-                    # No user systemd to run it under: a plain background process, logging to a file.
-                    log.warning("routine: %s as a user service failed (%s), starting it directly",
-                                unit, result.stderr.strip())
-                    LOG_DIR.mkdir(parents=True, exist_ok=True)
-                    with open(LOG_DIR / f"{unit}.log", "ab") as out:
-                        subprocess.Popen(["bash", "-c", step["command"]], cwd=step["cwd"], env=env,
-                                         stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                         start_new_session=True)
-                servers.append((step, unit))
+                servers.append((step, start_server(step, env)))
             elif kind == "url":
                 # Open it once its server answers.
                 port = int(re.search(r":(\d+)", step["url"]).group(1))
@@ -492,15 +539,13 @@ def run(plan, progress, set_mode):
                 else:
                     progress(step, "failed")
             elif kind == "claude":
+                resumes = step["command"][step["command"].index("--resume") + 1] if "--resume" in step["command"] else None
+                if resumes and claude_running(resumes):
+                    progress(step, "skipped")
+                    continue
                 command = " ".join(shlex.quote(part) for part in step["command"])
                 inner = f"{command}; exec bash"
-                terminal = shutil.which("ptyxis") or shutil.which("gnome-terminal")
-                if terminal and terminal.endswith("ptyxis"):
-                    args = [terminal, "--new-window", "-d", step["cwd"], "-x", f"bash -c {shlex.quote(inner)}"]
-                else:
-                    args = [terminal or "x-terminal-emulator", f"--working-directory={step['cwd']}", "--",
-                            "bash", "-c", inner]
-                subprocess.Popen(args, env=env, cwd=step["cwd"], start_new_session=True)
+                subprocess.Popen(terminal_args(step["cwd"], inner), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:
             log.warning("routine: %s failed: %s", kind, e)

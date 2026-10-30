@@ -44,8 +44,9 @@ TERMINAL_AGENTS = {"ptyxis-agent"}
 PTYXIS = "org.gnome.Ptyxis.desktop"
 TAB_READER = Path(__file__).with_name("terminal_tabs.py")
 # Apps restored their own way, not by a plain launch.
-SPECIAL_APPS = {PTYXIS, "org.gnome.Nautilus.desktop", "google-chrome.desktop", "com.google.Chrome.desktop",
-                "chromium.desktop", "chromium_chromium.desktop", "chromium-browser.desktop"}
+BROWSER_APPS = ("google-chrome.desktop", "com.google.Chrome.desktop", "chromium.desktop",
+                "chromium_chromium.desktop", "chromium-browser.desktop")
+SPECIAL_APPS = {PTYXIS, "org.gnome.Nautilus.desktop", *BROWSER_APPS}
 # Claude puts a spinner or ✳ before a tab's title, and Ptyxis may add " — <command>" after it.
 TITLE_GLYPHS = re.compile(r"^[^\w(\[]+")
 # bash titles a tab "user@host: ~/folder".
@@ -62,13 +63,16 @@ CLAUDE_VALUE_FLAGS = {"--resume", "-r", "--session-id", "--model", "--permission
 
 
 def current_session():
-    """The logind session of your desktop: a new one after every login, the same after unlocking."""
+    """Your desktop's login: a new one after every login, the same after unlocking.
+
+    logind numbers sessions from the start again after a reboot, so the boot is part of it."""
     try:
         out = subprocess.run(["loginctl", "show-user", str(os.getuid()), "-p", "Display", "--value"],
                              capture_output=True, text=True, timeout=5).stdout.strip()
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()[:8]
     except (OSError, subprocess.SubprocessError):
         return ""
-    return out
+    return f"{boot}-{out}" if out else ""
 
 
 # ---- reading the desktop --------------------------------------------------------------
@@ -256,7 +260,8 @@ def servers():
         values = dict(line.split("=", 1) for line in props.splitlines() if "=" in line)
         command = values.get("Description", "").removeprefix("DeskAI: ")
         if command and values.get("WorkingDirectory"):
-            found.append({"cwd": values["WorkingDirectory"], "command": command, "port": routine.guess_port(command)})
+            found.append({"cwd": values["WorkingDirectory"], "command": command, "port": routine.guess_port(command),
+                          "unit": unit})
     return found
 
 
@@ -319,14 +324,14 @@ def record(snap):
     brain.write_json_atomic(SESSION_FILE, data)
 
 
-def to_restore(session):
-    """The previous session's desk, if it's recent and not restored yet."""
+def to_restore(session, again=False):
+    """The previous session's desk, if it's recent and not restored yet (or even so, when asked `again`)."""
     data = load()
     previous = [s for s in data.get("snapshots", []) if s.get("session") and s["session"] != session]
     if not previous:
         return None
     last_session = max(previous, key=lambda s: s["time"])["session"]
-    if last_session in data.get("restored", []):
+    if last_session in data.get("restored", []) and not again:
         return None
     final = sorted((s for s in previous if s["session"] == last_session), key=lambda s: s["time"])[-FINAL:]
     best = max(final, key=lambda s: (weight(s), s["time"]))
@@ -362,19 +367,11 @@ def summary(snap):
 
 # ---- bringing it back -----------------------------------------------------------------
 
+claude_running = routine.claude_running
+
+
 def running(comm):
     return any(c == comm for _ppid, c in processes().values())
-
-
-def claude_running(session_id):
-    """Whether that conversation is already open somewhere (resuming it twice would fork it)."""
-    for info in CLAUDE_SESSIONS.glob("*.json"):
-        try:
-            if json.loads(info.read_text()).get("sessionId") == session_id and Path(f"/proc/{info.stem}").exists():
-                return True
-        except (OSError, ValueError):
-            continue
-    return False
 
 
 class Dock:
@@ -406,6 +403,18 @@ class Dock:
         return self._call("RaiseWindows", "(s)", (json.dumps(ids),))
 
 
+def browser_command(snap):
+    """How you start your browser: its launcher's command with your flags in it, as if you'd clicked it."""
+    used = [w["app"] for w in snap.get("windows", []) if w.get("app") in BROWSER_APPS]
+    for app in [*used, *BROWSER_APPS]:
+        info = Gio.DesktopAppInfo.new(app)
+        command = info.get_commandline() if info else None
+        if command:
+            # Without the launcher's field codes (and Flatpak's, around them).
+            return [arg for arg in GLib.shell_parse_argv(command)[1] if not re.fullmatch(r"%[a-zA-Z]|@@u?", arg)]
+    return None
+
+
 def place_spec(saved):
     """How the dock should put a window back (older snapshots only knew maximized or not)."""
     spec = {k: saved[k] for k in ("workspace", "sticky", "monitor", "rect", "fullscreen", "minimized", "above")
@@ -424,6 +433,14 @@ def wait_for_window(dock, app, known, timeout=APPEAR_S):
             return min(new, key=lambda w: w["id"])
         time.sleep(0.25)
     return None
+
+
+def window_showing(windows, entry, taken):
+    """The open terminal window showing this entry's conversation, when you reopened it yourself."""
+    names = {clean_title(tab.get("title") or ai_title(tab["claude"])) for tab in entry["tabs"]
+             if tab.get("claude") and claude_running(tab["claude"])} - {""}
+    return next((w for w in windows if w["app"] == PTYXIS and w["id"] not in taken and clean_title(w["title"]) in names),
+                None)
 
 
 def title_match(old, new):
@@ -481,11 +498,10 @@ def restore(snap, progress, set_mode, labels=None):
         def chrome():
             if running("chrome"):
                 return "skipped"
-            browser = next(filter(None, map(shutil.which, ("google-chrome", "google-chrome-stable", "chromium",
-                                                           "chromium-browser"))), None)
-            if not browser:
+            command = browser_command(snap)
+            if not command:
                 return "failed"
-            subprocess.Popen([browser, "--restore-last-session"], env=env, start_new_session=True,
+            subprocess.Popen([*command, "--restore-last-session"], env=env, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         step("chrome", chrome)
 
@@ -522,18 +538,30 @@ def restore(snap, progress, set_mode, labels=None):
             def open_tab(tab, where):
                 cwd = tab["cwd"] if os.path.isdir(tab["cwd"]) else str(Path.home())
                 command = []
-                if tab.get("claude") and not claude_running(tab["claude"]):
+                if tab.get("claude"):
                     resume = shlex.join([tab["exe"], "--resume", tab["claude"], *tab["flags"]])
                     command = ["-x", f"bash -c {shlex.quote(resume + '; exec bash')}"]
                 subprocess.Popen([ptyxis, where, "-d", cwd, *command], env=env, cwd=cwd, start_new_session=True,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+            taken = set()
             for entry in windows:
-                tabs = entry["tabs"]
-                known = {w["id"] for w in dock.windows() or []} if have_dock else set()
-                open_tab(tabs[0], "--new-window")
-                win = wait_for_window(dock, PTYXIS, known) if have_dock else None
-                for tab in tabs[1:]:
+                # Conversations you already reopened stay where they are: resuming one twice
+                # would fork it. Their window just goes back to its place.
+                tabs = [tab for tab in entry["tabs"] if not (tab.get("claude") and claude_running(tab["claude"]))]
+                now_open = dock.windows() or [] if have_dock else []
+                win = window_showing(now_open, entry, taken)
+                reused = bool(win)
+                if not win:
+                    if not tabs:
+                        continue
+                    known = {w["id"] for w in now_open}
+                    open_tab(tabs[0], "--new-window")
+                    win = wait_for_window(dock, PTYXIS, known) if have_dock else None
+                    tabs = tabs[1:]
+                if win:
+                    taken.add(win["id"])
+                for tab in tabs:
                     # A new tab goes to the terminal window in front: make sure it's this one.
                     if win:
                         dock.raise_windows([win["id"]])
@@ -548,9 +576,10 @@ def restore(snap, progress, set_mode, labels=None):
                     placed[index] = win["id"]
                     dock.place(win["id"], place_spec(saved[index]))
                 active = entry.get("active", 0)
-                if len(tabs) > 1 and active != len(tabs) - 1 and gsetting_is("org.gnome.Ptyxis.Shortcuts",
-                                                                             f"focus-tab-{active + 1}",
-                                                                             f"<alt>{active + 1}"):
+                count = len(entry["tabs"])
+                if not reused and count > 1 and active != count - 1 and gsetting_is("org.gnome.Ptyxis.Shortcuts",
+                                                                                    f"focus-tab-{active + 1}",
+                                                                                    f"<alt>{active + 1}"):
                     dock.select_tab(win["id"], active)
                     time.sleep(0.4)
         step("terminal", terminal)
