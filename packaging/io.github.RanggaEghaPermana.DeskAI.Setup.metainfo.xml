@@ -13,6 +13,8 @@
     <ul>
       <li>Focus modes, each with its own apps, allowed sites and notification rules</li>
       <li>An inbox on the dock for WhatsApp messages and AI agents such as Claude Code</li>
+      <li>A command bar: press Super+/ and type what you want, in plain words</li>
+      <li>A status dot for your dev servers and database, with a restart and their log</li>
       <li>After a logout, your windows, terminals and dev servers come back as they were</li>
     </ul>
     <p>After installing, open DeskAI Setup and follow the steps.</p>
@@ -24,6 +26,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-10-30">
+      <description>
+        <ul>
+          <li>Command bar: press Super+/ and type what you want</li>
+          <li>The dev servers and database on your desk get a status dot, a restart and their log</li>
+          <li>A short guide the first time the dock runs</li>
+          <li>Fixed: the desk wasn't offered back after a reboot, and Chrome came back without its launcher's flags</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-30"/>
   </releases>
 </component>
