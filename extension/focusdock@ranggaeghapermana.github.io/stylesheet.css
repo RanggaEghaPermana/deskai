@@ -1,0 +1,440 @@
+/* ---- dock ---------------------------------------------------------- */
+
+.focusdock-frame {
+  padding-bottom: 8px;
+}
+
+.focusdock {
+  background-color: rgba(36, 34, 38, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  padding: 7px 10px;
+  spacing: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.focusdock-sep {
+  width: 1px;
+  background-color: rgba(255, 255, 255, 0.16);
+  margin: 9px 2px;
+}
+
+/* ---- mode switcher -------------------------------------------------- */
+
+.focusdock-modes {
+  spacing: 6px;
+}
+
+.focusdock-mode {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  transition-duration: 220ms;
+}
+
+.focusdock-mode:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.focusdock-mode.active,
+.focusdock-mode.pending {
+  color: #ffffff;
+}
+
+.focusdock-mode-box {
+  padding: 0 9px;
+}
+
+.focusdock-mode-icon {
+  icon-size: 16px;
+}
+
+.focusdock-mode-labels {
+  padding: 0 5px 0 7px;
+  spacing: 7px;
+}
+
+.focusdock-mode-label {
+  font-weight: bold;
+}
+
+.focusdock-mode-time {
+  color: rgba(255, 255, 255, 0.8);
+  font-feature-settings: "tnum";
+}
+
+.focusdock-mode-progress {
+  border-radius: 17px;
+}
+
+.focusdock-badge {
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 0.85em;
+}
+
+.focusdock-stay {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 17px;
+  background-color: #ffffff;
+  color: #1d1d1f;
+  font-weight: bold;
+}
+
+.focusdock-stay:hover {
+  background-color: #ececf0;
+}
+
+/* ---- apps ----------------------------------------------------------- */
+
+.focusdock-apps {
+  spacing: 6px;
+}
+
+.focusdock-app {
+  border-radius: 12px;
+  padding: 3px 3px 1px 3px;
+  transition-duration: 150ms;
+}
+
+.focusdock-app:hover {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+.focusdock-app.foreign {
+  opacity: 0.55;
+}
+
+.focusdock-app.foreign:hover {
+  opacity: 1;
+}
+
+.focusdock-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 2px;
+  margin-top: 3px;
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.focusdock-tooltip {
+  background-color: rgba(20, 20, 24, 0.92);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.9em;
+}
+
+/* ---- cards ---------------------------------------------------------- */
+
+.focusdock-card {
+  background-color: rgba(255, 255, 255, 0.98);
+  color: #1d1d1f;
+  border-radius: 14px;
+  padding: 11px 16px 12px 12px;
+  spacing: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3);
+  font-size: 10pt;
+}
+
+.focusdock-card-icon {
+  color: #1d1d1f;
+}
+
+.focusdock-card-col {
+  spacing: 4px;
+}
+
+.focusdock-card-verdict {
+  spacing: 6px;
+}
+
+.focusdock-card-check {
+  icon-size: 10px;
+  padding: 3px;
+  border-radius: 8px;
+  color: #ffffff;
+  background-color: #34c759;
+}
+
+.focusdock-card-chip {
+  margin-top: 2px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  spacing: 5px;
+  background-color: #f3f0ff;
+}
+
+.focusdock-card-chip-tag {
+  color: #6e56cf;
+  font-weight: bold;
+}
+
+.focusdock-card-chip-detail {
+  color: #8e8e93;
+}
+
+.focusdock-card-actions {
+  spacing: 8px;
+  padding-top: 5px;
+}
+
+.focusdock-card-button {
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid #dcdce1;
+  background-color: #f4f4f6;
+  color: #1d1d1f;
+  transition-duration: 120ms;
+}
+
+.focusdock-card-button:hover {
+  background-color: #e9e9ee;
+}
+
+.focusdock-card-button.primary {
+  border-width: 0;
+  padding: 5px 13px;
+  color: #ffffff;
+  font-weight: bold;
+}
+
+.focusdock-card-button-box {
+  spacing: 6px;
+}
+
+.focusdock-card-button-icon {
+  icon-size: 13px;
+}
+
+/* ---- inbox: messages and agents that want you back --------------------- */
+
+.focusdock-app-badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 6px;
+  border: 2px solid rgba(36, 34, 38, 0.95);
+  background-color: #e5484d;
+}
+
+.focusdock-app-badge.attention {
+  background-color: #f59e0b;
+}
+
+.focusdock-app-badge.done {
+  background-color: #10b981;
+}
+
+.focusdock-inbox-row {
+  spacing: 8px;
+}
+
+.focusdock-inbox {
+  min-height: 34px;
+  padding: 0 11px 0 6px;
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  transition-duration: 220ms;
+}
+
+.focusdock-inbox:hover {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.focusdock-inbox.attention {
+  background-color: #f59e0b;
+}
+
+.focusdock-inbox.done {
+  background-color: #10b981;
+}
+
+.focusdock-inbox.attention:hover,
+.focusdock-inbox.done:hover {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+.focusdock-next {
+  min-height: 34px;
+  padding: 0 13px 0 10px;
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  transition-duration: 220ms;
+}
+
+.focusdock-next:hover {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.focusdock-next-box {
+  spacing: 7px;
+}
+
+.focusdock-next-icon {
+  icon-size: 16px;
+}
+
+.focusdock-next-label {
+  font-weight: bold;
+  max-width: 150px;
+}
+
+.focusdock-inbox-box {
+  spacing: 7px;
+}
+
+.focusdock-inbox-face {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background-color: rgba(28, 27, 31, 0.95);
+}
+
+.focusdock-inbox-count {
+  font-weight: bold;
+  font-feature-settings: "tnum";
+}
+
+.focusdock-inbox-item {
+  spacing: 12px;
+  padding: 8px 14px;
+}
+
+.focusdock-inbox-item-title {
+  font-weight: bold;
+  max-width: 300px;
+}
+
+.focusdock-inbox-item-meta {
+  font-size: 0.85em;
+  color: rgba(127, 127, 127, 1);
+  max-width: 300px;
+}
+
+.focusdock-inbox-item-body {
+  font-size: 0.9em;
+  max-width: 300px;
+}
+
+.focusdock-inbox-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+/* ---- editing: "+" button, app picker, mode dialog --------------------- */
+
+.focusdock-add {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  transition-duration: 150ms;
+}
+
+.focusdock-add:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.focusdock-add-icon {
+  icon-size: 16px;
+}
+
+.focusdock-picker-title {
+  font-weight: bold;
+}
+
+.focusdock-picker-search {
+  min-width: 300px;
+}
+
+.focusdock-picker-scroll {
+  max-height: 380px;
+  min-width: 320px;
+}
+
+.focusdock-picker-list {
+  padding: 2px 6px;
+}
+
+.focusdock-picker-row {
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.focusdock-picker-row:hover,
+.focusdock-picker-row:focus {
+  background-color: rgba(127, 127, 127, 0.18);
+}
+
+.focusdock-picker-name {
+  padding-left: 10px;
+}
+
+.focusdock-picker-check {
+  icon-size: 16px;
+  color: #3b82f6;
+}
+
+.focusdock-dialog-content {
+  spacing: 6px;
+  min-width: 400px;
+}
+
+.focusdock-dialog-title {
+  font-size: 14pt;
+  font-weight: bold;
+  padding-bottom: 6px;
+}
+
+.focusdock-dialog-label {
+  font-size: 0.9em;
+  color: rgba(127, 127, 127, 1);
+  padding-top: 8px;
+}
+
+.focusdock-swatches,
+.focusdock-icon-row {
+  spacing: 8px;
+}
+
+.focusdock-icon-grid {
+  spacing: 6px;
+}
+
+.focusdock-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  border: 2px solid transparent;
+}
+
+.focusdock-swatch.selected {
+  border: 3px solid rgba(127, 127, 127, 0.95);
+}
+
+.focusdock-icon-choice {
+  padding: 7px;
+  border-radius: 8px;
+}
+
+.focusdock-icon-choice:hover {
+  background-color: rgba(127, 127, 127, 0.15);
+}
+
+.focusdock-icon-choice.selected {
+  background-color: rgba(127, 127, 127, 0.32);
+}
+
+.focusdock-dialog-check {
+  padding-top: 10px;
+}
