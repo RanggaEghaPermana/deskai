@@ -234,6 +234,59 @@
   spacing: 8px;
 }
 
+.deskai-server-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 6px;
+  border: 2px solid rgba(36, 34, 38, 0.95);
+}
+
+.deskai-server-action {
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.deskai-server-action:hover {
+  background-color: rgba(127, 127, 127, 0.25);
+}
+
+.deskai-command {
+  spacing: 10px;
+  padding: 10px 16px;
+  border-radius: 24px;
+  background-color: rgba(36, 34, 38, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  color: #ffffff;
+}
+
+.deskai-command-icon {
+  icon-size: 18px;
+  color: #b9a7ff;
+}
+
+.deskai-command-entry {
+  padding: 2px 0;
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+  color: #ffffff;
+  caret-color: #ffffff;
+  selected-color: #ffffff;
+  selection-background-color: #7c5cff;
+}
+
+.deskai-command-entry:focus,
+.deskai-command-entry:hover {
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+.deskai-command-entry StLabel.hint-text {
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .deskai-inbox {
   min-height: 34px;
   padding: 0 11px 0 6px;

@@ -32,6 +32,8 @@ STRINGS = {
         "feature_modes_text": "Writing, Building, Studying: each with its own apps and rules",
         "feature_inbox": "Inbox on the dock",
         "feature_inbox_text": "WhatsApp messages and AI agents reach you right there",
+        "feature_command": "Just say what you want",
+        "feature_command_text": "Press Super+/ and type: set up my project, restart the server…",
         "feature_desk": "Pick up where you left off",
         "feature_desk_text": "Windows, terminals and servers come back after a logout",
         "language": "Language",
@@ -72,7 +74,7 @@ STRINGS = {
         "ai_key_saved": "API key (saved; leave empty to keep it)",
         "ai_none": "No AI",
         "ai_none_text": "Modes and your allow and block lists still work",
-        "ai_privacy": "With AI on, the titles of the windows you use and the notifications held back are sent to Claude. Password managers are left out. Everything else stays on this computer.",
+        "ai_privacy": "With AI on, the titles of the windows you use and the notifications held back are sent to Claude, and so is what you type in the command bar, with the names of your modes, projects, servers and apps. Password managers are left out. Everything else stays on this computer.",
         "extras_title": "Extras",
         "extras_text": "You can change these later by opening this window again.",
         "extra_agents": "AI agents report to the dock",
@@ -117,6 +119,8 @@ STRINGS = {
         "feature_modes_text": "Writing, Building, Studying: tiap mode punya app dan aturan sendiri",
         "feature_inbox": "Inbox di dock",
         "feature_inbox_text": "Pesan WhatsApp dan AI agent langsung ngabarin di situ",
+        "feature_command": "Tinggal ketik maunya apa",
+        "feature_command_text": "Tekan Super+/ terus ketik: siapin project, restart server…",
         "feature_desk": "Lanjutin dari yang terakhir",
         "feature_desk_text": "Jendela, terminal, dan server balik lagi setelah logout",
         "language": "Bahasa",
@@ -157,7 +161,7 @@ STRINGS = {
         "ai_key_saved": "API key (udah tersimpan; kosongin kalau nggak diganti)",
         "ai_none": "Tanpa AI",
         "ai_none_text": "Mode dan daftar izin/blokir kamu tetap jalan",
-        "ai_privacy": "Kalau AI nyala, judul jendela yang kamu pakai dan notifikasi yang ditahan dikirim ke Claude. Aplikasi password nggak ikut. Selain itu semuanya tetap di komputer ini.",
+        "ai_privacy": "Kalau AI nyala, judul jendela yang kamu pakai dan notifikasi yang ditahan dikirim ke Claude. Yang kamu ketik di kolom perintah juga, bareng nama mode, project, server, dan app kamu. Aplikasi password nggak ikut. Selain itu semuanya tetap di komputer ini.",
         "extras_title": "Tambahan",
         "extras_text": "Bisa diganti nanti dengan buka jendela ini lagi.",
         "extra_agents": "AI agent ngabarin ke dock",
@@ -308,7 +312,7 @@ class SetupWindow(Adw.ApplicationWindow):
         features = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         features.add_css_class("boxed-list")
         for icon, name in (("find-location-symbolic", "modes"), ("mail-unread-symbolic", "inbox"),
-                           ("view-restore-symbolic", "desk")):
+                           ("system-search-symbolic", "command"), ("view-restore-symbolic", "desk")):
             row = Adw.ActionRow(title=self.t(f"feature_{name}"), subtitle=self.t(f"feature_{name}_text"))
             row.add_prefix(Gtk.Image(icon_name=icon))
             features.append(row)

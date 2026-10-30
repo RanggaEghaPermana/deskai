@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from gi.repository import GLib
+from gi.repository import Gio, GLib
 
 log = logging.getLogger("deskai")
 
@@ -294,8 +294,7 @@ NOTIFY_SCHEMA = {
 EDIT_SYSTEM = """\
 You edit modes.json, the configuration of DeskAI, a GNOME Shell dock with focus modes. You get the \
 current file, the apps installed on the machine, and a request from the owner. Return the complete new \
-file as `config_json` (valid JSON, 2-space indent) and a one or two sentence `summary` of what changed, \
-in casual Indonesian.
+file as `config_json` (valid JSON, 2-space indent) and a one or two sentence `summary` of what changed.
 
 File format:
 - default_mode: id of the mode used when nothing is saved.
@@ -387,6 +386,40 @@ CARD_STRINGS = {
         "routine_running": "Setting up…",
         "routine_ready": "Ready to work",
         "routine_partly": "Ready, but {n} step(s) failed: deskai routine log",
+        "server_down": "{name} stopped",
+        "server_restart": "Restart",
+        "server_log": "Show log",
+        "server_back": "{name} is back up",
+        "server_failed": "{name} won't start",
+        "server_stopped": "{name} is stopped",
+        "command_needs_ai": "That needs AI, which is off. You can turn it on in DeskAI Setup.",
+        "command_failed": "Couldn't do that: {error}",
+        "command_nothing": "Nothing to do there.",
+        "command_done": "Done",
+        "command_mode": "Switching to {mode}",
+        "command_no_server": "No running server by that name.",
+        "command_no_project": "No history for that project yet.",
+        "command_no_desk": "No earlier session to bring back.",
+        "command_no_folder": "Couldn't find that folder.",
+        "command_edit_wait": "Working on that change…",
+        "command_edit_same": "Nothing needed changing.",
+        "command_apply": "Apply",
+        "command_cancel": "Cancel",
+        "command_applied": "Saved. The dock has it already.",
+        "guide_progress": "Step {n} of {total}",
+        "guide_next": "Next",
+        "guide_done": "Got it",
+        "guide_skip": "Skip",
+        "guide_modes_title": "These are your focus modes",
+        "guide_modes": "Click one to switch. Each has its own apps, allowed sites and notification rules. Right-click to change it.",
+        "guide_inbox_title": "News comes to the dock",
+        "guide_inbox": "WhatsApp messages, AI agents that finish, and dev servers that stop show up here. Click to go straight there.",
+        "guide_command_title": "Just say what you want",
+        "guide_command": "Press Super+/ or click the sparkle, then type something like \"set up my project\" or \"restart the server\".",
+        "guide_command_noai": "Press Super+/ or click the sparkle, then type a mode's name or \"restart\" and a server. With AI on, it understands a lot more.",
+        "whatsapp_title": "Get WhatsApp messages on the dock?",
+        "whatsapp_text": "Chrome has to allow notifications from WhatsApp Web first. In the page that opens, set Notifications to Allow.",
+        "whatsapp_open": "Open the setting",
         "rule_off": "{site} isn't for {mode} mode",
         "rule_on": "{site} fits {mode} mode",
         "rule_app": "{site} is one of {mode} mode's apps",
@@ -426,6 +459,40 @@ CARD_STRINGS = {
         "routine_running": "Lagi nyiapin…",
         "routine_ready": "Siap kerja",
         "routine_partly": "Siap, tapi {n} langkah gagal: deskai routine log",
+        "server_down": "{name} mati",
+        "server_restart": "Nyalain ulang",
+        "server_log": "Liat log",
+        "server_back": "{name} udah nyala lagi",
+        "server_failed": "{name} nggak mau nyala",
+        "server_stopped": "{name} udah dimatiin",
+        "command_needs_ai": "Itu butuh AI, dan AI-nya lagi mati. Bisa dinyalain di DeskAI Setup.",
+        "command_failed": "Nggak bisa: {error}",
+        "command_nothing": "Nggak ada yang perlu dilakuin.",
+        "command_done": "Udah",
+        "command_mode": "Pindah ke {mode}",
+        "command_no_server": "Nggak ada server jalan dengan nama itu.",
+        "command_no_project": "Belum ada riwayat buat project itu.",
+        "command_no_desk": "Nggak ada sesi sebelumnya buat dibalikin.",
+        "command_no_folder": "Folder itu nggak ketemu.",
+        "command_edit_wait": "Lagi nyiapin perubahannya…",
+        "command_edit_same": "Nggak ada yang perlu diubah.",
+        "command_apply": "Terapin",
+        "command_cancel": "Batal",
+        "command_applied": "Udah kesimpen, dock-nya langsung ikut.",
+        "guide_progress": "Langkah {n} dari {total}",
+        "guide_next": "Lanjut",
+        "guide_done": "Siap",
+        "guide_skip": "Lewati",
+        "guide_modes_title": "Ini mode fokus kamu",
+        "guide_modes": "Klik salah satu buat pindah. Tiap mode punya app, situs yang boleh, dan aturan notifikasi sendiri. Klik kanan buat ngubahnya.",
+        "guide_inbox_title": "Kabar masuk ke dock",
+        "guide_inbox": "Pesan WhatsApp, AI agent yang kelar, dan server yang mati muncul di sini. Klik buat langsung ke sana.",
+        "guide_command_title": "Tinggal ketik maunya apa",
+        "guide_command": "Tekan Super+/ atau klik ikon kilau, terus ketik misalnya \"siapin project\" atau \"restart server\".",
+        "guide_command_noai": "Tekan Super+/ atau klik ikon kilau, terus ketik nama mode, atau \"restart\" dan nama server. Kalau AI nyala, dia ngerti lebih banyak.",
+        "whatsapp_title": "Mau pesan WhatsApp masuk ke dock?",
+        "whatsapp_text": "Chrome harus ngizinin notifikasi dari WhatsApp Web dulu. Di halaman yang kebuka, ganti Notifications jadi Allow.",
+        "whatsapp_open": "Buka pengaturannya",
         "rule_off": "{site} bukan buat mode {mode}",
         "rule_on": "{site} masuk mode {mode}",
         "rule_app": "{site} app-nya mode {mode}",
@@ -446,6 +513,10 @@ def activity_system(language):
 
 def notify_system(language):
     return NOTIFY_SYSTEM.format(**LANGUAGE_RULES.get(language, LANGUAGE_RULES["en"]))
+
+
+def edit_system(language):
+    return f"{EDIT_SYSTEM}\n\nWrite `summary` in {LANGUAGE_RULES[language]['language']}."
 
 
 def card_text(language, key, **params):
@@ -485,6 +556,14 @@ def notification_prompt(key, mode, modes, app, title, body):
 
 
 # ---- Claude -----------------------------------------------------------------
+
+def installed_apps():
+    lines = []
+    for app in Gio.AppInfo.get_all():
+        if app.should_show() and app.get_id():
+            lines.append(f"{app.get_id()} — {app.get_name()}")
+    return "\n".join(sorted(lines))
+
 
 class LLMError(RuntimeError):
     pass

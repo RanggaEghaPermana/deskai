@@ -73,6 +73,10 @@ def cmd_status(_args):
     print(f"Inbox  : {len(inbox)} items")
     for item in inbox:
         print(f"         - [{item['kind']}] {item['title']}" + (f" ({item['window']})" if item.get("window") else ""))
+    servers_up = state.get("servers", [])
+    print(f"Servers: {len(servers_up)}")
+    for server in servers_up:
+        print(f"         - {server['label']}: {server['state']}" + (f" ({server['project']})" if server.get("project") else ""))
     dock = state.get("dock", {})
     if "hover" in dock:
         held_up = [name for name, on in (
@@ -129,27 +133,19 @@ def cmd_stats(args):
             print(f"  {minutes(seconds):>5}  {label}")
 
 
-def installed_apps():
-    lines = []
-    for app in Gio.AppInfo.get_all():
-        if app.should_show() and app.get_id():
-            lines.append(f"{app.get_id()} — {app.get_name()}")
-    return "\n".join(sorted(lines))
-
-
 def cmd_agent(args):
     config = brain.Config()
     config.refresh()
     claude = brain.Claude(config.llm)
     if not claude.available:
-        sys.exit("Nggak ada backend Claude. Set ANTHROPIC_API_KEY atau install Claude Code (`claude`).")
+        sys.exit("No Claude backend. Set ANTHROPIC_API_KEY or install Claude Code (`claude`).")
     old_text = brain.MODES_FILE.read_text()
     prompt = (f"Current modes.json:\n```json\n{old_text}\n```\n\n"
-              f"Installed apps (desktop id — name):\n{installed_apps()}\n\n"
+              f"Installed apps (desktop id — name):\n{brain.installed_apps()}\n\n"
               f"Request: {args.instruction}")
     print(f"Asking Claude ({claude.backend}, {claude.model})…", file=sys.stderr)
     try:
-        result = claude.ask(brain.EDIT_SYSTEM, prompt, brain.EDIT_SCHEMA,
+        result = claude.ask(brain.edit_system(config.language), prompt, brain.EDIT_SCHEMA,
                             effort="medium", max_tokens=16000, timeout=300)
         new_config = json.loads(result["config_json"])
     except (brain.LLMError, ValueError, KeyError) as e:

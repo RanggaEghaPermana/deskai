@@ -7,6 +7,11 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   sites, and notification rules. A nudge when you drift, and a daily focus recap.
 - **Inbox on the dock.** WhatsApp messages and AI agents (Claude Code, Codex, Gemini CLI, and the
   desktop AI apps) tell you when they're done or need you. One click takes you there.
+- **Command bar.** Press `Super+/` or click the sparkle and type what you want: "set up my project",
+  "restart the server", "switch to Writing", "how long did I focus today?". It can only do what's on
+  a fixed list, never run commands. A mode's name and restarting a server work without AI too.
+- **Servers on the dock.** The dev servers and database DeskAI started get a status dot. If one stops,
+  you see why, and one click restarts it or opens its log.
 - **Pick up where you left off.** After a logout, your windows come back with their size, place and
   workspace, your terminals with their tabs and Claude Code conversations, your dev servers, your
   database and Chrome's tabs. It always asks first.
@@ -49,9 +54,13 @@ The setup window copies what it needs, so you can delete the download afterwards
 
 With AI **off**, nothing does.
 
-With AI **on**, the titles of the windows you use and the notifications held back during a focus mode
-are sent to Claude, through your Claude Code login or your API key. Password managers are left out,
-and you can add more apps under `llm.exclude_apps` in `~/.config/deskai/modes.json`.
+With AI **on**, these are sent to Claude, through your Claude Code login or your API key:
+
+- the titles of the windows you use, and the notifications held back during a focus mode (password
+  managers are left out, and you can add more apps under `llm.exclude_apps` in `~/.config/deskai/modes.json`);
+- when you use the command bar: what you typed, your modes, the names of your projects, servers and
+  installed apps, and today's focus time. No file contents or full paths.
+
 Using an API key costs money, charged by Anthropic.
 
 Everything else stays on your computer in `~/.config/deskai` and `~/.local/state/deskai`.
@@ -96,6 +105,7 @@ Open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package i
 ./uninstall.sh          # add --purge to delete your modes and stats too
 dev/nested.sh           # a throwaway GNOME Shell with its own HOME, for testing
 packaging/build-deb.sh  # builds dist/deskai_<version>_all.deb
+python3 -m unittest discover tests
 ```
 
 `extension/` is the GNOME Shell extension, `daemon/` is the background service (`deskaid`) and the

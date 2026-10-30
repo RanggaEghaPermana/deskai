@@ -23,6 +23,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {Card} from './card.js';
+import {CommandBar} from './commandbar.js';
 import {ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
@@ -81,6 +82,9 @@ const IFACE_XML = `
     <method name="Inbox">
       <arg type="s" direction="in" name="json"/>
     </method>
+    <method name="Servers">
+      <arg type="s" direction="in" name="json"/>
+    </method>
     <method name="MinimizeFocused"/>
     <method name="Reload"/>
     <signal name="ModeChanged">
@@ -102,6 +106,9 @@ const IFACE_XML = `
     <signal name="CardAction">
       <arg type="s" name="card"/>
       <arg type="s" name="action"/>
+    </signal>
+    <signal name="Command">
+      <arg type="s" name="text"/>
     </signal>
   </interface>
 </node>`;
@@ -133,6 +140,7 @@ const CARD_ICONS = {
 const CARD_SECONDS = 8;
 // Inbox colors: badges, the inbox pill, and the card's main button.
 const INBOX_COLORS = {attention: '#f59e0b', done: '#10b981', message: '#e5484d'};
+const SERVER_COLORS = {up: '#10b981', starting: '#f59e0b', down: '#e5484d'};
 const MESSAGE_COLORS = {whatsapp: '#25d366', telegram: '#2aabee', signal: '#3a76f0'};
 // A pointer resting on the dock this long, while you work in a window, stops holding it up.
 const POINTER_REST_MS = 3000;
@@ -239,6 +247,7 @@ export default class DeskAIExtension extends Extension {
         this._buildIndicator();
         this._card = new Card((spec, action) => this._onCardAction(spec, action));
         Main.layoutManager.addTopChrome(this._card.actor);
+        this._grabCommandKey();
         this._buildSwitcher();
         this._rebuildApps(false);
         this._updateIndicator();
@@ -322,6 +331,9 @@ export default class DeskAIExtension extends Extension {
         this._releaseHeld();
         this._inbox?.destroy();
         this._inbox = null;
+        this._releaseCommandKey();
+        this._commandBar?.destroy();
+        this._commandBar = null;
         this._places?.disable();
         this._places = null;
         this._desk?.destroy();
@@ -625,7 +637,9 @@ export default class DeskAIExtension extends Extension {
         this._dock.add_child(this._appsClip);
         this._dock.add_child(this._addButton);
         this._buildNext();
+        this._buildServers();
         this._buildInbox();
+        this._buildCommand();
         // Icons move when the dock resizes or a mode pill grows; re-aim minimizes after.
         this._dock.connect('notify::allocation', () => this._queueIconGeometry());
         this._appsClip.connect('notify::allocation', () => this._queueIconGeometry());
@@ -1150,6 +1164,7 @@ export default class DeskAIExtension extends Extension {
             }
             this._tooltip.text = text;
             this._tooltip.show();
+            this._tooltip.get_parent().set_child_above_sibling(this._tooltip, null); // above an open menu
             const [x, y] = actor.get_transformed_position();
             const [w] = actor.get_transformed_size();
             const [, tipWidth] = this._tooltip.get_preferred_width(-1);
@@ -1644,10 +1659,14 @@ export default class DeskAIExtension extends Extension {
             anchor = this._inboxButton;
         if (!anchor && spec.kind === 'place' && this._nextClip?.visible)
             anchor = this._nextButton;
+        if (!anchor && spec.kind === 'server' && this._serverClip?.visible)
+            anchor = this._serverButton;
+        if (!anchor && spec.kind === 'command')
+            anchor = this._commandButton;
         anchor ??= this._modeEntries.get(anchorKey)?.button ?? this._dock;
         // The pill is still growing in: point at where it ends up.
-        const growing = [this._inboxClip, this._nextClip].some(clip => clip?.get_transition('width'));
-        if ((anchor === this._inboxButton || anchor === this._nextButton) && growing) {
+        const growing = [this._inboxClip, this._nextClip, this._serverClip].some(clip => clip?.get_transition('width'));
+        if ((anchor === this._inboxButton || anchor === this._nextButton || anchor === this._serverButton) && growing) {
             this._debounce('card-layout', 340, () => this._showCard(spec));
             return;
         }
@@ -1685,6 +1704,8 @@ export default class DeskAIExtension extends Extension {
     _cardIcon(spec) {
         if (spec.gicon)
             return spec.gicon; // set by the dock itself, never over D-Bus
+        if (spec.kind === 'command')
+            return this._sparkle;
         const icon = spec.icon ?? {};
         if (icon.notification_id) {
             const held = this._held.get(icon.notification_id);
@@ -2449,6 +2470,190 @@ export default class DeskAIExtension extends Extension {
         return held;
     }
 
+    // ---- servers on the desk ----------------------------------------------
+
+    _buildServers() {
+        this._servers = [];
+        this._serverClip = new St.Widget({
+            clip_to_allocation: true,
+            visible: false,
+            y_align: Clutter.ActorAlign.CENTER,
+            layout_manager: new Clutter.BinLayout(),
+        });
+        const row = new St.BoxLayout({style_class: 'deskai-inbox-row'});
+        row.add_child(separator());
+        this._serverButton = new St.Button({style_class: 'deskai-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        const box = new St.Widget({layout_manager: new Clutter.BinLayout()});
+        box.add_child(new St.Icon({icon_name: 'network-server-symbolic', style_class: 'deskai-add-icon'}));
+        this._serverDot = new St.Widget({
+            style_class: 'deskai-server-dot',
+            x_expand: true,
+            y_expand: true,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.START,
+        });
+        box.add_child(this._serverDot);
+        this._serverButton.set_child(box);
+        this._serverButton.connect('clicked', () => this._openServerMenu());
+        row.add_child(this._serverButton);
+        this._serverClip.add_child(row);
+        this._dock.add_child(this._serverClip);
+        this._addTooltip(this._serverButton, () => this._t('serversTooltip', {
+            up: this._servers.filter(s => s.state === 'up').length,
+            down: this._servers.filter(s => s.state === 'down').length,
+        }));
+    }
+
+    _setServers(servers) {
+        const worse = servers.some(s => s.state === 'down') && !this._servers.some(s => s.state === 'down');
+        this._servers = servers;
+        if (this._serverClip)
+            this._syncServers(worse);
+    }
+
+    _syncServers(pop) {
+        const state = ['down', 'starting', 'up'].find(wanted => this._servers.some(s => s.state === wanted));
+        if (state)
+            this._serverDot.set_style(`background-color: ${SERVER_COLORS[state]};`);
+        this._reveal(this._serverClip, this._servers.length > 0, () => this._servers.length > 0);
+        if (pop) {
+            this._serverButton.set_pivot_point(0.5, 0.5);
+            this._serverButton.remove_all_transitions();
+            this._serverButton.scale_x = this._serverButton.scale_y = 0.8;
+            this._serverButton.ease({scale_x: 1, scale_y: 1, ...MOTION.pop});
+        }
+    }
+
+    _serverAction(op, unit) {
+        this._emitSignal('CardAction', '(ss)', ['servers', `server:${op}:${unit}`]);
+    }
+
+    _serverRow(menu, server) {
+        const canOpen = server.kind === 'server' && server.port && server.state === 'up';
+        const row = new PopupMenu.PopupBaseMenuItem({style_class: 'deskai-inbox-item', reactive: Boolean(canOpen)});
+        row.add_child(new St.Widget({
+            style_class: 'deskai-inbox-item-dot',
+            style: `background-color: ${SERVER_COLORS[server.state]};`,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        const text = new St.BoxLayout({
+            orientation: Clutter.Orientation.VERTICAL,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        text.add_child(new St.Label({text: server.label, style_class: 'deskai-inbox-item-title'}));
+        const state = this._t({up: 'serverUp', starting: 'serverStarting', down: 'serverDown'}[server.state]);
+        text.add_child(new St.Label({
+            text: server.project ? `${state} · ${server.project}` : state,
+            style_class: 'deskai-inbox-item-meta',
+        }));
+        row.add_child(text);
+        const buttons = [
+            ['view-refresh-symbolic', 'serverRestart', 'restart'],
+            ['utilities-terminal-symbolic', 'serverLog', 'log'],
+            server.state === 'down'
+                ? ['edit-clear-symbolic', 'serverForget', 'forget']
+                : ['media-playback-stop-symbolic', 'serverStop', 'stop'],
+        ];
+        for (const [icon, label, op] of buttons) {
+            const button = new St.Button({
+                style_class: 'deskai-server-action',
+                accessible_name: this._t(label),
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                child: new St.Icon({icon_name: icon, icon_size: 16}),
+            });
+            button.connect('clicked', () => {
+                this._tooltip.hide();
+                menu.close();
+                this._serverAction(op, server.unit);
+            });
+            this._addTooltip(button, () => this._t(label));
+            row.add_child(button);
+        }
+        if (canOpen)
+            row.connect('activate', () => this._serverAction('open', server.unit));
+        menu.addMenuItem(row);
+    }
+
+    _openServerMenu() {
+        this._openMenu(this._serverButton, menu => {
+            const header = new PopupMenu.PopupMenuItem(this._t('serversTitle'), {reactive: false, can_focus: false});
+            header.label.add_style_class_name('deskai-picker-title');
+            menu.addMenuItem(header);
+            for (const server of this._servers)
+                this._serverRow(menu, server);
+            if (this._servers.length > 1) {
+                menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                this._menuItem(menu, this._t('restartAll'), () => {
+                    for (const server of this._servers)
+                        this._serverAction('restart', server.unit);
+                });
+            }
+        });
+    }
+
+    // ---- the command bar --------------------------------------------------
+
+    _buildCommand() {
+        this._sparkle = Gio.icon_new_for_string(GLib.build_filenamev([this.path, 'icons', 'deskai-sparkle-symbolic.svg']));
+        this._commandButton = new St.Button({style_class: 'deskai-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        this._commandButton.set_child(new St.Icon({gicon: this._sparkle, style_class: 'deskai-add-icon'}));
+        this._commandButton.connect('clicked', () => this._openCommandBar());
+        this._dock.add_child(this._commandButton);
+        this._addTooltip(this._commandButton, () => this._t('commandTooltip'));
+        this._commandBar = new CommandBar({
+            gicon: this._sparkle,
+            onSubmit: text => this._submitCommand(text),
+            onClose: () => this._endPeek(),
+        });
+    }
+
+    _openCommandBar() {
+        if (Main.layoutManager.primaryMonitor?.inFullscreen)
+            return;
+        this._tooltip.hide();
+        this._closeCard();
+        this._peek(60000);
+        this._commandBar.open({
+            hint: this._t('commandHint'),
+            monitor: Main.layoutManager.primaryMonitor,
+            bottomY: this._frame.y,
+        });
+    }
+
+    _submitCommand(text) {
+        if (!this._brainOnline) {
+            this._showCard({id: 'command', kind: 'command', title: this._t('commandOffline'), timeout: 8});
+            return;
+        }
+        this._emitSignal('Command', '(s)', [text]);
+        this._showCard({id: 'command', kind: 'command', title: this._t('commandThinking'), text, timeout: 120});
+    }
+
+    // Super+/ from anywhere, even with the dock hidden.
+    _grabCommandKey() {
+        const action = global.display.grab_accelerator('<Super>slash', Meta.KeyBindingFlags.IGNORE_AUTOREPEAT);
+        if (action === Meta.KeyBindingAction.NONE)
+            return;
+        this._commandAction = action;
+        this._commandBinding = Meta.external_binding_name_for_action(action);
+        Main.wm.allowKeybinding(this._commandBinding, Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW);
+        this._commandKeyId = global.display.connect('accelerator-activated', (_display, activated) => {
+            if (activated === this._commandAction)
+                this._openCommandBar();
+        });
+    }
+
+    _releaseCommandKey() {
+        if (!this._commandAction)
+            return;
+        global.display.disconnect(this._commandKeyId);
+        Main.wm.allowKeybinding(this._commandBinding, Shell.ActionMode.NONE);
+        global.display.ungrab_accelerator(this._commandAction);
+        this._commandAction = 0;
+    }
+
     // ---- D-Bus ----------------------------------------------------------
 
     _exportDBus() {
@@ -2497,6 +2702,14 @@ export default class DeskAIExtension extends Extension {
                     console.warn(`DeskAI: bad inbox event: ${e.message}`);
                 }
             },
+            // From the brain: the servers it's watching.
+            Servers: json => {
+                try {
+                    this._setServers(JSON.parse(json));
+                } catch (e) {
+                    console.warn(`DeskAI: bad servers: ${e.message}`);
+                }
+            },
             MinimizeFocused: () => this._focusWindow?.minimize(),
             Reload: () => this._reloadConfig(),
         });
@@ -2533,6 +2746,7 @@ export default class DeskAIExtension extends Extension {
                 key: item.key, kind: item.kind, title: item.title, app: item.appId, count: item.count,
                 window: item.window?.get_title() ?? null,
             })),
+            servers: this._servers ?? [],
             // Everything _wantVisible() looks at, for "why won't it hide?".
             dock: {
                 shown: this._dockShown,

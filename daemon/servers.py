@@ -1,0 +1,165 @@
+"""The dev servers and databases on your desk: what's up, and what just went down.
+
+Everything DeskAI sees running gets watched until you stop it: its user services (deskai-*,
+started by the routine, a restore or the command bar) and the routine's databases. `scan()`
+looks at them every few seconds; one that stops answering is reported once, and the dock
+offers to restart it or show its log.
+"""
+
+import os
+import re
+import shlex
+import subprocess
+import threading
+import time
+
+import brain  # noqa: F401
+import routine
+import session
+from brain import log
+
+GRACE_S = 90        # a server just started gets this long to answer
+MISSES = 2          # checks in a row without an answer before a running service counts as down
+START_WAIT_S = 60   # how long a restart waits for the port
+STOP_SETTLE_S = 15  # a look that started before a stop may still see it running
+
+
+class Watch:
+    def __init__(self):
+        self.items = {}  # unit → what's known about it
+        self.stopped = {}  # unit → when you stopped it
+        self.lock = threading.Lock()
+
+    def _add(self, unit, kind, found, now):
+        step = {"type": kind, **found}
+        self.items[unit] = {
+            "unit": unit, "kind": kind, "label": routine.label(step), "command": found.get("command", ""),
+            "cwd": found.get("cwd", ""), "port": found.get("port"), "state": "starting", "misses": 0,
+            "started": now, "since": now,
+        }
+
+    def scan(self):
+        """Looks at everything once. Returns the items that just went down."""
+        running = {s["unit"]: s for s in session.servers()}
+        services = {d["unit"]: d for d in session.databases()}
+        now = time.time()
+        down = []
+        with self.lock:
+            self.stopped = {unit: when for unit, when in self.stopped.items() if now - when < STOP_SETTLE_S}
+            for unit, found in running.items():
+                if unit not in self.items and unit not in self.stopped:
+                    self._add(unit, "server", found, now)
+            for unit, found in services.items():
+                if unit not in self.items and unit not in self.stopped:
+                    self._add(unit, "service", found, now)
+            items = list(self.items.values())
+        for item in items:
+            active = item["unit"] in running or item["unit"] in services
+            alive = routine.port_open(item["port"]) if item["port"] else active
+            with self.lock:
+                if self.items.get(item["unit"]) is not item:
+                    continue  # stopped or forgotten meanwhile
+                if alive:
+                    state, item["misses"] = "up", 0
+                elif not active:
+                    state = "down"
+                elif now - item["started"] < GRACE_S:
+                    state = "starting"
+                else:
+                    item["misses"] += 1
+                    state = "down" if item["misses"] >= MISSES else item["state"]
+                if state != item["state"]:
+                    item["since"] = now
+                    if state == "down":
+                        down.append(dict(item))
+                item["state"] = state
+        return down
+
+    def summary(self):
+        """What the dock shows, in a stable order."""
+        with self.lock:
+            return [{"unit": item["unit"], "kind": item["kind"], "label": item["label"], "state": item["state"],
+                     "port": item["port"], "project": os.path.basename(item["cwd"]), "since": item["since"]}
+                    for item in sorted(self.items.values(), key=lambda i: (i["kind"] == "server", i["label"]))]
+
+    def get(self, unit):
+        with self.lock:
+            item = self.items.get(unit)
+            return dict(item) if item else None
+
+    def match(self, target):
+        """The units a name refers to: "all", or part of a server's name, port or command."""
+        target = (target or "").strip().lower()
+        with self.lock:
+            items = list(self.items.values())
+        if target in ("", "all", "semua", "server", "servers"):
+            return [i["unit"] for i in items]
+        words = [w for w in re.split(r"\s+", target) if w not in ("server", "the")] or [target]
+        return [i["unit"] for i in items
+                if all(w in f"{i['label']} {i['unit']} {i['command']} {i['port'] or ''}".lower() for w in words)]
+
+    def forget(self, unit):
+        with self.lock:
+            self.items.pop(unit, None)
+
+    def stop(self, unit):
+        """Stops it for good: it's no longer expected to be up."""
+        item = self.get(unit)
+        if not item:
+            return False
+        with self.lock:
+            self.items.pop(unit, None)
+            self.stopped[unit] = time.time()
+        command = ["systemctl", "--user", "stop", unit] if item["kind"] == "server" else ["systemctl", "stop", unit]
+        return subprocess.run(command, capture_output=True, timeout=120).returncode == 0
+
+    def restart(self, unit):
+        """Starts it again and waits for it to answer. Returns whether it did."""
+        item = self.get(unit)
+        if not item:
+            return False
+        with self.lock:
+            live = self.items.get(unit)
+            if live:
+                live.update(state="starting", misses=0, started=time.time(), since=time.time())
+        try:
+            if item["kind"] == "server":
+                path = routine.load().get("path") or os.environ.get("PATH", "")
+                routine.start_server(item, {**os.environ, "PATH": path})
+            elif subprocess.run(["systemctl", "restart", unit], capture_output=True, timeout=120).returncode != 0:
+                return False  # no permission, or it failed to start
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("servers: can't restart %s: %s", unit, e)
+            return False
+        answered = routine.wait_port(item["port"], START_WAIT_S) if item["port"] else True
+        with self.lock:
+            live = self.items.get(unit)
+            if live and answered:
+                live.update(state="up", since=time.time())
+        return answered
+
+
+def log_command(item):
+    """The journal of a server or database, following along."""
+    scope = ["--user"] if item["kind"] == "server" else []
+    return shlex.join(["journalctl", *scope, "-u", item["unit"], "-n", "200", "-f"])
+
+
+def open_log(item):
+    cwd = item["cwd"] or os.path.expanduser("~")
+    subprocess.Popen(routine.terminal_args(cwd, log_command(item)), cwd=cwd, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def last_log_line(item, limit=160):
+    """The last thing it said, which is usually why it stopped."""
+    scope = ["--user"] if item["kind"] == "server" else []
+    try:
+        out = subprocess.run(["journalctl", *scope, "-u", item["unit"], "-n", "12", "-o", "cat", "--no-pager"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    # What it said itself, not systemd's own lines around it.
+    skip = (item["unit"], "Started ", "Stopped ", "Starting ", "Stopping ", "Consumed ")
+    lines = [line.strip() for line in out.splitlines() if line.strip() and not line.startswith(skip)]
+    return lines[-1][:limit] if lines else ""
