@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opens the setup window from a download of FocusDock.
+# Opens the setup window from a download of DeskAI.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 if ! python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
@@ -9,4 +9,4 @@ if ! python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version
   echo "  Arch:           sudo pacman -S python-gobject gtk4 libadwaita"
   exit 1
 fi
-exec python3 setup/focusdock_setup.py "$@"
+exec python3 setup/deskai_setup.py "$@"

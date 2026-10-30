@@ -1,6 +1,6 @@
 {
-  "uuid": "testhelper@focusdock.dev",
-  "name": "FocusDock test helper",
+  "uuid": "testhelper@deskai.dev",
+  "name": "DeskAI test helper",
   "description": "Turns on unsafe mode so dev/nested.sh can Eval and take screenshots. Never install in a real session.",
   "shell-version": ["50"]
 }

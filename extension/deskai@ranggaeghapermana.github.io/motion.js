@@ -201,7 +201,7 @@ export class Motion {
                 try {
                     this._animateWindow(kind, actor, done);
                 } catch (e) {
-                    logError(e, 'FocusDock motion');
+                    logError(e, 'DeskAI motion');
                     this._running.delete(actor);
                     this._reset(actor);
                     done();

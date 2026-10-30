@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""focusd: the brain behind FocusDock.
+"""deskaid: the brain behind DeskAI.
 
 Listens to the GNOME Shell extension over D-Bus, classifies what you're doing
 against the active mode (rules first, Claude for the ambiguous rest), nudges
@@ -169,7 +169,7 @@ class Brain:
         Gio.bus_watch_name_on_connection(
             self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE, self._on_dock_appeared, self._on_dock_vanished)
         GLib.timeout_add_seconds(TICK_SECONDS, self._tick)
-        log.info("focusd up · Claude backend: %s · model: %s", self.claude.backend, self.claude.model)
+        log.info("deskaid up · Claude backend: %s · model: %s", self.claude.backend, self.claude.model)
 
     def shutdown(self):
         self._account()
@@ -178,7 +178,7 @@ class Brain:
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def _on_name_lost(self, _conn, _name):
-        log.error("another focusd already owns %s, exiting", BRAIN_NAME)
+        log.error("another deskaid already owns %s, exiting", BRAIN_NAME)
         self.loop.quit()
 
     def _on_dock_appeared(self, _conn, _name, _owner):
@@ -350,7 +350,7 @@ class Brain:
         elif action == "restore:run" and self.restore_snap:
             self._run_restore(self.restore_snap)
         elif action == "restore:later" and self.restore_snap:
-            session.mark_restored(self.restore_snap)  # `focusdock session restore` still brings it back
+            session.mark_restored(self.restore_snap)  # `deskai session restore` still brings it back
             self.restore_snap = None
             self._maybe_offer_routine()
         elif action == "routine:run" and self.routine_plan:
@@ -835,8 +835,8 @@ def main():
                         format="%(levelname)s %(message)s")
 
     loop = GLib.MainLoop()
-    focusd = Brain(loop)
-    focusd.start()
+    deskaid = Brain(loop)
+    deskaid.start()
 
     def stop():
         loop.quit()
@@ -847,7 +847,7 @@ def main():
     try:
         loop.run()
     finally:
-        focusd.shutdown()
+        deskaid.shutdown()
 
 
 if __name__ == "__main__":

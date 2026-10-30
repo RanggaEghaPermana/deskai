@@ -1,8 +1,8 @@
-// FocusDock: a dock with focus modes for GNOME Shell.
+// DeskAI: a dock with focus modes for GNOME Shell.
 //
 // The extension is the body: it draws the dock and its cards, senses the
 // focused window and incoming notifications, and holds notifications the
-// active mode doesn't allow. The brain (daemon/focusd.py) listens over D-Bus,
+// active mode doesn't allow. The brain (daemon/deskaid.py) listens over D-Bus,
 // classifies what you're doing, and calls back with cards to show.
 
 import Clutter from 'gi://Clutter';
@@ -30,9 +30,9 @@ import {INBOX_DEFAULTS, Inbox, RANK} from './inbox.js';
 import {MOTION, Motion} from './motion.js';
 import {FILES_APP, Places, baseName, displayPath} from './places.js';
 
-const BUS_NAME = 'io.github.RanggaEghaPermana.FocusDock';
+const BUS_NAME = 'io.github.RanggaEghaPermana.DeskAI';
 const BRAIN_NAME = `${BUS_NAME}.Brain`;
-const OBJECT_PATH = '/io/github/RanggaEghaPermana/FocusDock';
+const OBJECT_PATH = '/io/github/RanggaEghaPermana/DeskAI';
 
 const IFACE_XML = `
 <node>
@@ -152,7 +152,7 @@ function readText(file) {
         return new TextDecoder().decode(bytes);
     } catch (e) {
         if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
-            console.warn(`FocusDock: cannot read ${file.get_path()}: ${e.message}`);
+            console.warn(`DeskAI: cannot read ${file.get_path()}: ${e.message}`);
         return null;
     }
 }
@@ -162,7 +162,7 @@ function readJson(file) {
     try {
         return text === null ? null : JSON.parse(text);
     } catch (e) {
-        console.warn(`FocusDock: bad JSON in ${file.get_path()}: ${e.message}`);
+        console.warn(`DeskAI: bad JSON in ${file.get_path()}: ${e.message}`);
         return null;
     }
 }
@@ -187,7 +187,7 @@ function isValidConfig(cfg) {
 }
 
 function separator() {
-    return new St.Widget({style_class: 'focusdock-sep', y_expand: true});
+    return new St.Widget({style_class: 'deskai-sep', y_expand: true});
 }
 
 function withAlpha(color, alpha) {
@@ -205,12 +205,12 @@ function isAppWindow(win) {
         FOCUSABLE_TYPES.includes(win.get_window_type());
 }
 
-export default class FocusDockExtension extends Extension {
+export default class DeskAIExtension extends Extension {
     enable() {
-        const configDir = GLib.build_filenamev([GLib.get_user_config_dir(), 'focusdock']);
+        const configDir = GLib.build_filenamev([GLib.get_user_config_dir(), 'deskai']);
         this._modesFile = Gio.File.new_for_path(GLib.build_filenamev([configDir, 'modes.json']));
         this._stateFile = Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_state_dir(), 'focusdock', 'state.json']));
+            GLib.build_filenamev([GLib.get_user_state_dir(), 'deskai', 'state.json']));
 
         this._held = new Map();
         this._heldSeq = 0;
@@ -271,7 +271,7 @@ export default class FocusDockExtension extends Extension {
             else
                 this._motion?.enable();
         } catch (e) {
-            logError(e, 'FocusDock: motion failed, keeping GNOME animations');
+            logError(e, 'DeskAI: motion failed, keeping GNOME animations');
             this._motion?.disable();
         }
     }
@@ -495,7 +495,7 @@ export default class FocusDockExtension extends Extension {
         try {
             writeJson(this._stateFile, {mode: name, since: Date.now()});
         } catch (e) {
-            console.warn(`FocusDock: cannot save state: ${e.message}`);
+            console.warn(`DeskAI: cannot save state: ${e.message}`);
         }
         this._peek(2000);
         this._syncModeButtons(true);
@@ -602,23 +602,23 @@ export default class FocusDockExtension extends Extension {
         // The frame touches the bottom edge (so a strut can reserve space) and
         // tracks hover; its bottom padding is the visual gap under the dock.
         this._frame = new St.Widget({
-            name: 'focusdockFrame',
-            style_class: 'focusdock-frame',
+            name: 'deskaiFrame',
+            style_class: 'deskai-frame',
             layout_manager: new Clutter.BinLayout(),
             reactive: true,
             track_hover: true,
         });
-        this._dock = new St.BoxLayout({style_class: 'focusdock', reactive: true});
+        this._dock = new St.BoxLayout({style_class: 'deskai', reactive: true});
         this._frame.add_child(this._dock);
 
-        this._switcher = new St.BoxLayout({style_class: 'focusdock-modes', y_align: Clutter.ActorAlign.CENTER});
+        this._switcher = new St.BoxLayout({style_class: 'deskai-modes', y_align: Clutter.ActorAlign.CENTER});
         this._appsClip = new St.Widget({clip_to_allocation: true, y_align: Clutter.ActorAlign.CENTER});
-        this._appsBox = new St.BoxLayout({style_class: 'focusdock-apps'});
+        this._appsBox = new St.BoxLayout({style_class: 'deskai-apps'});
         this._appsClip.add_child(this._appsBox);
         // "+" opens the app picker for the current mode. It lives outside the
         // rebuilt app list so an open picker survives the dock updating under it.
-        this._addButton = new St.Button({style_class: 'focusdock-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
-        this._addButton.set_child(new St.Icon({icon_name: 'list-add-symbolic', style_class: 'focusdock-add-icon'}));
+        this._addButton = new St.Button({style_class: 'deskai-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        this._addButton.set_child(new St.Icon({icon_name: 'list-add-symbolic', style_class: 'deskai-add-icon'}));
         this._addButton.connect('clicked', () => this._openAppPicker());
         this._dock.add_child(this._switcher);
         this._dock.add_child(separator());
@@ -636,7 +636,7 @@ export default class FocusDockExtension extends Extension {
         this._inOverview = Main.overview.visible;
 
         // A one-pixel strip on the bottom edge; touching it brings a hidden dock back.
-        this._edge = new St.Widget({name: 'focusdockEdge', reactive: true, track_hover: true, visible: false});
+        this._edge = new St.Widget({name: 'deskaiEdge', reactive: true, track_hover: true, visible: false});
         Main.layoutManager.addTopChrome(this._edge);
         this._trackFrame();
 
@@ -688,7 +688,7 @@ export default class FocusDockExtension extends Extension {
             },
             this);
 
-        this._tooltip = new St.Label({style_class: 'focusdock-tooltip', visible: false});
+        this._tooltip = new St.Label({style_class: 'deskai-tooltip', visible: false});
         Main.uiGroup.add_child(this._tooltip);
         this._addTooltip(this._addButton, () => this._t('addAppsTooltip', {mode: this._modeLabel(this._mode)}));
     }
@@ -748,7 +748,7 @@ export default class FocusDockExtension extends Extension {
         }
 
         this._stayClip = new St.Widget({clip_to_allocation: true, visible: false, width: 0, y_align: Clutter.ActorAlign.CENTER});
-        this._stay = new St.Button({style_class: 'focusdock-stay', label: this._t('stay'), can_focus: true});
+        this._stay = new St.Button({style_class: 'deskai-stay', label: this._t('stay'), can_focus: true});
         this._stay.set_pivot_point(0.5, 0.5);
         this._stay.connect('clicked', () => this._cancelPending());
         this._stayClip.add_child(this._stay);
@@ -762,7 +762,7 @@ export default class FocusDockExtension extends Extension {
     _modeButton(key) {
         const mode = this._modes[key];
         const button = new St.Button({
-            style_class: 'focusdock-mode',
+            style_class: 'deskai-mode',
             can_focus: true,
             track_hover: true,
             accessible_name: mode.label ?? key,
@@ -773,21 +773,21 @@ export default class FocusDockExtension extends Extension {
         // spans the button and places it at 0,0 (a plain FixedLayout).
         const inner = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         const holder = new St.Widget({x_expand: true, y_expand: true});
-        const progress = new St.Widget({style_class: 'focusdock-mode-progress', visible: false});
+        const progress = new St.Widget({style_class: 'deskai-mode-progress', visible: false});
         holder.add_child(progress);
-        const content = new St.BoxLayout({style_class: 'focusdock-mode-box', y_align: Clutter.ActorAlign.CENTER});
+        const content = new St.BoxLayout({style_class: 'deskai-mode-box', y_align: Clutter.ActorAlign.CENTER});
         content.add_child(new St.Icon({
             icon_name: mode.icon ?? 'emblem-default-symbolic',
             fallback_icon_name: 'emblem-default-symbolic',
-            style_class: 'focusdock-mode-icon',
+            style_class: 'deskai-mode-icon',
             y_align: Clutter.ActorAlign.CENTER,
         }));
         // The label lives in a clipping box whose width animates open and closed.
         const labelClip = new St.Widget({clip_to_allocation: true, width: 0, y_align: Clutter.ActorAlign.CENTER});
-        const labelBox = new St.BoxLayout({style_class: 'focusdock-mode-labels', opacity: 0});
-        const label = new St.Label({text: mode.label ?? key, style_class: 'focusdock-mode-label', y_align: Clutter.ActorAlign.CENTER});
-        const time = new St.Label({style_class: 'focusdock-mode-time', y_align: Clutter.ActorAlign.CENTER, visible: false});
-        const badge = new St.Label({style_class: 'focusdock-badge', y_align: Clutter.ActorAlign.CENTER, visible: false});
+        const labelBox = new St.BoxLayout({style_class: 'deskai-mode-labels', opacity: 0});
+        const label = new St.Label({text: mode.label ?? key, style_class: 'deskai-mode-label', y_align: Clutter.ActorAlign.CENTER});
+        const time = new St.Label({style_class: 'deskai-mode-time', y_align: Clutter.ActorAlign.CENTER, visible: false});
+        const badge = new St.Label({style_class: 'deskai-badge', y_align: Clutter.ActorAlign.CENTER, visible: false});
         labelBox.add_child(label);
         labelBox.add_child(time);
         labelBox.add_child(badge);
@@ -817,7 +817,7 @@ export default class FocusDockExtension extends Extension {
             const active = entry.key === this._mode;
             const pending = this._pending?.target === entry.key;
 
-            entry.button.style_class = `focusdock-mode${active ? ' active' : ''}${pending ? ' pending' : ''}`;
+            entry.button.style_class = `deskai-mode${active ? ' active' : ''}${pending ? ' pending' : ''}`;
             if (active)
                 entry.button.set_style(`background-color: ${color};`);
             else if (pending)
@@ -974,7 +974,7 @@ export default class FocusDockExtension extends Extension {
 
     _appButton(app, foreign) {
         const button = new St.Button({
-            style_class: foreign ? 'focusdock-app foreign' : 'focusdock-app',
+            style_class: foreign ? 'deskai-app foreign' : 'deskai-app',
             can_focus: true,
             track_hover: true,
             accessible_name: app.get_name(),
@@ -986,7 +986,7 @@ export default class FocusDockExtension extends Extension {
         const iconBox = new St.Widget({layout_manager: new Clutter.BinLayout()});
         iconBox.add_child(icon);
         const badge = new St.Widget({
-            style_class: 'focusdock-app-badge',
+            style_class: 'deskai-app-badge',
             visible: false,
             x_expand: true,
             y_expand: true,
@@ -995,7 +995,7 @@ export default class FocusDockExtension extends Extension {
         });
         iconBox.add_child(badge);
         box.add_child(iconBox);
-        const dot = new St.Widget({style_class: 'focusdock-dot', x_align: Clutter.ActorAlign.CENTER});
+        const dot = new St.Widget({style_class: 'deskai-dot', x_align: Clutter.ActorAlign.CENTER});
         dot.opacity = app.state === Shell.AppState.STOPPED ? 0 : 255;
         box.add_child(dot);
         button.set_child(box);
@@ -1064,7 +1064,7 @@ export default class FocusDockExtension extends Extension {
         if (this._placeholderIndex === index)
             return;
         this._removePlaceholder(animate);
-        const placeholder = new St.Widget({style_class: 'focusdock-placeholder', width: animate ? 0 : this._drag.slot});
+        const placeholder = new St.Widget({style_class: 'deskai-placeholder', width: animate ? 0 : this._drag.slot});
         const others = this._drag.others.map(e => e.button);
         if (others[index])
             this._appsBox.insert_child_below(placeholder, others[index]);
@@ -1208,7 +1208,7 @@ export default class FocusDockExtension extends Extension {
         this._tooltip.hide();
 
         const menu = new PopupMenu.PopupMenu(sourceActor, 0.5, St.Side.BOTTOM);
-        menu.actor.add_style_class_name('focusdock-menu');
+        menu.actor.add_style_class_name('deskai-menu');
         Main.uiGroup.add_child(menu.actor);
         menu.actor.hide();
         this._menuManager.addMenu(menu);
@@ -1353,7 +1353,7 @@ export default class FocusDockExtension extends Extension {
             this._modesFile.replace_contents(new TextEncoder().encode(text), null, false,
                 Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
-            Main.notifyError('FocusDock', `Couldn't save modes.json: ${e.message}`);
+            Main.notifyError('DeskAI', `Couldn't save modes.json: ${e.message}`);
         }
         this._updateIndicator();
     }
@@ -1794,17 +1794,17 @@ export default class FocusDockExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             layout_manager: new Clutter.BinLayout(),
         });
-        const row = new St.BoxLayout({style_class: 'focusdock-inbox-row'});
+        const row = new St.BoxLayout({style_class: 'deskai-inbox-row'});
         row.add_child(separator());
         this._inboxButton = new St.Button({
-            style_class: 'focusdock-inbox',
+            style_class: 'deskai-inbox',
             can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
             button_mask: St.ButtonMask.ONE | St.ButtonMask.THREE,
         });
-        const box = new St.BoxLayout({style_class: 'focusdock-inbox-box'});
+        const box = new St.BoxLayout({style_class: 'deskai-inbox-box'});
         this._inboxFaces = new St.Widget({layout_manager: new Clutter.FixedLayout(), y_align: Clutter.ActorAlign.CENTER});
-        this._inboxCount = new St.Label({style_class: 'focusdock-inbox-count', y_align: Clutter.ActorAlign.CENTER});
+        this._inboxCount = new St.Label({style_class: 'deskai-inbox-count', y_align: Clutter.ActorAlign.CENTER});
         box.add_child(this._inboxFaces);
         box.add_child(this._inboxCount);
         this._inboxButton.set_child(box);
@@ -1831,7 +1831,7 @@ export default class FocusDockExtension extends Extension {
         // The most pressing one on top, at the left.
         faces.reverse().forEach((item, i) => {
             const face = new St.Bin({
-                style_class: 'focusdock-inbox-face',
+                style_class: 'deskai-inbox-face',
                 child: new St.Icon({gicon: item.gicon, fallback_icon_name: 'mail-unread-symbolic', icon_size: 16}),
             });
             face.set_position((faces.length - 1 - i) * STEP, 0);
@@ -1840,7 +1840,7 @@ export default class FocusDockExtension extends Extension {
         this._inboxFaces.set_size(faces.length ? FACE + STEP * (faces.length - 1) : 0, FACE);
         this._inboxCount.text = `${items.length}`;
         const top = items[0];
-        this._inboxButton.style_class = `focusdock-inbox${top && top.kind !== 'message' ? ` ${top.kind}` : ''}`;
+        this._inboxButton.style_class = `deskai-inbox${top && top.kind !== 'message' ? ` ${top.kind}` : ''}`;
         this._showInbox(items.length > 0);
         if (popKey && items.length) {
             this._inboxButton.set_pivot_point(0.5, 0.5);
@@ -1901,7 +1901,7 @@ export default class FocusDockExtension extends Extension {
             const [top] = items;
             const appear = !badge.visible || app.get_id() === popApp;
             // Not a 'message' class: GNOME's theme styles .message (a notification) with padding.
-            badge.style_class = `focusdock-app-badge${top.kind !== 'message' ? ` ${top.kind}` : ''}`;
+            badge.style_class = `deskai-app-badge${top.kind !== 'message' ? ` ${top.kind}` : ''}`;
             badge.set_style(top.kind === 'message' ? `background-color: ${this._messageColor(top)};` : null);
             badge.visible = true;
             if (appear && animate) {
@@ -1977,10 +1977,10 @@ export default class FocusDockExtension extends Extension {
     _openInboxMenu() {
         this._openMenu(this._inboxButton, menu => {
             const header = new PopupMenu.PopupMenuItem(this._t('inboxTitle'), {reactive: false, can_focus: false});
-            header.label.add_style_class_name('focusdock-picker-title');
+            header.label.add_style_class_name('deskai-picker-title');
             menu.addMenuItem(header);
             for (const item of this._inbox.list()) {
-                const row = new PopupMenu.PopupBaseMenuItem({style_class: 'focusdock-inbox-item'});
+                const row = new PopupMenu.PopupBaseMenuItem({style_class: 'deskai-inbox-item'});
                 row.add_child(new St.Icon({
                     gicon: item.gicon,
                     fallback_icon_name: 'mail-unread-symbolic',
@@ -1992,18 +1992,18 @@ export default class FocusDockExtension extends Extension {
                     x_expand: true,
                     y_align: Clutter.ActorAlign.CENTER,
                 });
-                text.add_child(new St.Label({text: item.title || item.label, style_class: 'focusdock-inbox-item-title'}));
+                text.add_child(new St.Label({text: item.title || item.label, style_class: 'deskai-inbox-item-title'}));
                 text.add_child(new St.Label({
                     text: `${this._inboxSubtitle(item)} · ${this._ago(item.time)}`,
-                    style_class: 'focusdock-inbox-item-meta',
+                    style_class: 'deskai-inbox-item-meta',
                 }));
                 const line = item.body.split('\n').find(l => l.trim()) ?? '';
                 if (line)
-                    text.add_child(new St.Label({text: line, style_class: 'focusdock-inbox-item-body'}));
+                    text.add_child(new St.Label({text: line, style_class: 'deskai-inbox-item-body'}));
                 row.add_child(text);
                 if (item.kind !== 'message') {
                     row.add_child(new St.Widget({
-                        style_class: 'focusdock-inbox-item-dot',
+                        style_class: 'deskai-inbox-item-dot',
                         style: `background-color: ${INBOX_COLORS[item.kind]};`,
                         y_align: Clutter.ActorAlign.CENTER,
                     }));
@@ -2027,17 +2027,17 @@ export default class FocusDockExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
             layout_manager: new Clutter.BinLayout(),
         });
-        const row = new St.BoxLayout({style_class: 'focusdock-inbox-row'});
+        const row = new St.BoxLayout({style_class: 'deskai-inbox-row'});
         row.add_child(separator());
         this._nextButton = new St.Button({
-            style_class: 'focusdock-next',
+            style_class: 'deskai-next',
             can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
             button_mask: St.ButtonMask.ONE | St.ButtonMask.THREE,
         });
-        const box = new St.BoxLayout({style_class: 'focusdock-next-box'});
-        this._nextIcon = new St.Icon({style_class: 'focusdock-next-icon', fallback_icon_name: 'folder-symbolic'});
-        this._nextLabel = new St.Label({style_class: 'focusdock-next-label', y_align: Clutter.ActorAlign.CENTER});
+        const box = new St.BoxLayout({style_class: 'deskai-next-box'});
+        this._nextIcon = new St.Icon({style_class: 'deskai-next-icon', fallback_icon_name: 'folder-symbolic'});
+        this._nextLabel = new St.Label({style_class: 'deskai-next-label', y_align: Clutter.ActorAlign.CENTER});
         box.add_child(this._nextIcon);
         box.add_child(this._nextLabel);
         this._nextButton.set_child(box);
@@ -2165,7 +2165,7 @@ export default class FocusDockExtension extends Extension {
         this._openMenu(this._nextButton, menu => {
             if (s?.kind === 'file') {
                 const header = new PopupMenu.PopupMenuItem(s.name, {reactive: false, can_focus: false});
-                header.label.add_style_class_name('focusdock-picker-title');
+                header.label.add_style_class_name('deskai-picker-title');
                 menu.addMenuItem(header);
                 for (const action of ['open', 'show', 'copy', 'delete'])
                     this._menuItem(menu, this._placeAction(s, action), () => this._places.act(action));
@@ -2185,18 +2185,18 @@ export default class FocusDockExtension extends Extension {
         if (!folders.length)
             return false;
         const header = new PopupMenu.PopupMenuItem(this._t('recentPlaces'), {reactive: false, can_focus: false});
-        header.label.add_style_class_name('focusdock-picker-title');
+        header.label.add_style_class_name('deskai-picker-title');
         menu.addMenuItem(header);
         for (const uri of folders) {
-            const row = new PopupMenu.PopupBaseMenuItem({style_class: 'focusdock-inbox-item'});
+            const row = new PopupMenu.PopupBaseMenuItem({style_class: 'deskai-inbox-item'});
             row.add_child(new St.Icon({
                 gicon: this._placeIcon({kind: 'folder', uri}, true),
                 icon_size: 16,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             const text = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, x_expand: true});
-            text.add_child(new St.Label({text: baseName(uri), style_class: 'focusdock-inbox-item-title'}));
-            text.add_child(new St.Label({text: displayPath(uri), style_class: 'focusdock-inbox-item-meta'}));
+            text.add_child(new St.Label({text: baseName(uri), style_class: 'deskai-inbox-item-title'}));
+            text.add_child(new St.Label({text: displayPath(uri), style_class: 'deskai-inbox-item-meta'}));
             row.add_child(text);
             row.connect('activate', () => this._debounce('menu-action', 0, () => this._places.openFolder(uri)));
             menu.addMenuItem(row);
@@ -2207,7 +2207,7 @@ export default class FocusDockExtension extends Extension {
     // ---- panel indicator ----------------------------------------------
 
     _buildIndicator() {
-        this._indicator = new PanelMenu.Button(0.0, 'FocusDock', false);
+        this._indicator = new PanelMenu.Button(0.0, 'DeskAI', false);
         const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
         this._indicatorIcon = new St.Icon({style_class: 'system-status-icon'});
         this._indicatorLabel = new St.Label({y_align: Clutter.ActorAlign.CENTER});
@@ -2267,7 +2267,7 @@ export default class FocusDockExtension extends Extension {
             try {
                 Gio.AppInfo.launch_default_for_uri(this._modesFile.get_uri(), null);
             } catch (e) {
-                Main.notifyError('FocusDock', e.message);
+                Main.notifyError('DeskAI', e.message);
             }
         });
         menu.addMenuItem(edit);
@@ -2462,7 +2462,7 @@ export default class FocusDockExtension extends Extension {
                 try {
                     return this._desk.place(id, JSON.parse(json));
                 } catch (e) {
-                    console.warn(`FocusDock: can't place window ${id}: ${e.message}`);
+                    console.warn(`DeskAI: can't place window ${id}: ${e.message}`);
                     return false;
                 }
             },
@@ -2471,7 +2471,7 @@ export default class FocusDockExtension extends Extension {
                 try {
                     return this._desk.raise(JSON.parse(json));
                 } catch (e) {
-                    console.warn(`FocusDock: can't raise windows: ${e.message}`);
+                    console.warn(`DeskAI: can't raise windows: ${e.message}`);
                     return 0;
                 }
             },
@@ -2484,17 +2484,17 @@ export default class FocusDockExtension extends Extension {
                 try {
                     this._showCard(JSON.parse(json));
                 } catch (e) {
-                    console.warn(`FocusDock: bad card: ${e.message}`);
+                    console.warn(`DeskAI: bad card: ${e.message}`);
                 }
             },
             SurfaceNotification: id => this._surfaceHeld(id),
-            // From `focusdock hook`: an AI agent in some window is done or needs you.
+            // From `deskai hook`: an AI agent in some window is done or needs you.
             Inbox: json => {
                 try {
                     if (this._inboxSettings().enabled)
                         this._inbox.takeHook(JSON.parse(json));
                 } catch (e) {
-                    console.warn(`FocusDock: bad inbox event: ${e.message}`);
+                    console.warn(`DeskAI: bad inbox event: ${e.message}`);
                 }
             },
             MinimizeFocused: () => this._focusWindow?.minimize(),

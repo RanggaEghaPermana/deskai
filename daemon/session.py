@@ -5,8 +5,8 @@ While you work, `snapshot()` records the desktop every half minute:
 - each terminal window's tabs in order (Ptyxis shows them to the accessibility tree), and in each
   tab its folder and the Claude Code conversation running there (Claude keeps
   ~/.claude/sessions/<pid>.json, and titles the tab after the conversation);
-- FocusDock's dev servers, the database the routine starts, the folders open in Files, and the dock mode.
-The last few snapshots are kept in ~/.local/state/focusdock/session.json.
+- DeskAI's dev servers, the database the routine starts, the folders open in Files, and the dock mode.
+The last few snapshots are kept in ~/.local/state/deskai/session.json.
 
 After a new login, `restore()` brings the richest of the final snapshots back: the database, the
 servers, Chrome with its tabs, Files at the same folders, the other apps, every terminal window with
@@ -243,9 +243,9 @@ def all_tabs(snap):
 
 
 def servers():
-    """FocusDock's dev servers that are running (started by the routine or a restore)."""
+    """DeskAI's dev servers that are running (started by the routine or a restore)."""
     try:
-        out = subprocess.run(["systemctl", "--user", "list-units", "focusdock-*", "--state=active",
+        out = subprocess.run(["systemctl", "--user", "list-units", "deskai-*", "--state=active",
                               "--no-legend", "--plain"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return []
@@ -254,7 +254,7 @@ def servers():
         props = subprocess.run(["systemctl", "--user", "show", unit, "-p", "Description", "-p", "WorkingDirectory"],
                                capture_output=True, text=True, timeout=5).stdout
         values = dict(line.split("=", 1) for line in props.splitlines() if "=" in line)
-        command = values.get("Description", "").removeprefix("FocusDock: ")
+        command = values.get("Description", "").removeprefix("DeskAI: ")
         if command and values.get("WorkingDirectory"):
             found.append({"cwd": values["WorkingDirectory"], "command": command, "port": routine.guess_port(command)})
     return found
@@ -517,7 +517,7 @@ def restore(snap, progress, set_mode, labels=None):
             # resumed conversations. With nothing open yet, set its saved session aside.
             saved_session = Path.home() / ".config" / "org.gnome.Ptyxis" / "session.gvariant"
             if saved_session.exists() and not running("ptyxis"):
-                saved_session.replace(saved_session.with_name("session.gvariant.focusdock-bak"))
+                saved_session.replace(saved_session.with_name("session.gvariant.deskai-bak"))
 
             def open_tab(tab, where):
                 cwd = tab["cwd"] if os.path.isdir(tab["cwd"]) else str(Path.home())

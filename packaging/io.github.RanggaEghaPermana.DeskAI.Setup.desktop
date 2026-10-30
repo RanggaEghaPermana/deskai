@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=FocusDock Setup
-Comment=Install, update or remove FocusDock
-Exec=focusdock-setup
-Icon=io.github.RanggaEghaPermana.FocusDock
+Name=DeskAI Setup
+Comment=Install, update or remove DeskAI
+Exec=deskai-setup
+Icon=io.github.RanggaEghaPermana.DeskAI
 Terminal=false
 Categories=Settings;GNOME;GTK;
 Keywords=dock;focus;productivity;

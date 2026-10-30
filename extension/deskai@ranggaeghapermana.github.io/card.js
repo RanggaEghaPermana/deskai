@@ -34,8 +34,8 @@ export class Card {
         this._onAction = onAction;
         this.spec = null;
 
-        this.actor = new St.Widget({name: 'focusdockCard', reactive: true, visible: false, opacity: 0});
-        this._body = new St.BoxLayout({style_class: 'focusdock-card'});
+        this.actor = new St.Widget({name: 'deskaiCard', reactive: true, visible: false, opacity: 0});
+        this._body = new St.BoxLayout({style_class: 'deskai-card'});
         this._tail = new St.DrawingArea({width: TAIL_WIDTH, height: TAIL_HEIGHT});
         this._tail.connect('repaint', area => {
             const cr = area.get_context();
@@ -135,10 +135,10 @@ export class Card {
         this._body.destroy_all_children();
         this._wrapLabels = [];
 
-        const icon = new St.Icon({gicon, icon_size: 28, style_class: 'focusdock-card-icon', y_align: Clutter.ActorAlign.START});
+        const icon = new St.Icon({gicon, icon_size: 28, style_class: 'deskai-card-icon', y_align: Clutter.ActorAlign.START});
         this._body.add_child(icon);
 
-        const column = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'focusdock-card-col'});
+        const column = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-card-col'});
         this._body.add_child(column);
 
         if (spec.title || spec.subtitle) {
@@ -147,16 +147,16 @@ export class Card {
                 parts.push(`<b>${esc(spec.title)}</b>`);
             if (spec.subtitle)
                 parts.push(`<span foreground="${GRAY}">${spec.title ? ' · ' : ''}${esc(spec.subtitle)}</span>`);
-            column.add_child(this._wrap(markupLabel(parts.join(''), 'focusdock-card-head')));
+            column.add_child(this._wrap(markupLabel(parts.join(''), 'deskai-card-head')));
         }
         if (spec.text)
-            column.add_child(this._wrap(markupLabel(esc(spec.text), 'focusdock-card-text')));
+            column.add_child(this._wrap(markupLabel(esc(spec.text), 'deskai-card-text')));
 
         if (spec.verdict) {
-            const row = new St.BoxLayout({style_class: 'focusdock-card-verdict'});
+            const row = new St.BoxLayout({style_class: 'deskai-card-verdict'});
             row.add_child(new St.Icon({
                 icon_name: 'object-select-symbolic',
-                style_class: 'focusdock-card-check',
+                style_class: 'deskai-card-check',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             let markup = `<b>${esc(spec.verdict.label)}</b>`;
@@ -164,26 +164,26 @@ export class Card {
                 markup += `<span foreground="${GRAY}"> · </span><span foreground="${SPARKLE}">✦</span>` +
                     `<span foreground="#6e6e73"> ${esc(spec.verdict.reason)}</span>`;
             }
-            row.add_child(this._wrap(markupLabel(markup, 'focusdock-card-text')));
+            row.add_child(this._wrap(markupLabel(markup, 'deskai-card-text')));
             column.add_child(row);
         }
 
         if (spec.chip) {
             // Colors come from CSS here: a span covering a whole label lost its color in testing.
-            const chip = new St.BoxLayout({style_class: 'focusdock-card-chip', x_align: Clutter.ActorAlign.START});
+            const chip = new St.BoxLayout({style_class: 'deskai-card-chip', x_align: Clutter.ActorAlign.START});
             chip.add_child(new St.Label({
                 text: `✦ ${spec.chip.label}`,
-                style_class: 'focusdock-card-chip-tag',
+                style_class: 'deskai-card-chip-tag',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             if (spec.chip.detail) {
-                chip.add_child(this._wrap(markupLabel(`· ${esc(spec.chip.detail)}`, 'focusdock-card-chip-detail')));
+                chip.add_child(this._wrap(markupLabel(`· ${esc(spec.chip.detail)}`, 'deskai-card-chip-detail')));
             }
             column.add_child(chip);
         }
 
         if (spec.actions?.length) {
-            const row = new St.BoxLayout({style_class: 'focusdock-card-actions'});
+            const row = new St.BoxLayout({style_class: 'deskai-card-actions'});
             for (const action of spec.actions)
                 row.add_child(this._button(action, accent));
             column.add_child(row);
@@ -197,14 +197,14 @@ export class Card {
 
     _button(action, accent) {
         const button = new St.Button({
-            style_class: action.primary ? 'focusdock-card-button primary' : 'focusdock-card-button',
+            style_class: action.primary ? 'deskai-card-button primary' : 'deskai-card-button',
             can_focus: false,
         });
-        const box = new St.BoxLayout({style_class: 'focusdock-card-button-box'});
+        const box = new St.BoxLayout({style_class: 'deskai-card-button-box'});
         if (action.icon) {
             box.add_child(new St.Icon({
                 icon_name: action.icon,
-                style_class: 'focusdock-card-button-icon',
+                style_class: 'deskai-card-button-icon',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
         }

@@ -10,7 +10,7 @@
 // download: did you play it, show it in its folder, or delete it? After
 // entering a mode: which folder did you open first? The card's main button is
 // your usual choice, and a folder you open in most sessions of a mode is
-// offered when you enter it. Everything stays in ~/.local/state/focusdock/places.json.
+// offered when you enter it. Everything stays in ~/.local/state/deskai/places.json.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -62,7 +62,7 @@ export class Places {
 
     enable() {
         this._stateFile = Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_state_dir(), 'focusdock', 'places.json']));
+            GLib.build_filenamev([GLib.get_user_state_dir(), 'deskai', 'places.json']));
         this._data = this._load();
         this._home = Gio.File.new_for_path(GLib.get_home_dir()).get_uri();
         this._open = new Map(); // folder uri → open since (ms)
@@ -173,7 +173,7 @@ export class Places {
                 try {
                     bus.call_finish(result);
                 } catch (e) {
-                    console.warn(`FocusDock: ShowItems failed, opening the folder: ${e.message}`);
+                    console.warn(`DeskAI: ShowItems failed, opening the folder: ${e.message}`);
                     this._launch(parentUri(uri));
                 }
             });
@@ -183,7 +183,7 @@ export class Places {
         try {
             Gio.AppInfo.launch_default_for_uri(uri, launchContext());
         } catch (e) {
-            Main.notifyError('FocusDock', e.message);
+            Main.notifyError('DeskAI', e.message);
         }
     }
 
@@ -193,7 +193,7 @@ export class Places {
             try {
                 file.trash_finish(result);
             } catch (e) {
-                Main.notifyError('FocusDock', e.message);
+                Main.notifyError('DeskAI', e.message);
                 return;
             }
             this._trashed = s;
@@ -235,7 +235,7 @@ export class Places {
                 .move(Gio.File.new_for_path(path), Gio.FileCopyFlags.NONE, null, null);
             Gio.File.new_for_path(GLib.build_filenamev([trash, 'info', best.name])).delete(null);
         } catch (e) {
-            Main.notifyError('FocusDock', e.message);
+            Main.notifyError('DeskAI', e.message);
             return;
         }
         this._suggest({...s, id: ++this._seq, until: Date.now() + FILE_SUGGESTION_MS}, false);
@@ -303,7 +303,7 @@ export class Places {
                     this._files = Gio.DBusProxy.new_for_bus_finish(result);
                 } catch (e) {
                     if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                        console.warn(`FocusDock: can't follow Files: ${e.message}`);
+                        console.warn(`DeskAI: can't follow Files: ${e.message}`);
                     return;
                 }
                 this._files.connectObject(
@@ -389,7 +389,7 @@ export class Places {
         try {
             this._downloads = Gio.File.new_for_path(dir).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, null);
         } catch (e) {
-            console.warn(`FocusDock: can't watch ${dir}: ${e.message}`);
+            console.warn(`DeskAI: can't watch ${dir}: ${e.message}`);
             return;
         }
         const E = Gio.FileMonitorEvent;
@@ -530,7 +530,7 @@ export class Places {
                 return data;
         } catch (e) {
             if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
-                console.warn(`FocusDock: places.json unreadable, starting over: ${e.message}`);
+                console.warn(`DeskAI: places.json unreadable, starting over: ${e.message}`);
         }
         return {version: 1, folders: {}, habits: {}};
     }
@@ -558,7 +558,7 @@ export class Places {
             const bytes = new TextEncoder().encode(`${JSON.stringify(this._data)}\n`);
             this._stateFile.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
-            console.warn(`FocusDock: can't save places.json: ${e.message}`);
+            console.warn(`DeskAI: can't save places.json: ${e.message}`);
         }
     }
 }

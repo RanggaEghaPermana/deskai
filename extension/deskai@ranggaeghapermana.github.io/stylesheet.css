@@ -1,10 +1,10 @@
 /* ---- dock ---------------------------------------------------------- */
 
-.focusdock-frame {
+.deskai-frame {
   padding-bottom: 8px;
 }
 
-.focusdock {
+.deskai {
   background-color: rgba(36, 34, 38, 0.62);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 24px;
@@ -13,7 +13,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-.focusdock-sep {
+.deskai-sep {
   width: 1px;
   background-color: rgba(255, 255, 255, 0.16);
   margin: 9px 2px;
@@ -21,11 +21,11 @@
 
 /* ---- mode switcher -------------------------------------------------- */
 
-.focusdock-modes {
+.deskai-modes {
   spacing: 6px;
 }
 
-.focusdock-mode {
+.deskai-mode {
   min-width: 34px;
   min-height: 34px;
   border-radius: 17px;
@@ -34,50 +34,50 @@
   transition-duration: 220ms;
 }
 
-.focusdock-mode:hover {
+.deskai-mode:hover {
   background-color: rgba(255, 255, 255, 0.16);
   color: #ffffff;
 }
 
-.focusdock-mode.active,
-.focusdock-mode.pending {
+.deskai-mode.active,
+.deskai-mode.pending {
   color: #ffffff;
 }
 
-.focusdock-mode-box {
+.deskai-mode-box {
   padding: 0 9px;
 }
 
-.focusdock-mode-icon {
+.deskai-mode-icon {
   icon-size: 16px;
 }
 
-.focusdock-mode-labels {
+.deskai-mode-labels {
   padding: 0 5px 0 7px;
   spacing: 7px;
 }
 
-.focusdock-mode-label {
+.deskai-mode-label {
   font-weight: bold;
 }
 
-.focusdock-mode-time {
+.deskai-mode-time {
   color: rgba(255, 255, 255, 0.8);
   font-feature-settings: "tnum";
 }
 
-.focusdock-mode-progress {
+.deskai-mode-progress {
   border-radius: 17px;
 }
 
-.focusdock-badge {
+.deskai-badge {
   background-color: rgba(0, 0, 0, 0.25);
   border-radius: 9px;
   padding: 0 6px;
   font-size: 0.85em;
 }
 
-.focusdock-stay {
+.deskai-stay {
   min-height: 34px;
   padding: 0 16px;
   border-radius: 17px;
@@ -86,35 +86,35 @@
   font-weight: bold;
 }
 
-.focusdock-stay:hover {
+.deskai-stay:hover {
   background-color: #ececf0;
 }
 
 /* ---- apps ----------------------------------------------------------- */
 
-.focusdock-apps {
+.deskai-apps {
   spacing: 6px;
 }
 
-.focusdock-app {
+.deskai-app {
   border-radius: 12px;
   padding: 3px 3px 1px 3px;
   transition-duration: 150ms;
 }
 
-.focusdock-app:hover {
+.deskai-app:hover {
   background-color: rgba(255, 255, 255, 0.14);
 }
 
-.focusdock-app.foreign {
+.deskai-app.foreign {
   opacity: 0.55;
 }
 
-.focusdock-app.foreign:hover {
+.deskai-app.foreign:hover {
   opacity: 1;
 }
 
-.focusdock-dot {
+.deskai-dot {
   width: 4px;
   height: 4px;
   border-radius: 2px;
@@ -122,7 +122,7 @@
   background-color: rgba(255, 255, 255, 0.8);
 }
 
-.focusdock-tooltip {
+.deskai-tooltip {
   background-color: rgba(20, 20, 24, 0.92);
   color: #ffffff;
   border-radius: 8px;
@@ -132,7 +132,7 @@
 
 /* ---- cards ---------------------------------------------------------- */
 
-.focusdock-card {
+.deskai-card {
   background-color: rgba(255, 255, 255, 0.98);
   color: #1d1d1f;
   border-radius: 14px;
@@ -142,19 +142,19 @@
   font-size: 10pt;
 }
 
-.focusdock-card-icon {
+.deskai-card-icon {
   color: #1d1d1f;
 }
 
-.focusdock-card-col {
+.deskai-card-col {
   spacing: 4px;
 }
 
-.focusdock-card-verdict {
+.deskai-card-verdict {
   spacing: 6px;
 }
 
-.focusdock-card-check {
+.deskai-card-check {
   icon-size: 10px;
   padding: 3px;
   border-radius: 8px;
@@ -162,7 +162,7 @@
   background-color: #34c759;
 }
 
-.focusdock-card-chip {
+.deskai-card-chip {
   margin-top: 2px;
   padding: 3px 9px;
   border-radius: 8px;
@@ -170,21 +170,21 @@
   background-color: #f3f0ff;
 }
 
-.focusdock-card-chip-tag {
+.deskai-card-chip-tag {
   color: #6e56cf;
   font-weight: bold;
 }
 
-.focusdock-card-chip-detail {
+.deskai-card-chip-detail {
   color: #8e8e93;
 }
 
-.focusdock-card-actions {
+.deskai-card-actions {
   spacing: 8px;
   padding-top: 5px;
 }
 
-.focusdock-card-button {
+.deskai-card-button {
   padding: 4px 12px;
   border-radius: 8px;
   border: 1px solid #dcdce1;
@@ -193,28 +193,28 @@
   transition-duration: 120ms;
 }
 
-.focusdock-card-button:hover {
+.deskai-card-button:hover {
   background-color: #e9e9ee;
 }
 
-.focusdock-card-button.primary {
+.deskai-card-button.primary {
   border-width: 0;
   padding: 5px 13px;
   color: #ffffff;
   font-weight: bold;
 }
 
-.focusdock-card-button-box {
+.deskai-card-button-box {
   spacing: 6px;
 }
 
-.focusdock-card-button-icon {
+.deskai-card-button-icon {
   icon-size: 13px;
 }
 
 /* ---- inbox: messages and agents that want you back --------------------- */
 
-.focusdock-app-badge {
+.deskai-app-badge {
   width: 7px;
   height: 7px;
   border-radius: 6px;
@@ -222,19 +222,19 @@
   background-color: #e5484d;
 }
 
-.focusdock-app-badge.attention {
+.deskai-app-badge.attention {
   background-color: #f59e0b;
 }
 
-.focusdock-app-badge.done {
+.deskai-app-badge.done {
   background-color: #10b981;
 }
 
-.focusdock-inbox-row {
+.deskai-inbox-row {
   spacing: 8px;
 }
 
-.focusdock-inbox {
+.deskai-inbox {
   min-height: 34px;
   padding: 0 11px 0 6px;
   border-radius: 17px;
@@ -243,24 +243,24 @@
   transition-duration: 220ms;
 }
 
-.focusdock-inbox:hover {
+.deskai-inbox:hover {
   background-color: rgba(255, 255, 255, 0.18);
 }
 
-.focusdock-inbox.attention {
+.deskai-inbox.attention {
   background-color: #f59e0b;
 }
 
-.focusdock-inbox.done {
+.deskai-inbox.done {
   background-color: #10b981;
 }
 
-.focusdock-inbox.attention:hover,
-.focusdock-inbox.done:hover {
+.deskai-inbox.attention:hover,
+.deskai-inbox.done:hover {
   background-color: rgba(255, 255, 255, 0.28);
 }
 
-.focusdock-next {
+.deskai-next {
   min-height: 34px;
   padding: 0 13px 0 10px;
   border-radius: 17px;
@@ -269,61 +269,61 @@
   transition-duration: 220ms;
 }
 
-.focusdock-next:hover {
+.deskai-next:hover {
   background-color: rgba(255, 255, 255, 0.18);
 }
 
-.focusdock-next-box {
+.deskai-next-box {
   spacing: 7px;
 }
 
-.focusdock-next-icon {
+.deskai-next-icon {
   icon-size: 16px;
 }
 
-.focusdock-next-label {
+.deskai-next-label {
   font-weight: bold;
   max-width: 150px;
 }
 
-.focusdock-inbox-box {
+.deskai-inbox-box {
   spacing: 7px;
 }
 
-.focusdock-inbox-face {
+.deskai-inbox-face {
   width: 22px;
   height: 22px;
   border-radius: 11px;
   background-color: rgba(28, 27, 31, 0.95);
 }
 
-.focusdock-inbox-count {
+.deskai-inbox-count {
   font-weight: bold;
   font-feature-settings: "tnum";
 }
 
-.focusdock-inbox-item {
+.deskai-inbox-item {
   spacing: 12px;
   padding: 8px 14px;
 }
 
-.focusdock-inbox-item-title {
+.deskai-inbox-item-title {
   font-weight: bold;
   max-width: 300px;
 }
 
-.focusdock-inbox-item-meta {
+.deskai-inbox-item-meta {
   font-size: 0.85em;
   color: rgba(127, 127, 127, 1);
   max-width: 300px;
 }
 
-.focusdock-inbox-item-body {
+.deskai-inbox-item-body {
   font-size: 0.9em;
   max-width: 300px;
 }
 
-.focusdock-inbox-item-dot {
+.deskai-inbox-item-dot {
   width: 8px;
   height: 8px;
   border-radius: 4px;
@@ -331,7 +331,7 @@
 
 /* ---- editing: "+" button, app picker, mode dialog --------------------- */
 
-.focusdock-add {
+.deskai-add {
   min-width: 34px;
   min-height: 34px;
   border-radius: 17px;
@@ -340,101 +340,101 @@
   transition-duration: 150ms;
 }
 
-.focusdock-add:hover {
+.deskai-add:hover {
   background-color: rgba(255, 255, 255, 0.16);
   color: #ffffff;
 }
 
-.focusdock-add-icon {
+.deskai-add-icon {
   icon-size: 16px;
 }
 
-.focusdock-picker-title {
+.deskai-picker-title {
   font-weight: bold;
 }
 
-.focusdock-picker-search {
+.deskai-picker-search {
   min-width: 300px;
 }
 
-.focusdock-picker-scroll {
+.deskai-picker-scroll {
   max-height: 380px;
   min-width: 320px;
 }
 
-.focusdock-picker-list {
+.deskai-picker-list {
   padding: 2px 6px;
 }
 
-.focusdock-picker-row {
+.deskai-picker-row {
   padding: 6px 10px;
   border-radius: 8px;
 }
 
-.focusdock-picker-row:hover,
-.focusdock-picker-row:focus {
+.deskai-picker-row:hover,
+.deskai-picker-row:focus {
   background-color: rgba(127, 127, 127, 0.18);
 }
 
-.focusdock-picker-name {
+.deskai-picker-name {
   padding-left: 10px;
 }
 
-.focusdock-picker-check {
+.deskai-picker-check {
   icon-size: 16px;
   color: #3b82f6;
 }
 
-.focusdock-dialog-content {
+.deskai-dialog-content {
   spacing: 6px;
   min-width: 400px;
 }
 
-.focusdock-dialog-title {
+.deskai-dialog-title {
   font-size: 14pt;
   font-weight: bold;
   padding-bottom: 6px;
 }
 
-.focusdock-dialog-label {
+.deskai-dialog-label {
   font-size: 0.9em;
   color: rgba(127, 127, 127, 1);
   padding-top: 8px;
 }
 
-.focusdock-swatches,
-.focusdock-icon-row {
+.deskai-swatches,
+.deskai-icon-row {
   spacing: 8px;
 }
 
-.focusdock-icon-grid {
+.deskai-icon-grid {
   spacing: 6px;
 }
 
-.focusdock-swatch {
+.deskai-swatch {
   width: 26px;
   height: 26px;
   border-radius: 13px;
   border: 2px solid transparent;
 }
 
-.focusdock-swatch.selected {
+.deskai-swatch.selected {
   border: 3px solid rgba(127, 127, 127, 0.95);
 }
 
-.focusdock-icon-choice {
+.deskai-icon-choice {
   padding: 7px;
   border-radius: 8px;
 }
 
-.focusdock-icon-choice:hover {
+.deskai-icon-choice:hover {
   background-color: rgba(127, 127, 127, 0.15);
 }
 
-.focusdock-icon-choice.selected {
+.deskai-icon-choice.selected {
   background-color: rgba(127, 127, 127, 0.32);
 }
 
-.focusdock-dialog-check {
+.deskai-dialog-check {
   padding-top: 10px;
 }

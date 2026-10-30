@@ -1,0 +1,8 @@
+{
+  "uuid": "deskai@ranggaeghapermana.github.io",
+  "name": "DeskAI",
+  "description": "A dock with focus modes (Writing, Building, Studying…). Holds notifications per mode and talks to the deskaid brain over D-Bus.",
+  "shell-version": ["50"],
+  "url": "https://github.com/RanggaEghaPermana/deskai",
+  "version": 1
+}

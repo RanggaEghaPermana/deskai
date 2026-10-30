@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs FocusDock inside a throwaway headless GNOME Shell with its own HOME,
+# Runs DeskAI inside a throwaway headless GNOME Shell with its own HOME,
 # so it can be tested without touching the real session.
 #   dev/nested.sh            start (foreground)
 #   source dev/run/env       in another shell to talk to it
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UUID="focusdock@ranggaeghapermana.github.io"
+UUID="deskai@ranggaeghapermana.github.io"
 RUN="$ROOT/dev/run"
 SIZE="${1:-1600x900}"
 
@@ -32,8 +32,8 @@ XDG_PICTURES_DIR="$HOME/Pictures"
 XDG_DOCUMENTS_DIR="$HOME/Documents"
 DIRS
 ln -s "$ROOT/extension/$UUID" "$XDG_DATA_HOME/gnome-shell/extensions/$UUID"
-ln -s "$ROOT/dev/testhelper@focusdock.dev" "$XDG_DATA_HOME/gnome-shell/extensions/testhelper@focusdock.dev"
-ENABLED="\"$UUID\", \"testhelper@focusdock.dev\""
+ln -s "$ROOT/dev/testhelper@deskai.dev" "$XDG_DATA_HOME/gnome-shell/extensions/testhelper@deskai.dev"
+ENABLED="\"$UUID\", \"testhelper@deskai.dev\""
 for extra in ${EXTRA_EXTENSIONS:-}; do
   ln -s "$REAL_HOME/.local/share/gnome-shell/extensions/$extra" "$XDG_DATA_HOME/gnome-shell/extensions/$extra"
   ENABLED="$ENABLED, \"$extra\""

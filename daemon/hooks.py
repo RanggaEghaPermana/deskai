@@ -1,9 +1,9 @@
 """Agent hooks: how Claude Code, Codex and Gemini CLI tell the dock they're done or need you.
 
-Their hook configs run `focusdock hook <agent>`, which turns the agent's payload into an inbox
+Their hook configs run `deskai hook <agent>`, which turns the agent's payload into an inbox
 event and sends it to the dock with this process's ancestors, so the dock can find the window
-(terminal, IDE, app) the agent runs in. `focusdock hooks install` writes those configs, keeping a
-backup of each file; `focusdock hooks remove` takes FocusDock's entries out again.
+(terminal, IDE, app) the agent runs in. `deskai hooks install` writes those configs, keeping a
+backup of each file; `deskai hooks remove` takes DeskAI's entries out again.
 """
 
 import json
@@ -16,8 +16,8 @@ from pathlib import Path
 
 import brain
 
-MARK = "focusdock hook"
-BACKUP_SUFFIX = ".focusdock-bak"
+MARK = "deskai hook"
+BACKUP_SUFFIX = ".deskai-bak"
 
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 GEMINI_SETTINGS = Path.home() / ".gemini" / "settings.json"
@@ -142,7 +142,7 @@ def run(agent, payload, send):
 # ---- installing ----------------------------------------------------------------
 
 def hook_command(agent):
-    exe = shutil.which("focusdock") or str(Path(sys.argv[0]).resolve())
+    exe = shutil.which("deskai") or str(Path(sys.argv[0]).resolve())
     return [exe, "hook", agent]
 
 
@@ -151,7 +151,7 @@ def _ours(handler):
 
 
 def _strip_hooks(settings):
-    """Takes FocusDock's handlers out of a Claude Code or Gemini CLI settings object."""
+    """Takes DeskAI's handlers out of a Claude Code or Gemini CLI settings object."""
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return
@@ -179,7 +179,7 @@ def _has_hooks(settings):
 def _backup(path):
     backup = path.with_name(path.name + BACKUP_SUFFIX)
     if path.exists() and not backup.exists():
-        shutil.copy2(path, backup)  # the file as it was before FocusDock touched it
+        shutil.copy2(path, backup)  # the file as it was before DeskAI touched it
     return backup
 
 
@@ -217,7 +217,7 @@ def install_gemini():
         _strip_hooks(settings)
         hooks = settings.setdefault("hooks", {})
         for event in GEMINI_EVENTS:
-            handler = {"type": "command", "command": command, "name": "focusdock", "timeout": 5000}
+            handler = {"type": "command", "command": command, "name": "deskai", "timeout": 5000}
             hooks.setdefault(event, []).append({"hooks": [handler]})
     return _edit_json(GEMINI_SETTINGS, edit)
 
@@ -239,10 +239,10 @@ def _codex_notify(lines):
 def install_codex():
     lines = _codex_lines()
     at = _codex_notify(lines)
-    line = f"notify = {json.dumps(hook_command('codex'))}  # FocusDock\n"
+    line = f"notify = {json.dumps(hook_command('codex'))}  # DeskAI\n"
     if at is not None:
-        if "focusdock" not in lines[at]:
-            raise ValueError(f"{CODEX_CONFIG} already has its own `notify`; FocusDock won't overwrite it")
+        if "deskai" not in lines[at]:
+            raise ValueError(f"{CODEX_CONFIG} already has its own `notify`; DeskAI won't overwrite it")
         if lines[at] == line:
             return False
         lines[at] = line
@@ -258,7 +258,7 @@ def install_codex():
 def _codex_installed():
     lines = _codex_lines()
     at = _codex_notify(lines)
-    return at is not None and "focusdock" in lines[at]
+    return at is not None and "deskai" in lines[at]
 
 
 def remove_codex():

@@ -13,7 +13,7 @@ and their logs are in the journal), the page once its server answers, Claude res
 new terminal window. Steps that are already done (a server that already answers, a
 running database) are skipped.
 
-The plan is saved to ~/.config/focusdock/routine.json. Edit it and set "pinned": true to
+The plan is saved to ~/.config/deskai/routine.json. Edit it and set "pinned": true to
 keep your own version instead of relearning each morning.
 """
 
@@ -374,7 +374,7 @@ def due(now=None):
 
 def polkit_rule(user, units):
     """A polkit rule letting `user`, at the machine, start and stop these system services without a password."""
-    return f"""// FocusDock workday routine: let {user} start and stop the database it needs
+    return f"""// DeskAI workday routine: let {user} start and stop the database it needs
 // without typing a password each morning. Only these units, only start/stop/restart,
 // only this user. (Not "local && active": the routine runs from the user's systemd
 // manager, which polkit doesn't count as the active session.) Remove this file to undo.
@@ -410,7 +410,7 @@ def wait_port(port, timeout=60):
 
 def unit_name(project, command):
     slug = re.sub(r"[^a-z0-9]+", "-", f"{Path(project).name}-{command.split()[-1] if command else 'server'}".lower())
-    return f"focusdock-{slug.strip('-')[:60]}"
+    return f"deskai-{slug.strip('-')[:60]}"
 
 
 def already_set_up(plan):
@@ -464,7 +464,7 @@ def run(plan, progress, set_mode):
                 subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
                 result = subprocess.run(
                     ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit}",
-                     f"--description=FocusDock: {step['command']}", f"--working-directory={step['cwd']}",
+                     f"--description=DeskAI: {step['command']}", f"--working-directory={step['cwd']}",
                      f"--setenv=PATH={env['PATH']}", "bash", "-c", step["command"]],
                     capture_output=True, text=True, timeout=30)
                 if result.returncode != 0:

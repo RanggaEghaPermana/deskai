@@ -1,7 +1,7 @@
-# FocusDock
+# DeskAI
 
-A dock for GNOME that helps you stay on what you're doing, tells you when something needs you,
-and puts your desk back the way it was after a logout.
+An AI-aware dock for GNOME. It helps you stay on what you're doing, tells you when something needs
+you, and puts your desk back the way it was after a logout. The AI part is optional.
 
 - **Focus modes.** Writing, Building, Studying, Social: each with its own apps, allowed and blocked
   sites, and notification rules. A nudge when you drift, and a daily focus recap.
@@ -30,16 +30,16 @@ So far it has only been tested on Ubuntu 26.04.
 
 ### Ubuntu and Debian
 
-1. Download `focusdock_<version>_all.deb` from [Releases](https://github.com/RanggaEghaPermana/focusdock/releases).
-2. Double-click it and choose Install, or run `sudo apt install ./focusdock_*_all.deb`.
-3. Open **FocusDock Setup** from the app grid and follow the steps.
+1. Download `deskai_<version>_all.deb` from [Releases](https://github.com/RanggaEghaPermana/deskai/releases).
+2. Double-click it and choose Install, or run `sudo apt install ./deskai_*_all.deb`.
+3. Open **DeskAI Setup** from the app grid and follow the steps.
 4. Log out and back in once. The dock is there from then on.
 
 ### Other distributions with GNOME 50
 
 ```sh
-git clone https://github.com/RanggaEghaPermana/focusdock.git
-cd focusdock
+git clone https://github.com/RanggaEghaPermana/deskai.git
+cd deskai
 ./setup.sh
 ```
 
@@ -51,22 +51,22 @@ With AI **off**, nothing does.
 
 With AI **on**, the titles of the windows you use and the notifications held back during a focus mode
 are sent to Claude, through your Claude Code login or your API key. Password managers are left out,
-and you can add more apps under `llm.exclude_apps` in `~/.config/focusdock/modes.json`.
+and you can add more apps under `llm.exclude_apps` in `~/.config/deskai/modes.json`.
 Using an API key costs money, charged by Anthropic.
 
-Everything else stays on your computer in `~/.config/focusdock` and `~/.local/state/focusdock`.
+Everything else stays on your computer in `~/.config/deskai` and `~/.local/state/deskai`.
 
 ## What it changes on your computer
 
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
   `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. Backups are kept
-  as `*.focusdock-bak`, and removing FocusDock takes the entries out again.
+  as `*.deskai-bak`, and removing DeskAI takes the entries out again.
 - **Resuming Claude Code.** Restoring your desk and the workday routine resume conversations with the
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
-- **Ptyxis' saved session** is set aside as `session.gvariant.focusdock-bak` during a restore, so tabs
+- **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs
   don't come back twice.
 - **Starting your database without a password** is off unless you ask for it:
-  `focusdock routine allow-db` prints a polkit rule for you to install.
+  `deskai routine allow-db` prints a polkit rule for you to install.
 
 ## Using it
 
@@ -74,19 +74,19 @@ Click a mode on the dock to switch to it. Everything else is in the dock's menus
 few things are also on the command line:
 
 ```sh
-focusdock doctor        # check that everything is working
-focusdock status        # mode, window, inbox
-focusdock stats         # today's focus recap
-focusdock session       # what would come back after a logout
-focusdock routine       # the workday routine
-focusdock hooks install # let AI agents report to the dock
+deskai doctor        # check that everything is working
+deskai status        # mode, window, inbox
+deskai stats         # today's focus recap
+deskai session       # what would come back after a logout
+deskai routine       # the workday routine
+deskai hooks install # let AI agents report to the dock
 ```
 
-Modes live in `~/.config/focusdock/modes.json`, and the dock picks up changes right away.
+Modes live in `~/.config/deskai/modes.json`, and the dock picks up changes right away.
 
 ## Remove
 
-Open **FocusDock Setup** and choose **Remove FocusDock**, then uninstall the package if you used the
+Open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package if you used the
 `.deb`. Your modes and stats stay unless you tick the box to delete them too.
 
 ## Development
@@ -95,17 +95,17 @@ Open **FocusDock Setup** and choose **Remove FocusDock**, then uninstall the pac
 ./install.sh            # runs right from this clone
 ./uninstall.sh          # add --purge to delete your modes and stats too
 dev/nested.sh           # a throwaway GNOME Shell with its own HOME, for testing
-packaging/build-deb.sh  # builds dist/focusdock_<version>_all.deb
+packaging/build-deb.sh  # builds dist/deskai_<version>_all.deb
 ```
 
-`extension/` is the GNOME Shell extension, `daemon/` is the background service (`focusd`) and the
-`focusdock` command, and `setup/` is the setup window. GNOME only loads extension code when you log
+`extension/` is the GNOME Shell extension, `daemon/` is the background service (`deskaid`) and the
+`deskai` command, and `setup/` is the setup window. GNOME only loads extension code when you log
 in, so test extension changes in `dev/nested.sh`.
 
 ## Reporting bugs
 
-Open an [issue](https://github.com/RanggaEghaPermana/focusdock/issues) with your distribution, what
-happened, and the output of `focusdock doctor`. Check the output for anything private before posting.
+Open an [issue](https://github.com/RanggaEghaPermana/deskai/issues) with your distribution, what
+happened, and the output of `deskai doctor`. Check the output for anything private before posting.
 
 ## Contributing
 
@@ -114,13 +114,13 @@ test changes in `dev/nested.sh`, and say which GNOME version you tested on.
 
 ## Terms and license
 
-FocusDock is free software, licensed under [GPL-3.0-or-later](LICENSE).
+DeskAI is free software, licensed under [GPL-3.0-or-later](LICENSE).
 
 - You can use it for anything, including commercial work, at no cost.
 - You can study it, change it and share it.
 - If you distribute it or a changed version, you have to keep this license and provide the source code.
 - It comes **with no warranty**. You use it at your own risk.
 
-This is an early release. FocusDock uses parts of GNOME Shell that can change, so a new GNOME version
+This is an early release. DeskAI uses parts of GNOME Shell that can change, so a new GNOME version
 may break it until it's updated. It isn't affiliated with GNOME, Anthropic, Google or Meta; their names
 and products belong to their owners.

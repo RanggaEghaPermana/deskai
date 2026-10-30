@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Sets FocusDock up for the current user, with no UI: the setup window drives this.
+"""Sets DeskAI up for the current user, with no UI: the setup window drives this.
 
-It works from wherever the app's files are: a clone, or /usr/share/focusdock when installed
+It works from wherever the app's files are: a clone, or /usr/share/deskai when installed
 from the .deb. Nothing here needs root, except installing a missing package and removing the
 polkit rule the workday routine may have added; both go through pkexec.
 
@@ -26,10 +26,10 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-UUID = "focusdock@ranggaeghapermana.github.io"
+UUID = "deskai@ranggaeghapermana.github.io"
 SHELL_MAJOR = 50  # the GNOME version this release is written for
-SERVICE = "focusd.service"
-POLKIT_RULE = Path("/etc/polkit-1/rules.d/50-focusdock-services.rules")
+SERVICE = "deskaid.service"
+POLKIT_RULE = Path("/etc/polkit-1/rules.d/50-deskai-services.rules")
 PAYLOAD = ("daemon", "extension", "setup", "VERSION", "LICENSE")
 
 HOME = Path.home()
@@ -38,18 +38,18 @@ CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
 STATE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
 
-SHARE = DATA / "focusdock"
+SHARE = DATA / "deskai"
 APP_DIR = SHARE / "app"           # a copy of the app, when it isn't installed system-wide
 VENV = SHARE / "venv"             # only when using an API key: it needs the anthropic package
 INSTALLED = SHARE / "installed.json"
 EXTENSION_LINK = DATA / "gnome-shell" / "extensions" / UUID
-COMMAND = HOME / ".local" / "bin" / "focusdock"
+COMMAND = HOME / ".local" / "bin" / "deskai"
 UNIT = CONFIG / "systemd" / "user" / SERVICE
-CONFIG_DIR = CONFIG / "focusdock"
+CONFIG_DIR = CONFIG / "deskai"
 ENV_FILE = CONFIG_DIR / "env"
 MODES_FILE = CONFIG_DIR / "modes.json"
 ROUTINE_FILE = CONFIG_DIR / "routine.json"
-APP_ID = "io.github.RanggaEghaPermana.FocusDock"
+APP_ID = "io.github.RanggaEghaPermana.DeskAI"
 LAUNCHER = DATA / "applications" / f"{APP_ID}.Setup.desktop"
 ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
 
@@ -124,10 +124,10 @@ def detected_agents():
 
 
 def hooks_installed():
-    """Whether any AI agent already has FocusDock's hooks in its settings."""
+    """Whether any AI agent already has DeskAI's hooks in its settings."""
     for name in (".claude/settings.json", ".gemini/settings.json", ".codex/config.toml"):
         try:
-            if "focusdock" in (HOME / name).read_text() and "hook" in (HOME / name).read_text():
+            if "deskai" in (HOME / name).read_text() and "hook" in (HOME / name).read_text():
                 return True
         except OSError:
             continue
@@ -309,15 +309,15 @@ def _service_path():
 
 def _write_service(app_dir, python):
     UNIT.parent.mkdir(parents=True, exist_ok=True)
-    focusd = app_dir / "daemon" / "focusd.py"
+    deskaid = app_dir / "daemon" / "deskaid.py"
     UNIT.write_text(f"""[Unit]
-Description=FocusDock brain (focusd)
+Description=DeskAI brain (deskaid)
 PartOf=graphical-session.target
 After=graphical-session.target
-ConditionPathExists={focusd}
+ConditionPathExists={deskaid}
 
 [Service]
-ExecStart={python} {focusd}
+ExecStart={python} {deskaid}
 Environment=PATH={_service_path()}
 EnvironmentFile=-{ENV_FILE}
 Restart=on-failure
@@ -334,7 +334,7 @@ WantedBy=graphical-session.target
 
 def _write_command(app_dir, python):
     COMMAND.parent.mkdir(parents=True, exist_ok=True)
-    COMMAND.write_text(f'#!/bin/sh\nexec "{python}" "{app_dir}/daemon/focusdock.py" "$@"\n')
+    COMMAND.write_text(f'#!/bin/sh\nexec "{python}" "{app_dir}/daemon/deskai.py" "$@"\n')
     COMMAND.chmod(0o755)
 
 
@@ -343,9 +343,9 @@ def _write_launcher(app_dir, python):
     LAUNCHER.parent.mkdir(parents=True, exist_ok=True)
     LAUNCHER.write_text(f"""[Desktop Entry]
 Type=Application
-Name=FocusDock Setup
-Comment=Install, update or remove FocusDock
-Exec={python} {app_dir}/setup/focusdock_setup.py
+Name=DeskAI Setup
+Comment=Install, update or remove DeskAI
+Exec={python} {app_dir}/setup/deskai_setup.py
 Icon={APP_ID}
 Terminal=false
 Categories=Settings;GNOME;GTK;
@@ -421,7 +421,7 @@ def install_steps(options):
 
 
 def uninstall_steps(purge=False):
-    """[(id, function)]: what removing FocusDock does. Keeps your modes and stats unless purge."""
+    """[(id, function)]: what removing DeskAI does. Keeps your modes and stats unless purge."""
 
     def extension():
         settings = Gio.Settings.new("org.gnome.shell")
@@ -453,7 +453,7 @@ def uninstall_steps(purge=False):
 
     def settings():
         if purge:
-            for folder in (CONFIG_DIR, STATE / "focusdock", CACHE / "focusdock"):
+            for folder in (CONFIG_DIR, STATE / "deskai", CACHE / "deskai"):
                 shutil.rmtree(folder, ignore_errors=True)
 
     return [("extension", extension), ("hooks", hooks), ("service", service), ("files", files),
@@ -499,8 +499,8 @@ def main():
                       ai=choices["ai"] or ("claude" if find_claude() else "none"))
     if not run_steps(install_steps(options), show):
         sys.exit(1)
-    print("\nLog out and back in: GNOME only picks up an extension when it starts. Then: focusdock doctor")
-    print("Let Claude Code, Codex and Gemini CLI tell the dock when they're done: focusdock hooks install")
+    print("\nLog out and back in: GNOME only picks up an extension when it starts. Then: deskai doctor")
+    print("Let Claude Code, Codex and Gemini CLI tell the dock when they're done: deskai hooks install")
 
 
 if __name__ == "__main__":

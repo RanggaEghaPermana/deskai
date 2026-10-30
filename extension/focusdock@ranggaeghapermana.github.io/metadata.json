@@ -1,8 +1,0 @@
-{
-  "uuid": "focusdock@ranggaeghapermana.github.io",
-  "name": "FocusDock",
-  "description": "A dock with focus modes (Writing, Building, Studying…). Holds notifications per mode and talks to the focusd brain over D-Bus.",
-  "shell-version": ["50"],
-  "url": "https://github.com/RanggaEghaPermana/focusdock",
-  "version": 1
-}

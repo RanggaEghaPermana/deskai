@@ -1,4 +1,4 @@
-"""Shared pieces of the FocusDock brain: config, rules, prompts and the Claude client."""
+"""Shared pieces of the DeskAI brain: config, rules, prompts and the Claude client."""
 
 import hashlib
 import json
@@ -12,15 +12,15 @@ from pathlib import Path
 
 from gi.repository import GLib
 
-log = logging.getLogger("focusdock")
+log = logging.getLogger("deskai")
 
-BUS_NAME = "io.github.RanggaEghaPermana.FocusDock"
+BUS_NAME = "io.github.RanggaEghaPermana.DeskAI"
 BRAIN_NAME = f"{BUS_NAME}.Brain"
-OBJECT_PATH = "/io/github/RanggaEghaPermana/FocusDock"
+OBJECT_PATH = "/io/github/RanggaEghaPermana/DeskAI"
 
-CONFIG_DIR = Path(GLib.get_user_config_dir()) / "focusdock"
-STATE_DIR = Path(GLib.get_user_state_dir()) / "focusdock"
-CACHE_DIR = Path(GLib.get_user_cache_dir()) / "focusdock"
+CONFIG_DIR = Path(GLib.get_user_config_dir()) / "deskai"
+STATE_DIR = Path(GLib.get_user_state_dir()) / "deskai"
+CACHE_DIR = Path(GLib.get_user_cache_dir()) / "deskai"
 MODES_FILE = CONFIG_DIR / "modes.json"
 
 BROWSERS = {
@@ -236,7 +236,7 @@ def allow_activity(mode, app_id, app_name, title, site=""):
 # ---- prompts ----------------------------------------------------------------
 
 ACTIVITY_SYSTEM = """\
-You are the focus coach inside FocusDock, a desktop dock with focus modes. Decide whether the \
+You are the focus coach inside DeskAI, a desktop dock with focus modes. Decide whether the \
 user's foreground window fits the focus mode they picked.
 
 on_task: clearly serves the mode's purpose, including research, docs or reference material for it.
@@ -292,7 +292,7 @@ NOTIFY_SCHEMA = {
 }
 
 EDIT_SYSTEM = """\
-You edit modes.json, the configuration of FocusDock, a GNOME Shell dock with focus modes. You get the \
+You edit modes.json, the configuration of DeskAI, a GNOME Shell dock with focus modes. You get the \
 current file, the apps installed on the machine, and a request from the owner. Return the complete new \
 file as `config_json` (valid JSON, 2-space indent) and a one or two sentence `summary` of what changed, \
 in casual Indonesian.
@@ -310,7 +310,7 @@ applied to the whole shell.
 - inbox: {enabled: bool, messages: [keywords; a notification whose app, title or site mentions one goes to \
 the dock's inbox as a message, e.g. "WhatsApp"], agent_apps: [desktop ids of AI apps whose notifications \
 mean done or needs attention]}: the dock's inbox, which also gets Claude Code, Codex and Gemini CLI through \
-`focusdock hooks install`.
+`deskai hooks install`.
 - llm: {backend: "auto" | "api" | "claude-cli" | "none", model, effort, triage_notifications: bool, \
 exclude_apps: [desktop ids never sent to the model]}
 - modes: object keyed by a short lowercase id; key order is the order in the dock. Each mode has:
@@ -386,7 +386,7 @@ CARD_STRINGS = {
         "routine_go": "Set up",
         "routine_running": "Setting up…",
         "routine_ready": "Ready to work",
-        "routine_partly": "Ready, but {n} step(s) failed: focusdock routine log",
+        "routine_partly": "Ready, but {n} step(s) failed: deskai routine log",
         "rule_off": "{site} isn't for {mode} mode",
         "rule_on": "{site} fits {mode} mode",
         "rule_app": "{site} is one of {mode} mode's apps",
@@ -425,7 +425,7 @@ CARD_STRINGS = {
         "routine_go": "Siapin",
         "routine_running": "Lagi nyiapin…",
         "routine_ready": "Siap kerja",
-        "routine_partly": "Siap, tapi {n} langkah gagal: focusdock routine log",
+        "routine_partly": "Siap, tapi {n} langkah gagal: deskai routine log",
         "rule_off": "{site} bukan buat mode {mode}",
         "rule_on": "{site} masuk mode {mode}",
         "rule_app": "{site} app-nya mode {mode}",

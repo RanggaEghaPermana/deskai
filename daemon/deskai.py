@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""focusdock: control FocusDock from the terminal (or from your agent)."""
+"""deskai: control DeskAI from the terminal (or from your agent)."""
 
 import argparse
 import difflib
@@ -20,7 +20,7 @@ import routine  # noqa: E402
 import session  # noqa: E402
 from brain import BRAIN_NAME, BUS_NAME, OBJECT_PATH  # noqa: E402
 
-UUID = "focusdock@ranggaeghapermana.github.io"
+UUID = "deskai@ranggaeghapermana.github.io"
 
 
 def bus():
@@ -33,7 +33,7 @@ def call(method, signature=None, args=None):
         result = bus().call_sync(BUS_NAME, OBJECT_PATH, BUS_NAME, method, params, None,
                                  Gio.DBusCallFlags.NONE, 5000, None)
     except GLib.Error as e:
-        sys.exit(f"The dock isn't answering ({e.message}).\nIs the extension active? Try: focusdock doctor")
+        sys.exit(f"The dock isn't answering ({e.message}).\nIs the extension active? Try: deskai doctor")
     return result.unpack()
 
 
@@ -92,7 +92,7 @@ def cmd_mode(args):
             print(f"{mark} {key:<12} {mode['label']}")
         return
     if not call("SetMode", "(s)", (args.name,))[0]:
-        sys.exit(f"No mode `{args.name}`. See: focusdock mode")
+        sys.exit(f"No mode `{args.name}`. See: deskai mode")
 
 
 def cmd_toast(args):
@@ -106,7 +106,7 @@ def cmd_stats(args):
         sys.exit(f"No data for {day} yet.")
     data = json.loads(path.read_text())
     config = load_config()
-    print(f"FocusDock · {day}\n")
+    print(f"DeskAI · {day}\n")
     for key, bucket in data["modes"].items():
         mode = config.mode(key) or {"label": key, "focus": False}
         total = sum(bucket.values())
@@ -263,18 +263,18 @@ def cmd_routine(args):
         units = sorted({s["unit"] for s in routine.load().get("steps", []) if s["type"] == "service"})
         if not units:
             sys.exit("The routine doesn't start any system service.")
-        path = brain.CACHE_DIR / "50-focusdock-services.rules"
+        path = brain.CACHE_DIR / "50-deskai-services.rules"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(routine.polkit_rule(os.environ.get("USER") or os.getlogin(), units))
         print(f"Polkit rule for {', '.join(units)} (start/stop/restart, only your user):\n")
         print(path.read_text())
-        print(f"Install it (once, needs your password):\n  sudo install -m 644 {path} /etc/polkit-1/rules.d/50-focusdock-services.rules")
+        print(f"Install it (once, needs your password):\n  sudo install -m 644 {path} /etc/polkit-1/rules.d/50-deskai-services.rules")
         return
     if action == "log":
         for path in sorted(routine.LOG_DIR.glob("*.log")):
             print(f"==> {path} (last lines)")
             print("".join(path.read_text(errors="replace").splitlines(keepends=True)[-15:]))
-        os.execvp("journalctl", ["journalctl", "--user", "-u", "focusdock-*", "-n", "60", "--no-pager"])
+        os.execvp("journalctl", ["journalctl", "--user", "-u", "deskai-*", "-n", "60", "--no-pager"])
     plan = routine.learn() if action == "learn" else routine.plan_for_today()
     if action == "learn" and plan:
         routine.save(plan)
@@ -371,18 +371,18 @@ def cmd_doctor(_args):
     checks.append(("extension in enabled-extensions", enabled,
                    f"gnome-extensions enable {UUID}  (on Wayland: log out and back in first)"))
     checks.append(("dock on D-Bus", name_has_owner(BUS_NAME),
-                   "log out and back in, then check: journalctl --user -b | grep -i focusdock"))
-    checks.append(("brain (focusd) running", name_has_owner(BRAIN_NAME),
-                   "systemctl --user restart focusd; journalctl --user -u focusd -f"))
+                   "log out and back in, then check: journalctl --user -b | grep -i deskai"))
+    checks.append(("brain (deskaid) running", name_has_owner(BRAIN_NAME),
+                   "systemctl --user restart deskaid; journalctl --user -u deskaid -f"))
     checks.append((f"modes.json valid ({brain.MODES_FILE})", bool(config.data["modes"]),
-                   "see the errors in: journalctl --user -u focusd" if brain.MODES_FILE.exists()
+                   "see the errors in: journalctl --user -u deskaid" if brain.MODES_FILE.exists()
                    else "not there yet; the extension creates it when it first runs"))
     backend = brain.Claude(config.llm).backend
     if config.llm["backend"] == "none":
         checks.append(("AI off (your choice): your allow and block lists decide", True, ""))
     else:
         checks.append((f"Claude backend: {backend}", backend != "none",
-                       "set ANTHROPIC_API_KEY in ~/.config/focusdock/env or install Claude Code"))
+                       "set ANTHROPIC_API_KEY in ~/.config/deskai/env or install Claude Code"))
     for label, ok, fix in checks:
         print(f"{'✓' if ok else '✗'} {label}")
         if not ok:
@@ -390,11 +390,11 @@ def cmd_doctor(_args):
     for name, (label, present, installed, *_rest) in hooks.AGENTS.items():
         if present():
             print(f"✓ {label} tells the dock when it's done" if installed()
-                  else f"- {label} doesn't report to the dock (optional: focusdock hooks install --only {name})")
+                  else f"- {label} doesn't report to the dock (optional: deskai hooks install --only {name})")
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="focusdock", description=__doc__)
+    parser = argparse.ArgumentParser(prog="deskai", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="mode, active window, held notifications").set_defaults(func=cmd_status)

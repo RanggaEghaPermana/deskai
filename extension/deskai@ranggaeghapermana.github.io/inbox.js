@@ -3,7 +3,7 @@
 // Items come from two places. A notification from a messaging app (WhatsApp,
 // even as a Chrome tab) or an AI app (the Claude app, ChatGPT…) skips its
 // banner and lands here. Agents in a terminal (Claude Code, Codex, Gemini CLI)
-// report through `focusdock hook`, which sends its process tree along so the
+// report through `deskai hook`, which sends its process tree along so the
 // item knows the window it came from. Opening an item takes you there, and
 // looking at that window yourself settles it too.
 

@@ -27,11 +27,11 @@ export const MODE_ICONS = [
 // toggles it without closing the menu. Returns the search entry to focus.
 export function fillAppPicker(menu, {title, searchHint, isPinned, onToggle}) {
     const header = new PopupMenu.PopupMenuItem(title, {reactive: false, can_focus: false});
-    header.label.add_style_class_name('focusdock-picker-title');
+    header.label.add_style_class_name('deskai-picker-title');
     menu.addMenuItem(header);
 
     const entry = new St.Entry({
-        style_class: 'focusdock-picker-search',
+        style_class: 'deskai-picker-search',
         hint_text: searchHint,
         can_focus: true,
         x_expand: true,
@@ -40,9 +40,9 @@ export function fillAppPicker(menu, {title, searchHint, isPinned, onToggle}) {
     searchItem.add_child(entry);
     menu.addMenuItem(searchItem);
 
-    const list = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'focusdock-picker-list'});
+    const list = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-picker-list'});
     const scroll = new St.ScrollView({
-        style_class: 'focusdock-picker-scroll',
+        style_class: 'deskai-picker-scroll',
         hscrollbar_policy: St.PolicyType.NEVER,
         vscrollbar_policy: St.PolicyType.AUTOMATIC,
         overlay_scrollbars: true,
@@ -60,18 +60,18 @@ export function fillAppPicker(menu, {title, searchHint, isPinned, onToggle}) {
 
     const rows = apps.map(app => {
         // Plain buttons rather than menu items: menu items close the menu on click.
-        const row = new St.Button({style_class: 'focusdock-picker-row', can_focus: true, x_expand: true});
+        const row = new St.Button({style_class: 'deskai-picker-row', can_focus: true, x_expand: true});
         const box = new St.BoxLayout({x_expand: true});
         box.add_child(app.create_icon_texture(24));
         box.add_child(new St.Label({
             text: app.get_name(),
-            style_class: 'focusdock-picker-name',
+            style_class: 'deskai-picker-name',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         }));
         const check = new St.Icon({
             icon_name: 'object-select-symbolic',
-            style_class: 'focusdock-picker-check',
+            style_class: 'deskai-picker-check',
             y_align: Clutter.ActorAlign.CENTER,
         });
         box.add_child(check);
@@ -97,30 +97,30 @@ export function fillAppPicker(menu, {title, searchHint, isPinned, onToggle}) {
 }
 
 function fieldLabel(text) {
-    return new St.Label({text, style_class: 'focusdock-dialog-label'});
+    return new St.Label({text, style_class: 'deskai-dialog-label'});
 }
 
 export const ModeDialog = GObject.registerClass(
 class ModeDialog extends ModalDialog.ModalDialog {
     // mode: the existing mode to edit, or null for a new one; t: the dock's translator.
     _init(mode, t, onSave) {
-        super._init({styleClass: 'focusdock-mode-dialog'});
+        super._init({styleClass: 'deskai-mode-dialog'});
         this._onSave = onSave;
         this._color = mode?.color ?? MODE_COLORS[4];
         this._icon = mode?.icon ?? MODE_ICONS[4];
 
         const content = new St.BoxLayout({
             orientation: Clutter.Orientation.VERTICAL,
-            style_class: 'focusdock-dialog-content',
+            style_class: 'deskai-dialog-content',
         });
         content.add_child(new St.Label({
             text: mode ? t('dialogEdit', {mode: mode.label}) : t('dialogNew'),
-            style_class: 'focusdock-dialog-title',
+            style_class: 'deskai-dialog-title',
         }));
 
         content.add_child(fieldLabel(t('name')));
         this._name = new St.Entry({
-            style_class: 'focusdock-dialog-entry',
+            style_class: 'deskai-dialog-entry',
             hint_text: t('nameHint'),
             text: mode?.label ?? '',
             can_focus: true,
@@ -129,7 +129,7 @@ class ModeDialog extends ModalDialog.ModalDialog {
 
         content.add_child(fieldLabel(t('purpose')));
         this._description = new St.Entry({
-            style_class: 'focusdock-dialog-entry',
+            style_class: 'deskai-dialog-entry',
             hint_text: t('purposeHint'),
             text: mode?.description ?? '',
             can_focus: true,
@@ -137,9 +137,9 @@ class ModeDialog extends ModalDialog.ModalDialog {
         content.add_child(this._description);
 
         content.add_child(fieldLabel(t('color')));
-        const swatches = new St.BoxLayout({style_class: 'focusdock-swatches'});
+        const swatches = new St.BoxLayout({style_class: 'deskai-swatches'});
         this._swatches = MODE_COLORS.map(color => {
-            const button = new St.Button({style_class: 'focusdock-swatch', can_focus: true});
+            const button = new St.Button({style_class: 'deskai-swatch', can_focus: true});
             button.set_style(`background-color: ${color};`);
             button.connect('clicked', () => {
                 this._color = color;
@@ -151,14 +151,14 @@ class ModeDialog extends ModalDialog.ModalDialog {
         content.add_child(swatches);
 
         content.add_child(fieldLabel(t('icon')));
-        const grid = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'focusdock-icon-grid'});
+        const grid = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-icon-grid'});
         let row = null;
         this._icons = MODE_ICONS.map((name, i) => {
             if (i % 8 === 0) {
-                row = new St.BoxLayout({style_class: 'focusdock-icon-row'});
+                row = new St.BoxLayout({style_class: 'deskai-icon-row'});
                 grid.add_child(row);
             }
-            const button = new St.Button({style_class: 'focusdock-icon-choice', can_focus: true});
+            const button = new St.Button({style_class: 'deskai-icon-choice', can_focus: true});
             button.set_child(new St.Icon({icon_name: name, fallback_icon_name: 'emblem-default-symbolic', icon_size: 16}));
             button.connect('clicked', () => {
                 this._icon = name;
@@ -171,7 +171,7 @@ class ModeDialog extends ModalDialog.ModalDialog {
 
         this._focus = new CheckBox.CheckBox(t('focusCheck'));
         this._focus.checked = mode?.focus ?? true;
-        this._focus.add_style_class_name('focusdock-dialog-check');
+        this._focus.add_style_class_name('deskai-dialog-check');
         content.add_child(this._focus);
 
         this.contentLayout.add_child(content);
