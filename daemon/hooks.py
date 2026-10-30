@@ -242,7 +242,7 @@ def install_codex():
     line = f"notify = {json.dumps(hook_command('codex'))}  # FocusDock\n"
     if at is not None:
         if "focusdock" not in lines[at]:
-            raise ValueError(f"{CODEX_CONFIG} udah punya `notify` sendiri; FocusDock nggak nimpa")
+            raise ValueError(f"{CODEX_CONFIG} already has its own `notify`; FocusDock won't overwrite it")
         if lines[at] == line:
             return False
         lines[at] = line

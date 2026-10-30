@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FocusDock Setup
+Comment=Install, update or remove FocusDock
+Exec=focusdock-setup
+Icon=io.github.RanggaEghaPermana.FocusDock
+Terminal=false
+Categories=Settings;GNOME;GTK;
+Keywords=dock;focus;productivity;
+StartupNotify=true

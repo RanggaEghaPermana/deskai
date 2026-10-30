@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.RanggaEghaPermana.FocusDock.Setup</id>
+  <name>FocusDock</name>
+  <summary>A dock with focus modes, an inbox and desk restore</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.ranggaeghapermana">
+    <name>Rangga Egha Permana</name>
+  </developer>
+  <description>
+    <p>FocusDock is a dock for GNOME 50 that helps you stay on what you're doing, and brings your desk back after a logout.</p>
+    <ul>
+      <li>Focus modes, each with its own apps, allowed sites and notification rules</li>
+      <li>An inbox on the dock for WhatsApp messages and AI agents such as Claude Code</li>
+      <li>After a logout, your windows, terminals and dev servers come back as they were</li>
+    </ul>
+    <p>After installing, open FocusDock Setup and follow the steps.</p>
+  </description>
+  <launchable type="desktop-id">io.github.RanggaEghaPermana.FocusDock.Setup.desktop</launchable>
+  <url type="homepage">https://github.com/RanggaEghaPermana/focusdock</url>
+  <requires>
+    <display_length compare="ge">600</display_length>
+  </requires>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-30"/>
+  </releases>
+</component>

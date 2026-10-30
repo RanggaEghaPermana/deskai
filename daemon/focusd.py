@@ -633,7 +633,7 @@ class Brain:
             self._apply(act, brain.verdict("neutral", source="free"))
             return False
 
-        ruled = brain.rule_verdict(mode, act.app_id, act.app_name, act.title)
+        ruled = brain.rule_verdict(mode, act.app_id, act.app_name, act.title, self.config.language)
         if ruled:
             self._apply(act, {**ruled, "belongs_to": self._rule_home(act)})
             return False
@@ -658,7 +658,7 @@ class Brain:
     def _rule_home(self, act):
         """The other mode whose rules claim this activity, if exactly one does."""
         homes = [key for key, mode in self.config.modes()
-                 if key != self.mode and (brain.rule_verdict(mode, act.app_id, act.app_name, act.title) or {})
+                 if key != self.mode and (brain.rule_verdict(mode, act.app_id, act.app_name, act.title, self.config.language) or {})
                  .get("verdict") == "on_task"]
         return homes[0] if len(homes) == 1 else ""
 
@@ -803,7 +803,7 @@ class Brain:
         for key, mode in self.config.modes():
             if key == self.mode or not mode.get("focus"):
                 continue
-            ruled = brain.rule_verdict(mode, act.app_id, act.app_name, act.title)
+            ruled = brain.rule_verdict(mode, act.app_id, act.app_name, act.title, self.config.language)
             if ruled and ruled["verdict"] == "on_task":
                 matches.append((key, mode))
         if len(matches) != 1:

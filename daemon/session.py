@@ -44,7 +44,8 @@ TERMINAL_AGENTS = {"ptyxis-agent"}
 PTYXIS = "org.gnome.Ptyxis.desktop"
 TAB_READER = Path(__file__).with_name("terminal_tabs.py")
 # Apps restored their own way, not by a plain launch.
-SPECIAL_APPS = {PTYXIS, "google-chrome.desktop", "org.gnome.Nautilus.desktop"}
+SPECIAL_APPS = {PTYXIS, "org.gnome.Nautilus.desktop", "google-chrome.desktop", "com.google.Chrome.desktop",
+                "chromium.desktop", "chromium_chromium.desktop", "chromium-browser.desktop"}
 # Claude puts a spinner or ✳ before a tab's title, and Ptyxis may add " — <command>" after it.
 TITLE_GLYPHS = re.compile(r"^[^\w(\[]+")
 # bash titles a tab "user@host: ~/folder".
@@ -480,7 +481,10 @@ def restore(snap, progress, set_mode, labels=None):
         def chrome():
             if running("chrome"):
                 return "skipped"
-            browser = shutil.which("google-chrome") or shutil.which("google-chrome-stable")
+            browser = next(filter(None, map(shutil.which, ("google-chrome", "google-chrome-stable", "chromium",
+                                                           "chromium-browser"))), None)
+            if not browser:
+                return "failed"
             subprocess.Popen([browser, "--restore-last-session"], env=env, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         step("chrome", chrome)

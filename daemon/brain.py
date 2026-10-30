@@ -65,55 +65,55 @@ def write_json_atomic(path, data):
 def validate_config(cfg):
     """Returns a list of problems; empty means the config is usable."""
     if not isinstance(cfg, dict):
-        return ["root harus object JSON"]
+        return ["the root must be a JSON object"]
     modes = cfg.get("modes")
     if not isinstance(modes, dict) or not modes:
-        return ["`modes` harus object yang isinya minimal satu mode"]
+        return ["`modes` must be an object with at least one mode"]
     errors = []
     if cfg.get("language", "en") not in ("en", "id"):
-        errors.append("language harus en atau id")
+        errors.append("language must be en or id")
     if cfg.get("dock", {}).get("autohide", "windows") not in ("windows", "smart", "always", "never"):
-        errors.append("dock.autohide harus windows, smart, always, atau never")
+        errors.append("dock.autohide must be windows, smart, always or never")
     inbox = cfg.get("inbox", {})
     if not isinstance(inbox, dict):
-        errors.append("inbox harus object")
+        errors.append("inbox must be an object")
     else:
         if not isinstance(inbox.get("enabled", True), bool):
-            errors.append("inbox.enabled harus true atau false")
+            errors.append("inbox.enabled must be true or false")
         for field in ("messages", "agent_apps"):
             value = inbox.get(field, [])
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-                errors.append(f"inbox.{field} harus list string")
+                errors.append(f"inbox.{field} must be a list of strings")
     if "default_mode" in cfg and cfg["default_mode"] not in modes:
-        errors.append(f"default_mode `{cfg['default_mode']}` nggak ada di modes")
+        errors.append(f"default_mode `{cfg['default_mode']}` isn't in modes")
     for key, mode in modes.items():
         where = f"modes.{key}"
         if not MODE_ID_RE.match(key):
-            errors.append(f"{where}: id mode cuma boleh huruf kecil, angka, - dan _")
+            errors.append(f"{where}: a mode id can only have lowercase letters, digits, - and _")
         if not isinstance(mode, dict):
-            errors.append(f"{where}: harus object")
+            errors.append(f"{where}: must be an object")
             continue
         if not isinstance(mode.get("label", key), str):
-            errors.append(f"{where}.label harus string")
+            errors.append(f"{where}.label must be a string")
         if "color" in mode and not COLOR_RE.match(str(mode["color"])):
-            errors.append(f"{where}.color harus #rrggbb")
+            errors.append(f"{where}.color must be #rrggbb")
         for field in ("apps", "allow", "block"):
             value = mode.get(field, [])
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-                errors.append(f"{where}.{field} harus list string")
+                errors.append(f"{where}.{field} must be a list of strings")
         policy = mode.get("notifications", {}).get("policy", "all")
         if policy not in ("all", "filter", "none"):
-            errors.append(f"{where}.notifications.policy harus all, filter, atau none")
+            errors.append(f"{where}.notifications.policy must be all, filter or none")
         if mode.get("on_distraction", "nudge") not in ("nudge", "minimize"):
-            errors.append(f"{where}.on_distraction harus nudge atau minimize")
+            errors.append(f"{where}.on_distraction must be nudge or minimize")
         for field in ("nudge_after", "renudge_after"):
             value = mode.get(field, 1)
             if not isinstance(value, (int, float)) or value <= 0:
-                errors.append(f"{where}.{field} harus angka detik > 0")
+                errors.append(f"{where}.{field} must be a number of seconds > 0")
         for field in ("delay", "per_press"):
             value = mode.get("exit", {}).get(field, 0)
             if not isinstance(value, (int, float)) or value < 0:
-                errors.append(f"{where}.exit.{field} harus angka detik >= 0")
+                errors.append(f"{where}.exit.{field} must be a number of seconds >= 0")
     return errors
 
 
@@ -187,7 +187,7 @@ def verdict(kind, reason="", source="rule", site=""):
     return {"verdict": kind, "reason": reason, "source": source, "site": site}
 
 
-def rule_verdict(mode, app_id, app_name, title):
+def rule_verdict(mode, app_id, app_name, title, language="en"):
     """Cheap first pass. Returns None when only a model can tell."""
     if not app_id and not title:
         return verdict("neutral")
@@ -198,15 +198,15 @@ def rule_verdict(mode, app_id, app_name, title):
     allowed = next((k for k in mode.get("allow", []) if k.lower() in haystack), None)
     if blocked and allowed:
         return None  # "Laravel tutorial - YouTube": let the model weigh it
-    label = mode.get("label", "ini")
+    label = mode.get("label", "this")
     if blocked:
         site = blocked.strip(" /:") or app_name
-        return verdict("off_task", f"{site} bukan buat mode {label}", site=site)
+        return verdict("off_task", card_text(language, "rule_off", site=site, mode=label), site=site)
     if allowed:
         site = allowed.strip(" /:") or app_name
-        return verdict("on_task", f"{site} masuk mode {label}", site=site)
+        return verdict("on_task", card_text(language, "rule_on", site=site, mode=label), site=site)
     if app_id in mode.get("apps", []) and app_id not in BROWSERS:
-        return verdict("on_task", f"{app_name} app-nya mode {label}", site=app_name)
+        return verdict("on_task", card_text(language, "rule_app", site=app_name, mode=label), site=app_name)
     return None
 
 
@@ -387,6 +387,9 @@ CARD_STRINGS = {
         "routine_running": "Setting up…",
         "routine_ready": "Ready to work",
         "routine_partly": "Ready, but {n} step(s) failed: focusdock routine log",
+        "rule_off": "{site} isn't for {mode} mode",
+        "rule_on": "{site} fits {mode} mode",
+        "rule_app": "{site} is one of {mode} mode's apps",
         "restore_title": "Pick up where you left off?",
         "restore_from": "as it was at {time}",
         "restore_go": "Pick up",
@@ -423,6 +426,9 @@ CARD_STRINGS = {
         "routine_running": "Lagi nyiapin…",
         "routine_ready": "Siap kerja",
         "routine_partly": "Siap, tapi {n} langkah gagal: focusdock routine log",
+        "rule_off": "{site} bukan buat mode {mode}",
+        "rule_on": "{site} masuk mode {mode}",
+        "rule_app": "{site} app-nya mode {mode}",
         "restore_title": "Lanjutin sesi tadi?",
         "restore_from": "kayak jam {time}",
         "restore_go": "Lanjutin",

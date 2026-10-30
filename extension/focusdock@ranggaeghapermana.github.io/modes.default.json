@@ -13,15 +13,27 @@
   },
   "inbox": {
     "enabled": true,
-    "messages": ["WhatsApp"],
-    "agent_apps": ["com.anthropic.Claude.desktop", "chatgpt.desktop", "antigravity.desktop", "antigravity-ide.desktop", "cursor.desktop"]
+    "messages": [
+      "WhatsApp"
+    ],
+    "agent_apps": [
+      "com.anthropic.Claude.desktop",
+      "chatgpt.desktop",
+      "antigravity.desktop",
+      "antigravity-ide.desktop",
+      "cursor.desktop"
+    ]
   },
   "llm": {
     "backend": "auto",
     "model": "claude-opus-5-5",
     "effort": "low",
     "triage_notifications": true,
-    "exclude_apps": ["org.keepassxc.KeePassXC.desktop", "bitwarden.desktop", "1password.desktop"]
+    "exclude_apps": [
+      "org.keepassxc.KeePassXC.desktop",
+      "bitwarden.desktop",
+      "1password.desktop"
+    ]
   },
   "modes": {
     "writing": {
@@ -29,16 +41,60 @@
       "icon": "document-edit-symbolic",
       "color": "#e8833a",
       "focus": true,
-      "description": "Nulis panjang: skripsi, laporan magang, jurnal, artikel, dokumentasi. Riset di browser boleh selama nyambung sama tulisannya.",
-      "apps": ["google-chrome.desktop", "libreoffice-writer.desktop", "com.anthropic.Claude.desktop"],
-      "allow": ["docs.google.com", "Google Docs", "Overleaf", "Notion", "Obsidian", "Google Scholar", "Zotero", "Mendeley", "LibreOffice Writer", "Grammarly", "KBBI", "WhatsApp"],
-      "block": ["YouTube", "Instagram", "TikTok", "Twitter", " / X", " on X:", "Reddit", "Facebook", "Discord", "Netflix", "Twitch", "Shopee", "Tokopedia"],
+      "description": "Long writing: a thesis, reports, articles, documentation. Research in the browser is fine as long as it serves the text.",
+      "apps": [
+        "google-chrome.desktop",
+        "libreoffice-writer.desktop",
+        "com.anthropic.Claude.desktop"
+      ],
+      "allow": [
+        "docs.google.com",
+        "Google Docs",
+        "Overleaf",
+        "Notion",
+        "Obsidian",
+        "Google Scholar",
+        "Zotero",
+        "Mendeley",
+        "LibreOffice Writer",
+        "Grammarly",
+        "KBBI",
+        "WhatsApp"
+      ],
+      "block": [
+        "YouTube",
+        "Instagram",
+        "TikTok",
+        "Twitter",
+        " / X",
+        " on X:",
+        "Reddit",
+        "Facebook",
+        "Discord",
+        "Netflix",
+        "Twitch",
+        "Shopee",
+        "Tokopedia"
+      ],
       "notifications": {
         "policy": "filter",
-        "allow_apps": ["Calendar", "Clocks"],
-        "keywords": ["urgent", "darurat", "penting banget", "asap", "OTP", "kode verifikasi"]
+        "allow_apps": [
+          "Calendar",
+          "Clocks"
+        ],
+        "keywords": [
+          "urgent",
+          "darurat",
+          "penting banget",
+          "asap",
+          "OTP",
+          "kode verifikasi"
+        ]
       },
-      "exit": {"delay": 10, "per_press": 3},
+      "exit": {
+        "delay": 10,
+        "per_press": 3
+      },
       "nudge_after": 45,
       "on_distraction": "nudge"
     },
@@ -47,16 +103,68 @@
       "icon": "applications-engineering-symbolic",
       "color": "#3b82f6",
       "focus": true,
-      "description": "Ngoding: Laravel/React, debugging, baca dokumentasi, terminal, Claude Code, GitHub, ngetes di localhost.",
-      "apps": ["antigravity.desktop", "org.gnome.Ptyxis.desktop", "google-chrome.desktop", "com.anthropic.Claude.desktop"],
-      "allow": ["localhost", "127.0.0.1", "GitHub", "GitLab", "Stack Overflow", "laravel.com", "Laracasts", "react.dev", "MDN", "npm", "Packagist", "Vite", "Tailwind", "Claude", "Postman", "phpMyAdmin", "Antigravity", "WhatsApp"],
-      "block": ["Instagram", "TikTok", "Twitter", " / X", " on X:", "Reddit", "Facebook", "Discord", "Netflix", "Twitch", "Shopee", "Tokopedia"],
+      "description": "Coding: writing and debugging code, reading documentation, the terminal, AI coding agents, GitHub, testing on localhost.",
+      "apps": [
+        "antigravity.desktop",
+        "org.gnome.Ptyxis.desktop",
+        "google-chrome.desktop",
+        "com.anthropic.Claude.desktop",
+        "org.gnome.Terminal.desktop",
+        "org.gnome.Console.desktop",
+        "code.desktop"
+      ],
+      "allow": [
+        "localhost",
+        "127.0.0.1",
+        "GitHub",
+        "GitLab",
+        "Stack Overflow",
+        "laravel.com",
+        "Laracasts",
+        "react.dev",
+        "MDN",
+        "npm",
+        "Packagist",
+        "Vite",
+        "Tailwind",
+        "Claude",
+        "Postman",
+        "phpMyAdmin",
+        "Antigravity",
+        "WhatsApp"
+      ],
+      "block": [
+        "Instagram",
+        "TikTok",
+        "Twitter",
+        " / X",
+        " on X:",
+        "Reddit",
+        "Facebook",
+        "Discord",
+        "Netflix",
+        "Twitch",
+        "Shopee",
+        "Tokopedia"
+      ],
       "notifications": {
         "policy": "filter",
-        "allow_apps": ["Calendar"],
-        "keywords": ["urgent", "darurat", "server down", "build failed", "deploy", "OTP"]
+        "allow_apps": [
+          "Calendar"
+        ],
+        "keywords": [
+          "urgent",
+          "darurat",
+          "server down",
+          "build failed",
+          "deploy",
+          "OTP"
+        ]
       },
-      "exit": {"delay": 10, "per_press": 3},
+      "exit": {
+        "delay": 10,
+        "per_press": 3
+      },
       "nudge_after": 60,
       "on_distraction": "nudge"
     },
@@ -65,16 +173,58 @@
       "icon": "accessories-dictionary-symbolic",
       "color": "#10b981",
       "focus": true,
-      "description": "Belajar kuliah: materi, e-learning kampus, video kuliah atau tutorial yang relevan, latihan soal. Video edukasi di YouTube boleh.",
-      "apps": ["google-chrome.desktop", "firefox_firefox.desktop", "libreoffice-writer.desktop"],
-      "allow": ["Google Classroom", "e-learning", "elearning", "Moodle", "SPADA", "Coursera", "Dicoding", "Google Scholar", ".pdf", "Google Drive", "WhatsApp"],
-      "block": ["Instagram", "TikTok", "Twitter", " / X", " on X:", "Reddit", "Facebook", "Discord", "Netflix", "Twitch", "Shopee", "Tokopedia"],
+      "description": "Studying: course material, e-learning, lectures or tutorials that fit the subject, practice problems. Educational videos on YouTube are fine.",
+      "apps": [
+        "google-chrome.desktop",
+        "firefox_firefox.desktop",
+        "firefox.desktop",
+        "libreoffice-writer.desktop"
+      ],
+      "allow": [
+        "Google Classroom",
+        "e-learning",
+        "elearning",
+        "Moodle",
+        "SPADA",
+        "Coursera",
+        "Dicoding",
+        "Google Scholar",
+        ".pdf",
+        "Google Drive",
+        "WhatsApp"
+      ],
+      "block": [
+        "Instagram",
+        "TikTok",
+        "Twitter",
+        " / X",
+        " on X:",
+        "Reddit",
+        "Facebook",
+        "Discord",
+        "Netflix",
+        "Twitch",
+        "Shopee",
+        "Tokopedia"
+      ],
       "notifications": {
         "policy": "filter",
-        "allow_apps": ["Calendar", "Clocks"],
-        "keywords": ["urgent", "darurat", "kuis", "deadline", "OTP"]
+        "allow_apps": [
+          "Calendar",
+          "Clocks"
+        ],
+        "keywords": [
+          "urgent",
+          "darurat",
+          "kuis",
+          "deadline",
+          "OTP"
+        ]
       },
-      "exit": {"delay": 10, "per_press": 3},
+      "exit": {
+        "delay": 10,
+        "per_press": 3
+      },
       "nudge_after": 60,
       "on_distraction": "nudge"
     },
@@ -83,10 +233,31 @@
       "icon": "chat-message-new-symbolic",
       "color": "#e5484d",
       "focus": false,
-      "description": "Santai: chat, sosmed, YouTube, hiburan. Nggak ada aturan, notifikasi jalan normal.",
-      "apps": ["discord_discord.desktop", "google-chrome.desktop", "firefox_firefox.desktop"],
-      "allow": ["WhatsApp", "Discord", "Telegram", "Instagram", "TikTok", "Twitter", " / X", " on X:", "Reddit", "YouTube", "Facebook", "Netflix", "Twitch"],
-      "notifications": {"policy": "all"}
+      "description": "Time off: chat, social media, YouTube, entertainment. No rules, notifications as usual.",
+      "apps": [
+        "discord_discord.desktop",
+        "google-chrome.desktop",
+        "firefox_firefox.desktop",
+        "firefox.desktop"
+      ],
+      "allow": [
+        "WhatsApp",
+        "Discord",
+        "Telegram",
+        "Instagram",
+        "TikTok",
+        "Twitter",
+        " / X",
+        " on X:",
+        "Reddit",
+        "YouTube",
+        "Facebook",
+        "Netflix",
+        "Twitch"
+      ],
+      "notifications": {
+        "policy": "all"
+      }
     }
   }
 }
