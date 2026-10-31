@@ -26,6 +26,20 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.1" date="2026-10-31">
+      <description>
+        <ul>
+          <li>Clicking the app you're in on the dock minimizes all its windows on this workspace, and clicking again brings them all back</li>
+          <li>A suggestion leaves the dock after a minute, and clicking Files then still takes you there</li>
+          <li>The command bar handles much more casual English and Indonesian without AI</li>
+          <li>Icons of apps that aren't pinned keep their place on the dock</li>
+          <li>Focus stats are deleted after 90 days, and the dock's own files are readable only by you</li>
+          <li>No gray flash at login on Ubuntu</li>
+          <li>Installs on GNOME 51, where the smooth login stays out of the way. Checked against GNOME 51's source, not run on it yet</li>
+          <li>Servers keep their status after whatever started them has exited</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-31">
       <description>
         <ul>
