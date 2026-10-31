@@ -229,6 +229,8 @@ export default class DeskAIExtension extends Extension {
         this._modesFile = Gio.File.new_for_path(GLib.build_filenamev([configDir, 'modes.json']));
         this._stateFile = Gio.File.new_for_path(
             GLib.build_filenamev([GLib.get_user_state_dir(), 'deskai', 'state.json']));
+        this._commandsFile = Gio.File.new_for_path(
+            GLib.build_filenamev([GLib.get_user_state_dir(), 'deskai', 'commands.json']));
 
         this._held = new Map();
         this._heldSeq = 0;
@@ -2954,9 +2956,18 @@ export default class DeskAIExtension extends Extension {
         this._commandButton.connect('clicked', () => this._openCommandBar());
         this._dock.add_child(this._commandButton);
         this._addTooltip(this._commandButton, () => this._t('commandTooltip'));
+        const history = readJson(this._commandsFile);
         this._commandBar = new CommandBar({
             gicon: this._sparkle,
+            history: Array.isArray(history) ? history.filter(text => typeof text === 'string') : [],
             onSubmit: text => this._submitCommand(text),
+            onHistory: commands => {
+                try {
+                    writeJson(this._commandsFile, commands);
+                } catch (e) {
+                    console.warn(`DeskAI: cannot save the command history: ${e.message}`);
+                }
+            },
             onClose: () => this._endPeek(),
         });
     }

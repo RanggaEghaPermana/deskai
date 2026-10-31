@@ -316,6 +316,31 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.deskai-command-list {
+  padding: 6px;
+  spacing: 2px;
+  border-radius: 16px;
+  background-color: rgba(36, 34, 38, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+.deskai-command-recent {
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.deskai-command-recent:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.deskai-command-recent.selected {
+  background-color: #7c5cff;
+  color: #ffffff;
+}
+
 .deskai-command-chip {
   padding: 4px 12px;
   border-radius: 14px;

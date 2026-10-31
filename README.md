@@ -113,6 +113,9 @@ day, at a pause, it also asks about a window you spent a while on that it couldn
 What you say about senders is in `~/.local/state/deskai/senders.json`: their names, never their messages.
 `deskai senders` lists them, and `deskai senders --forget NAME` takes your word back.
 
+The command bar shows what you last asked for, and `Up` and `Down` go through it. Your last 30 requests are in
+`~/.local/state/deskai/commands.json`, readable only by you, and `Delete` forgets the one you're on.
+
 Your focus time per day is in `~/.local/state/deskai/stats/`, with the titles of the windows that distracted you.
 Each day's file is deleted after 90 days.
 
