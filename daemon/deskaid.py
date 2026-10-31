@@ -29,6 +29,7 @@ import commands  # noqa: E402
 import guide  # noqa: E402
 import learned  # noqa: E402
 import routine  # noqa: E402
+import senders  # noqa: E402
 import servers  # noqa: E402
 import session  # noqa: E402
 import sites  # noqa: E402
@@ -47,6 +48,8 @@ AWAY_AFTER_MS = 300_000      # don't nudge someone who isn't there
 SUGGEST_AFTER = 120
 SUGGEST_COOLDOWN = 1800
 LLM_BACKOFF = 300
+SENDER_ASK_GAP_S = 90        # two new senders at once get one question
+REVIEW_EVERY_S = 3 * 3600    # without a pause to ask in, look this often
 SAVE_EVERY = 60
 CACHE_LIMIT = 3000
 
@@ -151,6 +154,8 @@ class Brain:
         if not self.learned.seeded:
             log.info("learned %d verdicts from before", self.learned.seed_from_verdicts(self.cache.data, self.config))
         self.stats = Stats(brain.STATE_DIR / "stats")
+        self.senders = senders.Senders()
+        self.unsure = learned.Unsure()
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
         self.mode = None
@@ -180,6 +185,15 @@ class Brain:
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
         self.allow_undo = None    # (card id, mode key, the mode as it was, the window's title)
         self.mark_undo = None     # (card id, mode key, the window's title)
+        self.sender_ask = None    # the notification a question about its sender is on offer for
+        self.sender_undo = None   # (card id, app, title, whether it's the whole app)
+        self.sender_asked_at = -SENDER_ASK_GAP_S
+        self.review_item = None   # the window being asked about
+        self.last_review_try = time.monotonic()
+        self.closing_hand = None  # a closed project's servers you started yourself, waiting for your OK
+        self.working_since = None
+        self.break_shown = 0.0
+        self.last_wall = time.time()
         self.last_tick = time.monotonic()
         self.last_save = time.monotonic()
 
@@ -364,21 +378,76 @@ class Brain:
         mode = self.config.mode(self.mode)
         if not mode or mode["notifications"].get("policy") != "filter":
             return
+        said = self.senders.word(app, title)
+        if said:
+            log.info("notif %s | %s → %s [you]", app, title[:60], said)
+            if said == senders.ALWAYS:
+                self.call("SurfaceNotification", "(u)", (notification_id,))
+            return
         plain = sites.notification_verdict(app, title, body)
         if plain is not None:
             log.info("notif %s | %s → %s [site]", app, title[:60], "surface" if plain else "hold")
             if plain:
                 self._held_card(notification_id, app, title, body, {})
             return
-        # A small local model lets nearly everything through (11 of 14 real ones Claude held), and
-        # whatever stays held is safe in the tray.
+        # A small local model lets nearly everything through (11 of 14 real ones Claude held), so it
+        # doesn't get to judge these. They're safe in the tray, and the first time someone new lands
+        # there, you get asked.
         if self.llm.backend == "ollama" or not self.config.llm["triage_notifications"] or not self._llm_ready():
+            self._maybe_ask_sender(notification_id, app, title, body)
             return
         prompt = brain.notification_prompt(self.mode, mode, self.config.modes(), app, title, body)
         future = self.pool.submit(self.llm.ask, brain.notify_system(self.config.language), prompt, brain.NOTIFY_SCHEMA)
         mode_at = self.mode
         future.add_done_callback(
             lambda f: GLib.idle_add(self._on_triaged, f, notification_id, app, title, body, mode_at))
+
+    def _maybe_ask_sender(self, notification_id, app, title, body):
+        now = time.monotonic()
+        if now - self.sender_asked_at < SENDER_ASK_GAP_S or not self.senders.should_ask(app, title):
+            return
+        self.sender_asked_at = now
+        card_id = f"sender-{notification_id}"
+        self.sender_ask = {"id": card_id, "notification_id": notification_id, "app": app, "title": title}
+        actions = [{"id": "sender:hold", "label": self._say("sender_hold")}]
+        if senders.can_take_whole_app(app, title):
+            actions.append({"id": "sender:app", "label": self._say("sender_app", app=app)})
+        actions.append({"id": "sender:always", "label": self._say("sender_always"), "primary": True})
+        name = senders.name_of(app, title)
+        self.card({
+            "id": card_id,
+            "kind": "held",
+            "icon": {"notification_id": notification_id},
+            "title": name,
+            "subtitle": (f"{app} · " if app and app != name else "") + self._say("sender_held"),
+            "text": body[:160],
+            "actions": actions,
+            "anchor_mode": self.mode,
+            "timeout": 20,
+        })
+
+    def _answer_sender(self, action):
+        ask, self.sender_ask = self.sender_ask, None
+        app, title = ask["app"], ask["title"]
+        if action == "sender:hold":
+            self.senders.remember(app, title, senders.HOLD)
+            return
+        whole_app = action == "sender:app"
+        self.senders.remember(app, title, senders.ALWAYS, whole_app=whole_app)
+        self.call("SurfaceNotification", "(u)", (ask["notification_id"],))
+        card_id = f"sender-saved-{ask['notification_id']}"
+        self.sender_undo = (card_id, app, title, whole_app)
+        self.card({
+            "id": card_id,
+            "kind": "fits",
+            "icon": {"name": "object-select-symbolic"},
+            "title": app if whole_app else senders.name_of(app, title),
+            "subtitle": self._say("sender_saved"),
+            "text": self._say("sender_saved_text"),
+            "actions": [{"id": "sender:undo", "label": self._say("undo")}],
+            "anchor_mode": self.mode,
+            "timeout": 8,
+        })
 
     def on_card_action(self, card_id, action):
         log.info("card %s → %s", card_id, action)
@@ -407,6 +476,19 @@ class Brain:
             self._command_card(self._say("project_terminals_closed"))
         elif action == "project:keep-terminals":
             self.closing_terminals = []
+        elif action in ("project:stop-hand", "project:keep-hand") and self.closing_hand:
+            self._answer_hand_started(action == "project:stop-hand")
+        elif action in ("sender:always", "sender:app", "sender:hold") and self.sender_ask and card_id == self.sender_ask["id"]:
+            self._answer_sender(action)
+        elif action == "sender:undo" and self.sender_undo and card_id == self.sender_undo[0]:
+            _, app, title, whole_app = self.sender_undo
+            self.sender_undo = None
+            self.senders.forget(app, title, whole_app=whole_app)
+        elif action in ("review:work", "review:distraction", "review:skip") and self.review_item and card_id == self.review_item["id"]:
+            self._answer_review(action)
+        elif action == "break:off":
+            self._set_breaks(False)
+            self._command_card(self._say("breaks_off"))
         elif action == "command:apply" and self.pending_edit:
             self._apply_edit()
         elif action == "command:cancel":
@@ -678,7 +760,12 @@ class Brain:
         if not item:
             return
         if op == "log":
-            servers.open_log(item)
+            if item["kind"] == servers.MANUAL:
+                self._server_card(item, item["label"], self._say("server_mine", name=item["label"]))
+            else:
+                servers.open_log(item)
+        elif op == "status":
+            self._server_status(item)
         elif op == "open" and item.get("port"):
             commands.open_uri(f"http://127.0.0.1:{item['port']}")
         elif op == "forget":
@@ -690,6 +777,17 @@ class Brain:
                 GLib.idle_add(self._server_done, item, op, ok)
             threading.Thread(target=work, name="server-op", daemon=True).start()
             GLib.timeout_add(100, lambda: self._send_servers() and False)  # "starting", or gone
+
+    def _server_status(self, item):
+        """"What's up with this server?", answered from what's known about it."""
+        last_line = servers.last_log_line(item)
+        if item["state"] == "down":
+            self._server_problem(item, self._say("server_down", name=item["label"]), last_line)
+        elif item["kind"] == servers.MANUAL:
+            self._server_card(item, self._say("server_is_up", name=item["label"]), self._say("server_mine", name=item["label"]), timeout=12)
+        else:
+            self._server_card(item, self._say("server_is_up", name=item["label"]), last_line, timeout=12, actions=[
+                {"id": f"server:log:{item['unit']}", "label": self._say("server_log")}])
 
     def _server_done(self, item, op, ok):
         self._send_servers()
@@ -743,7 +841,9 @@ class Brain:
         """Does what was asked, checking everything named against what's really here."""
         say = (result.get("say") or "").strip()
         answered_elsewhere = False  # the steps report on their own card
-        if self.llm.backend == "ollama" and result.get("actions"):
+        if result.get("unsure"):
+            say = self._say("command_unsure")
+        elif self.llm.backend == "ollama" and result.get("actions"):
             say = ""  # a small model's "done!" isn't worth much: say what really happened
         elif result.get("dropped"):
             say = say or self._say("command_nothing")
@@ -768,9 +868,13 @@ class Brain:
         elif kind == "server":
             units = self.watch.match(action.get("target"))
             op = action.get("op")
-            if not units or op not in ("restart", "stop", "log"):
+            if not units or op not in ("restart", "stop", "log", "status"):
                 say = self._say("command_no_server")
-            for unit in units[:1] if op == "log" else units:
+                units = []
+            for unit in units[:1] if op in ("log", "status") else units:
+                # The answer's on the server's own card: "Done" on top of it would hide it.
+                item = self.watch.get(unit)
+                answered_elsewhere = op == "status" or (op == "log" and bool(item) and item["kind"] == servers.MANUAL)
                 self._server_action(op, unit)
                 say = say or self._say("command_done")
         elif kind == "setup_project":
@@ -808,6 +912,14 @@ class Brain:
         elif kind == "edit_modes" and action.get("request"):
             self._edit_modes(action["request"])
             answered_elsewhere = True
+        elif kind == "mode_list":
+            self._edit_list(action)
+            answered_elsewhere = True
+        elif kind == "focus_today":
+            say = commands.focus_answer(self.config)
+        elif kind == "breaks":
+            on = bool(action.get("on"))
+            say = self._say("breaks_on" if on else "breaks_off") if self._set_breaks(on) else self._say("command_nothing")
         elif kind == "label":
             act = self.activity
             mode = self.config.mode(self.mode)
@@ -847,21 +959,55 @@ class Brain:
             try:
                 report = servers.close_project(self.watch, path)
                 terminals = session.project_terminals(path)
+                hand = self.watch.hand_started_in(path)
             except (OSError, subprocess.SubprocessError, ValueError) as e:
                 log.warning("command: can't close %s: %s", path, e)
                 GLib.idle_add(self._command_failed, e)
                 return
-            GLib.idle_add(self._project_closed, path, report, terminals)
+            GLib.idle_add(self._project_closed, path, report, terminals, hand)
 
         threading.Thread(target=work, name="close-project", daemon=True).start()
 
-    def _project_closed(self, path, report, terminals):
+    def _project_closed(self, path, report, terminals, hand):
+        """Servers you started yourself don't get stopped without asking. If nobody answers, they keep running."""
+        if not hand:
+            return self._project_report(path, report, terminals)
+        self.closing_hand = {"path": path, "report": report, "terminals": terminals, "items": hand}
+        self.card({
+            "id": "close-project",
+            "kind": "command",
+            "title": self._say("project_hand_title", name=os.path.basename(path)),
+            "text": f"{self._say('project_hand_started')}\n" + " · ".join(item["label"] for item in hand),
+            "actions": [{"id": "project:keep-hand", "label": self._say("project_hand_keep")},
+                        {"id": "project:stop-hand", "label": self._say("project_hand_stop"), "primary": True}],
+            "timeout": 45,
+        })
+        return False
+
+    def _answer_hand_started(self, stop):
+        closing, self.closing_hand = self.closing_hand, None
+
+        def work():
+            report = list(closing["report"])
+            for item in closing["items"]:
+                try:
+                    state = ("stopped" if self.watch.stop(item["unit"]) else "failed") if stop else "left"
+                except (OSError, subprocess.SubprocessError) as e:
+                    log.warning("command: can't stop %s: %s", item["label"], e)
+                    state = "failed"
+                report.append((item["label"], state, ""))
+            GLib.idle_add(self._project_report, closing["path"], report, closing["terminals"])
+
+        threading.Thread(target=work, name="close-project", daemon=True).start()
+
+    def _project_report(self, path, report, terminals):
         name = os.path.basename(path)
         log.info("closed %s: %s, %d terminals open", name, report, len(terminals))
         self._send_servers()
         marks = {"stopped": "✓", "failed": "✗"}
-        lines = [self._say("project_kept", label=label, other=other) if state == "kept" else f"{marks[state]} {label}"
-                 for label, state, other in report]
+        lines = [self._say("project_kept", label=label, other=other) if state == "kept"
+                 else self._say("project_hand_kept", label=label) if state == "left"
+                 else f"{marks[state]} {label}" for label, state, other in report]
         lines.append(self._say("project_tabs"))
         self.closing_terminals = terminals
         actions = []
@@ -869,7 +1015,8 @@ class Brain:
             lines.append(self._say("project_terminals"))
             actions = [{"id": "project:keep-terminals", "label": self._say("project_keep_terminals")},
                        {"id": "project:close-terminals", "label": self._say("project_close_terminals"), "primary": True}]
-        title = self._say("project_closed", name=name) if report else self._say("project_nothing", name=name)
+        closed = any(state != "left" for _label, state, _other in report)
+        title = self._say("project_closed", name=name) if closed else self._say("project_nothing", name=name)
         self.card({"id": "close-project", "kind": "command", "title": title, "text": "\n".join(lines),
                    "actions": actions, "timeout": 45 if terminals else 12})
         return False
@@ -981,6 +1128,85 @@ class Brain:
             subprocess.Popen([*command, guide.WHATSAPP_SETTINGS], start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    # ---- break reminders -------------------------------------------------
+
+    def _maybe_break(self, mode, idle_ms):
+        """A few minutes away, or a mode that isn't for focus, counts as a break. So does the laptop sleeping."""
+        now = time.time()
+        slept = now - self.last_wall > TICK_SECONDS * 6
+        self.last_wall = now
+        if slept or idle_ms > AWAY_AFTER_MS or not mode or not mode.get("focus"):
+            self.working_since = None
+            return
+        self.working_since = self.working_since or now
+        settings = self.config.breaks
+        if not settings["enabled"] or now - max(self.working_since, self.break_shown) < settings["after_minutes"] * 60:
+            return
+        self.break_shown = now
+        worked = commands.duration(round((now - self.working_since) / 60), self.config.language)
+        log.info("break reminder after %s", worked)
+        self.card({
+            "id": "break",
+            "kind": "suggest",
+            "icon": {"name": "alarm-symbolic"},
+            "title": self._say("break_title", time=worked),
+            "text": self._say("break_text"),
+            "actions": [{"id": "break:off", "label": self._say("break_off")},
+                        {"id": "break:ok", "label": self._say("break_ok"), "primary": True}],
+            "anchor_mode": self.mode,
+            "timeout": 20,
+        })
+
+    def _set_breaks(self, on):
+        path = self.config.path
+        try:
+            data = json.loads(path.read_text())
+            data["breaks"] = {**data.get("breaks", {}), "enabled": on}
+            brain.write_json_atomic(path, data)
+        except (OSError, ValueError) as e:
+            log.warning("can't change break reminders: %s", e)
+            return False
+        self._refresh_config()
+        return True
+
+    # ---- asking about the windows it isn't sure of ------------------------
+
+    def _maybe_review(self):
+        """Only at a pause, a few times a day, and never over something else that's on offer."""
+        self.last_review_try = time.monotonic()
+        mode = self.config.mode(self.mode) if self.mode else None
+        if not mode or not mode.get("focus") or self.restore_snap or self.routine_plan or routine.due():
+            return False
+        entry = self.unsure.next(self.mode, self.learned)
+        if not entry:
+            return False
+        self.review_item = {**entry, "id": f"review-{int(time.time())}"}
+        self.card({
+            "id": self.review_item["id"],
+            "kind": "suggest",
+            "icon": {"app_id": entry["app_id"]},
+            "title": entry["title"][:70],
+            "subtitle": self._say("review_subtitle", time=commands.duration(round(entry["seconds"] / 60), self.config.language)),
+            "text": self._say("review_text", mode=mode["label"]),
+            "actions": [{"id": "review:skip", "label": self._say("review_skip")},
+                        {"id": "review:distraction", "label": self._say("review_distraction")},
+                        {"id": "review:work", "label": self._say("review_work"), "primary": True}],
+            "anchor_mode": self.mode,
+            "timeout": 25,
+        })
+        return False
+
+    def _answer_review(self, action):
+        entry, self.review_item = self.review_item, None
+        if action == "review:skip":
+            return
+        verdict = "on_task" if action == "review:work" else "off_task"
+        self.learned.add(entry["mode"], entry["app_id"], entry["title"], verdict)
+        log.info("%s | %s is %s, by your word", entry["mode"], entry["title"][:60], verdict)
+        if self.activity and learned.simple_title(self.activity.title) == learned.simple_title(entry["title"]):
+            self._reclassify()
+        GLib.timeout_add(600, self._maybe_review)  # while you're answering anyway
+
     # ---- "this is work" -------------------------------------------------
 
     def _edit_mode(self, key, edit):
@@ -1024,6 +1250,37 @@ class Brain:
             "title": keyword.strip(" /:") or act.app_name,
             "subtitle": self._say("allowed", mode=label),
             "text": self._say("allowed_text", mode=label),
+            "actions": [{"id": "undo-allow", "label": self._say("undo")}],
+            "anchor_mode": key,
+            "timeout": 8,
+        })
+        self._reclassify()
+
+    def _edit_list(self, action):
+        """Allows or blocks something by name in a mode: "blokir reddit di mode writing"."""
+        key = action.get("mode") or self.mode
+        mode = self.config.mode(key)
+        if not mode or not mode.get("focus"):
+            self._command_card(self._say("command_free_mode"))
+            return
+        field, word = action["field"], action["word"]
+        other = "block" if field == "allow" else "allow"
+
+        def edit(raw):
+            raw[other] = [k for k in raw.get(other, []) if k.lower() != word.lower()]
+            raw[field] = [*(k for k in raw.get(field, []) if k.lower() != word.lower()), word]
+
+        edited = self._edit_mode(key, edit)
+        if not edited:
+            self._command_card(self._say("command_nothing"))
+            return
+        card_id = f"list-{int(time.time())}"
+        self.allow_undo = (card_id, key, edited[0], "")
+        self.card({
+            "id": card_id,
+            "kind": "fits",
+            "icon": {"name": "object-select-symbolic"},
+            "title": self._say("list_added" if field == "allow" else "list_blocked", word=word, mode=mode["label"]),
             "actions": [{"id": "undo-allow", "label": self._say("undo")}],
             "anchor_mode": key,
             "timeout": 8,
@@ -1107,8 +1364,9 @@ class Brain:
                               "belongs_to": self._rule_home(act)})
             return False
 
+        # Not what a local model said back when it judged windows: that's why it doesn't any more.
         key = f"{self.config.fingerprint(self.mode)}|{self.llm.backend}|{act.app_id}|{act.title}"
-        cached = self.cache.get(key)
+        cached = None if self.llm.backend == "ollama" else self.cache.get(key)
         if cached:
             self._apply(act, {**cached, "source": "cache"})
             return False
@@ -1231,8 +1489,11 @@ class Brain:
         idle_ms = self._idle_ms() if idle_ms is None else idle_ms
         kind = "idle" if idle_ms > IDLE_AFTER_MS else (act.verdict or "neutral")
         self.stats.add(self.mode, kind, elapsed, act.label)
+        if kind == "neutral" and act.source == "default" and act.app_id not in self.config.llm["exclude_apps"]:
+            self.unsure.note(self.mode, act.app_id, act.app_name, act.title, elapsed)
 
     def _tick(self):
+        self._refresh_config()
         idle_ms = self._idle_ms()
         self._account(idle_ms)
         # Back at a laptop left open (no unlock to notice): that's the start of the day too.
@@ -1241,8 +1502,12 @@ class Brain:
         elif self.away and idle_ms < TICK_SECONDS * 2000:
             self.away = False
             self._maybe_offer_routine()
+            self._maybe_review()
         act = self.activity
         mode = self.config.mode(self.mode) if self.mode else None
+        self._maybe_break(mode, idle_ms)
+        if time.monotonic() - self.last_review_try > REVIEW_EVERY_S and idle_ms < IDLE_AFTER_MS:
+            self._maybe_review()
         if act and mode:
             if mode.get("focus"):
                 self._maybe_nudge(act, mode, idle_ms)

@@ -287,6 +287,23 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.deskai-command-chip {
+  padding: 4px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  transition-duration: 120ms;
+}
+
+.deskai-command-chip:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.deskai-command-chip:active {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
 .deskai-inbox {
   min-height: 34px;
   padding: 0 11px 0 6px;
@@ -337,6 +354,65 @@
 .deskai-next-label {
   font-weight: bold;
   max-width: 150px;
+}
+
+.deskai-music {
+  min-height: 34px;
+  padding: 0 3px 0 5px;
+  border-radius: 17px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  spacing: 1px;
+}
+
+.deskai-music-art {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* The same width for every song, so the buttons beside it stay under the pointer. */
+.deskai-music-text {
+  min-width: 140px;
+  max-width: 140px;
+  padding: 0 8px;
+}
+
+.deskai-music-title {
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.deskai-music-artist {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.deskai-music-track:hover .deskai-music-artist {
+  color: #ffffff;
+}
+
+.deskai-music-control {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  transition-duration: 120ms;
+}
+
+.deskai-music-control:hover {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.deskai-music-control:active {
+  background-color: rgba(255, 255, 255, 0.26);
+}
+
+.deskai-music-control.off,
+.deskai-music-control.off:hover,
+.deskai-music-control.off:active {
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .deskai-inbox-box {

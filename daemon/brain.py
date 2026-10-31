@@ -41,6 +41,7 @@ SYSTEM_APPS = {
 }
 
 MODE_DEFAULTS = {"nudge_after": 45, "renudge_after": 300, "on_distraction": "nudge"}
+BREAK_DEFAULTS = {"enabled": True, "after_minutes": 120}
 LLM_DEFAULTS = {
     "backend": "auto",
     "model": "claude-opus-5-5",
@@ -89,6 +90,11 @@ def validate_config(cfg):
             value = inbox.get(field, [])
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 errors.append(f"inbox.{field} must be a list of strings")
+    breaks = cfg.get("breaks", {})
+    if not isinstance(breaks, dict) or not isinstance(breaks.get("enabled", True), bool):
+        errors.append("breaks must be an object, and breaks.enabled true or false")
+    elif not isinstance(breaks.get("after_minutes", 120), (int, float)) or breaks.get("after_minutes", 120) <= 0:
+        errors.append("breaks.after_minutes must be a number of minutes > 0")
     if "default_mode" in cfg and cfg["default_mode"] not in modes:
         errors.append(f"default_mode `{cfg['default_mode']}` isn't in modes")
     for key, mode in modes.items():
@@ -157,6 +163,10 @@ class Config:
     @property
     def llm(self):
         return {**LLM_DEFAULTS, **self.data.get("llm", {})}
+
+    @property
+    def breaks(self):
+        return {**BREAK_DEFAULTS, **self.data.get("breaks", {})}
 
     def mode(self, key):
         mode = self.data["modes"].get(key)
@@ -405,6 +415,7 @@ CARD_STRINGS = {
         "command_needs_ai": "That needs AI, which is off. You can turn it on in DeskAI Setup.",
         "command_failed": "Couldn't do that: {error}",
         "command_nothing": "Nothing to do there.",
+        "command_unsure": "I didn't get that, so I didn't do anything. Try: set up a project, close a project, restart a server, switch mode, open an app.",
         "command_done": "Done",
         "command_mode": "Switching to {mode}",
         "command_no_server": "No running server by that name.",
@@ -430,6 +441,34 @@ CARD_STRINGS = {
         "command_apply": "Apply",
         "command_cancel": "Cancel",
         "command_applied": "Saved. The dock has it already.",
+        "focus_today": "Focused {total} today{parts}. Distracted {distracted}, away {idle}.",
+        "focus_nothing": "Nothing recorded today yet.",
+        "sender_held": "held",
+        "sender_hold": "Keep holding",
+        "sender_always": "Always show",
+        "sender_app": "All of {app}",
+        "sender_saved": "Always shown from now on",
+        "sender_saved_text": "Even during a focus mode.",
+        "review_subtitle": "{time} today, not sure about this one",
+        "review_text": "Is it work for {mode}, or a distraction?",
+        "review_work": "Work",
+        "review_distraction": "Distraction",
+        "review_skip": "Skip",
+        "list_added": "{word} is allowed in {mode}",
+        "list_blocked": "{word} is blocked in {mode}",
+        "server_is_up": "{name} is running",
+        "server_mine": "{name} is running in your terminal, so its log is there too.",
+        "project_hand_started": "You started these yourself, and they're still running:",
+        "project_hand_title": "{name}: stop these too?",
+        "project_hand_stop": "Stop them",
+        "project_hand_keep": "Leave them",
+        "project_hand_kept": "{label} keeps running",
+        "break_title": "{time} without a break",
+        "break_text": "Get up for a few minutes?",
+        "break_ok": "OK",
+        "break_off": "Turn off reminders",
+        "breaks_off": "Break reminders are off. Type \"turn on reminders\" to bring them back.",
+        "breaks_on": "Break reminders are on.",
         "guide_progress": "Step {n} of {total}",
         "guide_next": "Next",
         "guide_done": "Got it",
@@ -497,6 +536,7 @@ CARD_STRINGS = {
         "command_needs_ai": "Itu butuh AI, dan AI-nya lagi mati. Bisa dinyalain di DeskAI Setup.",
         "command_failed": "Nggak bisa: {error}",
         "command_nothing": "Nggak ada yang perlu dilakuin.",
+        "command_unsure": "Gua belum nangkep, jadi nggak gua apa-apain. Coba: siapin project, tutup project, restart server, pindah mode, buka app.",
         "command_done": "Udah",
         "command_mode": "Pindah ke {mode}",
         "command_no_server": "Nggak ada server jalan dengan nama itu.",
@@ -522,6 +562,34 @@ CARD_STRINGS = {
         "command_apply": "Terapin",
         "command_cancel": "Batal",
         "command_applied": "Udah kesimpen, dock-nya langsung ikut.",
+        "focus_today": "Hari ini fokus {total}{parts}. Distraksi {distracted}, idle {idle}.",
+        "focus_nothing": "Hari ini belum ada yang kecatat.",
+        "sender_held": "ditahan",
+        "sender_hold": "Tahan terus",
+        "sender_always": "Selalu tampilin",
+        "sender_app": "Semua dari {app}",
+        "sender_saved": "Mulai sekarang selalu ditampilin",
+        "sender_saved_text": "Termasuk pas mode fokus.",
+        "review_subtitle": "{time} hari ini, gua belum yakin",
+        "review_text": "Ini kerjaan buat {mode} atau distraksi?",
+        "review_work": "Kerjaan",
+        "review_distraction": "Distraksi",
+        "review_skip": "Lewati",
+        "list_added": "{word} diizinin di {mode}",
+        "list_blocked": "{word} diblokir di {mode}",
+        "server_is_up": "{name} lagi jalan",
+        "server_mine": "{name} jalan di terminal lu, jadi log-nya ada di sana.",
+        "project_hand_started": "Ini lu nyalain sendiri, dan masih jalan:",
+        "project_hand_title": "{name}: matiin ini juga?",
+        "project_hand_stop": "Matiin",
+        "project_hand_keep": "Biarin",
+        "project_hand_kept": "{label} tetep jalan",
+        "break_title": "Udah {time} nonstop",
+        "break_text": "Istirahat bentar, beberapa menit aja?",
+        "break_ok": "Oke",
+        "break_off": "Matiin pengingat",
+        "breaks_off": "Pengingat istirahat dimatiin. Ketik \"nyalain pengingat\" kalau mau balik lagi.",
+        "breaks_on": "Pengingat istirahat nyala.",
         "guide_progress": "Langkah {n} dari {total}",
         "guide_next": "Lanjut",
         "guide_done": "Siap",

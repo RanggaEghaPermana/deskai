@@ -1,0 +1,9 @@
+{
+  "uuid": "deskai-login@ranggaeghapermana.github.io",
+  "name": "DeskAI Login",
+  "description": "Keeps the login animation smooth: it plays once the desktop and its extensions have loaded.",
+  "shell-version": ["50"],
+  "session-modes": ["user", "unlock-dialog", "gdm"],
+  "url": "https://github.com/RanggaEghaPermana/deskai",
+  "version": 1
+}

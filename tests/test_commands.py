@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -49,6 +50,158 @@ class Quick(unittest.TestCase):
         watch = watch_with(("vite :5173", 5173))
         for text in ("siapin project toko", "restart laptop gua", "write a poem", "logout", ""):
             self.assertIsNone(self.action(text, watch), text)
+
+
+class Instant(unittest.TestCase):
+    """What used to go to the model, and took seconds or missed."""
+
+    MODES = [("writing", "Writing"), ("building", "Building"), ("studying", "Studying"), ("social", "Social")]
+    PROJECTS = {"toko-online": "/w/toko-online", "sistem-gudang": "/w/sistem-gudang"}
+
+    def action(self, text, watch=None):
+        result = commands.quick(text, self.MODES, watch or watch_with(), self.PROJECTS)
+        return result["actions"][0] if result else None
+
+    def php(self):
+        watch = watch_with(("server :8000", 8000))
+        watch.items["unit0"]["command"] = "php -S 127.0.0.1:8000"
+        return watch
+
+    def test_a_mode_in_everyday_words(self):
+        for text, mode in (("gua mau belajar", "studying"), ("belajar", "studying"), ("pindah ke mode nulis", "writing"),
+                           ("mau nulis dong", "writing"), ("lanjut ngoding", "building"), ("mode santai", "social"),
+                           ("pengen ngoding", "building")):
+            self.assertEqual(self.action(text), {"type": "mode", "mode": mode}, text)
+
+    def test_a_word_for_a_mode_you_dont_have_means_nothing(self):
+        self.assertIsNone(commands.quick("gua mau belajar", [("writing", "Writing")], watch_with()))
+
+    def test_more_than_a_mode_goes_to_the_model(self):
+        self.assertIsNone(self.action("gua mau belajar react dari youtube"))
+
+    def test_finishing_work_on_a_project(self):
+        for text in ("gua udah kelar kerja di toko online", "kelar kerja di toko online", "selesai toko online",
+                     "udah beres toko online", "done with toko online", "tutup project toko online"):
+            self.assertEqual(self.action(text), {"type": "close_project", "project": "toko online"}, text)
+
+    def test_starting_work_on_a_project(self):
+        for text, name in (("siapin project gudang", "gudang"), ("set up gudnag", "gudnag"), ("mulai kerja di gudang", "gudang"),
+                           ("gua mau kerja di toko online, siapin dong", "toko online"), ("kerja di gudang", "gudang")):
+            self.assertEqual(self.action(text), {"type": "setup_project", "project": name}, text)
+
+    def test_a_project_it_doesnt_know_goes_to_the_model(self):
+        self.assertIsNone(self.action("siapin project entah"))
+
+    def test_a_server_by_name_in_a_sentence(self):
+        self.assertEqual(self.action("server php gua kenapa? nyalain lagi dong", self.php()),
+                         {"type": "server", "op": "restart", "target": "php"})
+        self.assertEqual(self.action("server php kenapa?", self.php()), {"type": "server", "op": "status", "target": "php"})
+        self.assertEqual(self.action("server php mati", self.php())["op"], "status")
+        self.assertEqual(self.action("matiin server php", self.php())["op"], "stop")
+
+    def test_every_server(self):
+        self.assertEqual(self.action("matiin semua server", self.php()), {"type": "server", "op": "stop", "target": "all"})
+        self.assertEqual(self.action("restart semua", self.php())["target"], "all")
+
+    def test_saying_so_when_there_are_none(self):
+        self.assertEqual(self.action("matiin semua server"), {"type": "server", "op": "stop", "target": "all"})
+
+    def test_opening_a_site(self):
+        self.assertEqual(self.action("buka youtube"), {"type": "open_url", "url": "https://www.youtube.com"})
+        self.assertEqual(self.action("tolong buka stack overflow"), {"type": "open_url", "url": "https://stackoverflow.com"})
+        self.assertEqual(self.action("open example.com/docs"), {"type": "open_url", "url": "https://example.com/docs"})
+
+    def test_opening_an_app(self):
+        with mock.patch.object(commands, "find_app", side_effect=lambda name: name if name == "org.gnome.Console.desktop" else None):
+            self.assertEqual(self.action("buka terminal"), {"type": "open_app", "app": "org.gnome.Console.desktop"})
+            self.assertIsNone(self.action("buka kalkulator"))
+            self.assertIsNone(self.action("buka entah apa"))
+
+    def test_opening_a_project_folder(self):
+        self.assertEqual(self.action("buka folder project gudang"), {"type": "open_folder", "path": "gudang"})
+        self.assertIsNone(self.action("buka folder ~/Downloads"))  # the model knows paths
+
+    def test_bringing_the_desk_back(self):
+        for text in ("balikin sesi sebelumnya", "balikin sesi", "restore", "restore session"):
+            self.assertEqual(self.action(text), {"type": "restore_desk"}, text)
+
+    def test_how_long_you_focused(self):
+        for text in ("berapa lama gua fokus hari ini?", "how long did I focus today?", "fokus hari ini berapa", "berapa jam kerja gua"):
+            self.assertEqual(self.action(text), {"type": "focus_today"}, text)
+
+    def test_a_modes_lists(self):
+        for text, field, word, mode in (("blokir reddit di mode writing", "block", "reddit", "writing"), ("block reddit", "block", "reddit", None),
+                                        ("izinin figma di building", "allow", "figma", "building"), ("tambahin figma ke mode building", "allow", "figma", "building"),
+                                        ("tambahin tiktok ke yang diblokir di mode building", "block", "tiktok", "building")):
+            self.assertEqual(self.action(text), {"type": "mode_list", "field": field, "word": word, "mode": mode}, text)
+
+    def test_a_mode_it_doesnt_know_isnt_guessed(self):
+        self.assertIsNone(self.action("blokir reddit di mode entah"))
+
+    def test_break_reminders(self):
+        self.assertEqual(self.action("matiin pengingat istirahat"), {"type": "breaks", "on": False})
+        self.assertEqual(self.action("nyalain pengingat"), {"type": "breaks", "on": True})
+        self.assertEqual(self.action("turn off reminders".replace("reminders", "reminder")), {"type": "breaks", "on": False})
+
+    def test_anything_dangerous_never_takes_a_shortcut(self):
+        for text in ("buka terminal terus sudo rm -rf", "restart sudo", "matiin semua server pake sudo", "tutup gudang rm -rf"):
+            self.assertIsNone(self.action(text), text)
+
+
+class TimeToday(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patcher = mock.patch.object(commands.brain, "STATE_DIR", Path(folder.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        (Path(folder.name) / "stats").mkdir()
+        self.config = commands.brain.Config(Path(__file__).resolve().parents[1] / "extension" / "deskai@ranggaeghapermana.github.io" / "modes.default.json")
+        self.config.refresh()
+
+    def record(self, modes):
+        stats = commands.brain.STATE_DIR / "stats" / f"{time.strftime('%Y-%m-%d')}.json"
+        stats.write_text(json.dumps({"modes": modes, "distractions": {}}))
+
+    def test_being_away_isnt_counted_as_focus(self):
+        self.record({"building": {"on_task": 28200, "neutral": 7200, "idle": 36720, "off_task": 900}})
+        spent = commands.time_today(self.config)
+        self.assertEqual(spent["focused"], {"Building": 590})
+        self.assertEqual((spent["distracted"], spent["idle"]), (15, 612))
+
+    def test_a_mode_that_isnt_for_focus_isnt_focus(self):
+        self.record({"building": {"on_task": 600}, "social": {"neutral": 1800}})
+        spent = commands.time_today(self.config)
+        self.assertEqual(spent["focused"], {"Building": 10})
+        self.assertEqual(spent["elsewhere"], 30)
+
+    def test_the_answer_says_it_plainly(self):
+        self.record({"building": {"on_task": 38400, "neutral": 240, "off_task": 120, "idle": 3540}})
+        self.config.data = {**self.config.data, "language": "id"}
+        answer = commands.focus_answer(self.config)
+        self.assertIn("10 jam 44 menit", answer)
+        self.assertIn("Distraksi 2 menit", answer)
+        self.assertIn("idle 59 menit", answer)
+        self.assertIn("(Building)", answer)
+
+    def test_several_modes_are_each_told(self):
+        self.record({"building": {"on_task": 3600}, "writing": {"on_task": 1800}})
+        self.assertIn("1 h 30 min today: Writing 30 min, Building 1 h", commands.focus_answer(self.config).replace("Building 1 h, Writing 30 min", "Writing 30 min, Building 1 h"))
+
+    def test_what_the_model_is_told_matches(self):
+        self.record({"building": {"on_task": 6000, "idle": 6000}})
+        line = commands.focus_today(self.config)
+        self.assertTrue(line.startswith("100 minutes focused"), line)
+        self.assertIn("100 minutes, not counted", line)
+
+    def test_nothing_yet(self):
+        self.assertEqual(commands.focus_today(self.config), "nothing recorded yet")
+        self.assertIn("recorded", commands.focus_answer(self.config))
+
+    def test_duration(self):
+        for minutes, words in ((0, "0 menit"), (59, "59 menit"), (60, "1 jam"), (125, "2 jam 5 menit")):
+            self.assertEqual(commands.duration(minutes, "id"), words)
+        self.assertEqual(commands.duration(125, "en"), "2 h 5 min")
 
 
 class Closing(unittest.TestCase):
@@ -115,6 +268,22 @@ class WhatWasAsked(unittest.TestCase):
     def test_it_says_when_it_dropped_something(self):
         result = commands.only_what_was_asked({"say": "ok", "actions": [{"type": "mode", "mode": "x"}]}, "halo", self.PROJECTS)
         self.assertEqual(result["dropped"], 1)
+
+
+class Unsure(unittest.TestCase):
+    def unsure(self, text, actions=()):
+        return commands.only_what_was_asked({"say": "x", "actions": list(actions)}, text, {})["unsure"]
+
+    def test_words_with_no_action_behind_them_dont_count(self):
+        self.assertTrue(self.unsure("cabut dari toko online"))
+        self.assertTrue(self.unsure("jalanin rm -rf /", [{"type": "server", "op": "stop", "target": "all"}]))
+
+    def test_an_answer_to_a_question_does(self):
+        for text in ("hari ini gua produktif gak?", "kenapa server gua lambat", "what can you do"):
+            self.assertFalse(self.unsure(text), text)
+
+    def test_doing_something_does(self):
+        self.assertFalse(self.unsure("buka youtube", [{"type": "open_url", "url": "https://www.youtube.com"}]))
 
 
 class Checks(unittest.TestCase):

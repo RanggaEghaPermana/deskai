@@ -3,6 +3,7 @@
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "daemon"))
 import brain  # noqa: E402
 import commands  # noqa: E402
 import learned  # noqa: E402
+import senders  # noqa: E402
 import servers  # noqa: E402
 import sites  # noqa: E402
 
@@ -66,7 +68,18 @@ class Notifications(unittest.TestCase):
         self.assertIs(sites.notification_verdict("Instagram", "", "Your security code is 123"), True)
 
     def test_the_rest_goes_to_the_model(self):
-        self.assertIsNone(sites.notification_verdict("Gmail", "Deadline", "Tolong kirim laporan besok"))
+        self.assertIsNone(sites.notification_verdict("Gmail", "Acara kantor", "Minggu depan ada acara, datang ya"))
+
+    def test_a_deadline_or_an_error_gets_through(self):
+        for title, body in (("Deadline laporan", "Kirim hari Jumat"), ("Sentry", "500 errors naik tajam di production"),
+                            ("Pak Budi", "Tolong kirim laporan besok jam 9"), ("Rina", "Can you check this today?")):
+            self.assertTrue(sites.notification_verdict("Gmail", title, body), title)
+
+    def test_an_ad_stays_an_ad_even_if_it_presses(self):
+        self.assertFalse(sites.notification_verdict("Shopee", "Promo", "Segera klaim voucher kamu, tolong cek hari ini"))
+
+    def test_hurrying_you_isnt_enough(self):
+        self.assertIsNone(sites.notification_verdict("Toko", "Stok menipis", "Segera checkout sebelum kehabisan"))
 
 
 class Learning(unittest.TestCase):
@@ -159,6 +172,128 @@ class Telling(unittest.TestCase):
     def test_other_sentences_arent_mistaken_for_it(self):
         for text in ("kerjaan gua hari ini apa", "work on the report", "distraksi apa aja hari ini"):
             self.assertIsNone(self.action(text), text)
+
+
+class Asking(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.known = learned.Learned(Path(folder.name) / "learned.json")
+        self.unsure = learned.Unsure(Path(folder.name) / "review.json")
+
+    def test_the_one_you_spent_the_longest_on_comes_first(self):
+        self.unsure.note("building", "a", "A", "Short", 400)
+        self.unsure.note("building", "a", "A", "Long", 900)
+        self.assertEqual(self.unsure.next("building", self.known)["title"], "Long")
+        self.assertEqual(self.unsure.next("building", self.known)["title"], "Short")
+
+    def test_a_glance_isnt_worth_asking_about(self):
+        self.unsure.note("building", "a", "A", "Glance", 60)
+        self.assertIsNone(self.unsure.next("building", self.known))
+
+    def test_time_adds_up(self):
+        for _ in range(5):
+            self.unsure.note("building", "a", "A", "Back and forth", 100)
+        self.assertEqual(self.unsure.next("building", self.known)["seconds"], 500)
+
+    def test_only_the_mode_youre_in(self):
+        self.unsure.note("writing", "a", "A", "Other", 900)
+        self.assertIsNone(self.unsure.next("building", self.known))
+
+    def test_not_what_you_already_answered(self):
+        self.known.add("building", "a", "Known", "on_task")
+        self.unsure.note("building", "a", "A", "Known", 900)
+        self.assertIsNone(self.unsure.next("building", self.known))
+
+    def test_a_few_a_day_even_across_a_restart(self):
+        for index in range(learned.REVIEW_PER_DAY + 2):
+            self.unsure.note("building", "a", "A", f"Window {index}", 900)
+        for _ in range(learned.REVIEW_PER_DAY):
+            self.assertIsNotNone(self.unsure.next("building", self.known))
+        self.assertIsNone(self.unsure.next("building", self.known))
+        again = learned.Unsure(self.unsure.path)
+        again.note("building", "a", "A", "Another", 900)
+        self.assertIsNone(again.next("building", self.known))
+
+    def test_windows_themselves_arent_written_down(self):
+        self.unsure.note("building", "a", "A", "Private title", 900)
+        self.unsure.next("building", self.known)
+        self.assertNotIn("Private", self.unsure.path.read_text())
+
+
+class Senders(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "senders.json"
+        self.senders = senders.Senders(self.path)
+
+    def test_your_word_is_kept(self):
+        self.assertIsNone(self.senders.word("Slack", "Dimas"))
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS)
+        self.assertEqual(senders.Senders(self.path).word("Slack", "dimas"), senders.ALWAYS)
+        self.assertIsNone(self.senders.word("Slack", "Rina"))
+        self.assertIsNone(self.senders.word("Teams", "Dimas"))
+
+    def test_a_message_count_is_still_the_same_person(self):
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS)
+        self.assertEqual(self.senders.word("Slack", "Dimas (3 pesan)"), senders.ALWAYS)
+
+    def test_a_whole_app(self):
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS, whole_app=True)
+        self.assertEqual(self.senders.word("Slack", "Rina"), senders.ALWAYS)
+
+    def test_your_word_on_a_person_beats_the_app(self):
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS, whole_app=True)
+        self.senders.remember("Slack", "Bot", senders.HOLD)
+        self.assertEqual(self.senders.word("Slack", "Bot"), senders.HOLD)
+
+    def test_not_a_whole_browser(self):
+        self.assertFalse(senders.can_take_whole_app("Google Chrome", "Dimas"))
+        self.assertTrue(senders.can_take_whole_app("Slack", "Dimas"))
+        self.assertFalse(senders.can_take_whole_app("Slack", ""))
+
+    def test_asked_once(self):
+        now = time.time()
+        self.assertTrue(self.senders.should_ask("Slack", "Dimas", now=now))
+        self.assertFalse(self.senders.should_ask("Slack", "Dimas", now=now + 100))
+
+    def test_no_answer_asks_again_the_next_day(self):
+        now = time.time()
+        self.assertTrue(self.senders.should_ask("Slack", "Dimas", now=now))
+        self.assertTrue(self.senders.should_ask("Slack", "Dimas", now=now + senders.ASK_AGAIN_S))
+
+    def test_an_answer_ends_it(self):
+        self.senders.remember("Slack", "Dimas", senders.HOLD)
+        self.assertFalse(self.senders.should_ask("Slack", "Dimas"))
+
+    def test_saying_no_twice_quiets_the_app(self):
+        self.senders.remember("Toko", "Promo satu", senders.HOLD)
+        self.assertTrue(self.senders.should_ask("Toko", "Promo dua"))
+        self.senders.remember("Toko", "Promo dua", senders.HOLD)
+        self.assertFalse(self.senders.should_ask("Toko", "Promo tiga"))
+        self.assertTrue(self.senders.should_ask("Slack", "Dimas"))
+
+    def test_not_if_you_let_someone_through(self):
+        for name, word in (("Bot satu", senders.HOLD), ("Bot dua", senders.HOLD), ("Dimas", senders.ALWAYS)):
+            self.senders.remember("Slack", name, word)
+        self.assertTrue(self.senders.should_ask("Slack", "Rina"))
+
+    def test_a_few_questions_a_day(self):
+        now = time.time()
+        asked = [self.senders.should_ask("Gmail", f"Subject {index}", now=now) for index in range(senders.ASKS_PER_DAY + 3)]
+        self.assertEqual(sum(asked), senders.ASKS_PER_DAY)
+
+    def test_taking_it_back(self):
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS)
+        self.assertEqual(self.senders.forget_name("dimas"), 1)
+        self.assertIsNone(self.senders.word("Slack", "Dimas"))
+        self.assertEqual(self.senders.forget_name("dimas"), 0)
+
+    def test_no_message_is_kept(self):
+        self.senders.should_ask("Slack", "Dimas")
+        self.senders.remember("Slack", "Dimas", senders.ALWAYS)
+        self.assertEqual(set(json.loads(self.path.read_text())), {"people", "apps", "asked"})
 
 
 if __name__ == "__main__":

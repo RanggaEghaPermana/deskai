@@ -27,6 +27,7 @@ from gi.repository import Gio  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 UUID = "deskai@ranggaeghapermana.github.io"
+LOGIN_UUID = "deskai-login@ranggaeghapermana.github.io"
 SHELL_MAJOR = 50  # the GNOME version this release is written for
 SERVICE = "deskaid.service"
 POLKIT_RULE = Path("/etc/polkit-1/rules.d/50-deskai-services.rules")
@@ -43,6 +44,7 @@ APP_DIR = SHARE / "app"           # a copy of the app, when it isn't installed s
 VENV = SHARE / "venv"             # only when using an API key: it needs the anthropic package
 INSTALLED = SHARE / "installed.json"
 EXTENSION_LINK = DATA / "gnome-shell" / "extensions" / UUID
+LOGIN_LINK = DATA / "gnome-shell" / "extensions" / LOGIN_UUID
 COMMAND = HOME / ".local" / "bin" / "deskai"
 UNIT = CONFIG / "systemd" / "user" / SERVICE
 CONFIG_DIR = CONFIG / "deskai"
@@ -388,12 +390,12 @@ def _hooks(action):
 
 
 def _enable_extension():
-    """Turns the extension on for the next login: GNOME only reads new extensions when it starts."""
+    """Turns the extensions on for the next login: GNOME only reads new extensions when it starts."""
     settings = Gio.Settings.new("org.gnome.shell")
+    ours = (UUID, LOGIN_UUID)
     enabled = settings.get_strv("enabled-extensions")
-    if UUID not in enabled:
-        settings.set_strv("enabled-extensions", [*enabled, UUID])
-    settings.set_strv("disabled-extensions", [u for u in settings.get_strv("disabled-extensions") if u != UUID])
+    settings.set_strv("enabled-extensions", [*enabled, *(u for u in ours if u not in enabled)])
+    settings.set_strv("disabled-extensions", [u for u in settings.get_strv("disabled-extensions") if u not in ours])
     settings.set_boolean("disable-user-extensions", False)
     Gio.Settings.sync()
 
@@ -407,6 +409,7 @@ def install_steps(options):
         if not (options.dev or is_system_payload() or linked_here()):
             state["app_dir"] = _copy_app()
         _link(state["app_dir"] / "extension" / UUID, EXTENSION_LINK)
+        _link(state["app_dir"] / "extension" / LOGIN_UUID, LOGIN_LINK)
 
     def ai():
         if options.ai == "api" and not options.keep_config:
@@ -455,7 +458,8 @@ def uninstall_steps(purge=False):
 
     def extension():
         settings = Gio.Settings.new("org.gnome.shell")
-        settings.set_strv("enabled-extensions", [u for u in settings.get_strv("enabled-extensions") if u != UUID])
+        settings.set_strv("enabled-extensions",
+                          [u for u in settings.get_strv("enabled-extensions") if u not in (UUID, LOGIN_UUID)])
         Gio.Settings.sync()
 
     def hooks():
@@ -470,10 +474,11 @@ def uninstall_steps(purge=False):
     def files():
         for path in (COMMAND, LAUNCHER, ICON):
             path.unlink(missing_ok=True)
-        if EXTENSION_LINK.is_symlink():
-            EXTENSION_LINK.unlink()
-        elif EXTENSION_LINK.exists():
-            shutil.rmtree(EXTENSION_LINK)
+        for link in (EXTENSION_LINK, LOGIN_LINK):
+            if link.is_symlink():
+                link.unlink()
+            elif link.exists():
+                shutil.rmtree(link)
         shutil.rmtree(SHARE, ignore_errors=True)
 
     def polkit():

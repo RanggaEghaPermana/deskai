@@ -50,6 +50,10 @@ ADS = _words(
     "promo", "diskon", "voucher", "cashback", "flash sale", "gratis ongkir", "kupon", "\\d+% off", "buruan", "sale",
 )
 FEED_APPS = _words("instagram", "tiktok", "facebook", "threads", "twitter", "youtube", "pinterest", "duolingo", "snapchat")
+PRESSING = _words("deadline", "tenggat", "asap", "errors?", "exceptions?", "outage", "gangguan", "gagal", "failed")
+# Someone asking for something by a certain time.
+ASKED_BY_WHEN = re.compile(r"\b(tolong|mohon|please|bisa|can you|could you)\b.*\b(besok|hari ini|sekarang|malam ini|nanti (pagi|siang|sore|malam)"
+                           r"|jam \d+|today|tomorrow|tonight|by \d+)\b", re.I | re.S)
 
 
 def window_verdict(mode, app_id, title):
@@ -76,4 +80,7 @@ def notification_verdict(app, title, body):
         return True
     if ADS.search(text) or FEED_APPS.search(app or ""):
         return False
+    # These come after the ads: "cashback gagal? cek promo" is an ad, not a failure.
+    if PRESSING.search(text) or ASKED_BY_WHEN.search(text):
+        return True
     return None

@@ -11,7 +11,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 const {HORIZONTAL, VERTICAL} = Meta.MaximizeFlags;
 const BOTH = HORIZONTAL | VERTICAL;
 // Apps size a new window themselves right after it maps; placing it again a moment later wins.
-const SETTLE_MS = [250, 900];
+// The last retry at 2500 ms catches Claude Code reconnecting and Ptyxis resizing after load.
+const SETTLE_MS = [250, 900, 2500];
 // A window that hasn't shown up on screen by then isn't coming.
 const SHOWN_TIMEOUT_MS = 15000;
 

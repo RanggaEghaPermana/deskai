@@ -89,42 +89,178 @@ COMMAND_SCHEMA = {
     "additionalProperties": False,
 }
 
-MODE_WORDS = re.compile(r"^(?:(?:switch|go|change|pindah|ganti|balik)(?: to| ke)?|mode|ke)\s+|\s+mode$", re.I)
-SERVER_OPS = {"restart": "restart", "ulang": "restart", "ulangin": "restart", "nyalain ulang": "restart",
-              "stop": "stop", "matiin": "stop", "log": "log", "logs": "log", "liat log": "log", "lihat log": "log"}
+MODE_WORDS = re.compile(r"^(?:(?:switch|go|change|pindah|ganti|balik|lanjut)(?: to| ke)?|mode|ke|mau|pengen|pingin|ingin|mulai|"
+                        r"want to|wanna|time to|saatnya|waktunya)\s+|\s+mode$", re.I)
+# Everyday words for the default modes. A word only counts if you have a mode it can mean.
+MODE_MEANINGS = (("writing", "nulis", "menulis", "tulis", "ngetik"),
+                 ("building", "coding", "ngoding", "koding", "code", "programming"),
+                 ("studying", "study", "belajar", "kuliah"),
+                 ("social", "sosmed", "santai", "istirahat", "free"))
+SERVER_OPS = {"restart": "restart", "ulang": "restart", "ulangin": "restart", "nyalain ulang": "restart", "nyalain": "restart",
+              "hidupin": "restart", "idupin": "restart", "start": "restart",
+              "stop": "stop", "matiin": "stop", "matikan": "stop",
+              "log": "log", "logs": "log", "liat log": "log", "lihat log": "log"}
 SERVER_OP = re.compile(r"^(%s)\b\s*(.*)$" % "|".join(sorted(SERVER_OPS, key=len, reverse=True)), re.I)
+SERVER_NAMED = re.compile(r"\bserver\s+(?!gua\b|gue\b|gw\b|aku\b|saya\b|my\b|the\b|nya\b)([\w.:-]+)", re.I)
+ASKS_WHY = re.compile(r"\b(kenapa|why|status|gimana|what's wrong|mati)\b", re.I)
+FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm|im|kita)\s+", re.I)
+FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|aja|lagi|nih|tuh)$", re.I)
 # Telling it about the window in front of you, which is how it learns.
-CLOSE_PROJECT = re.compile(r"^(?:tutup|close|beresin|selesaiin|selesai|matiin|stop|shut down)\s+(?:project\s+|proyek\s+|kerja(?:an)?\s+(?:di\s+)?)?(.+)$", re.I)
+CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|stop|shut down|"
+                           r"done with|finished with|finish)\s+(?:(?:kerja(?:an)?|ngoding|working)\s+)?(?:(?:di|on)\s+)?"
+                           r"(?:project\s+|proyek\s+)?(.+)$", re.I)
+SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai)\s+(?:(?:kerja(?:an)?|ngoding)\s+)?(?:(?:di|on)\s+)?"
+                           r"(?:project\s+|proyek\s+)?(.+)"
+                           r"|(?:mau\s+)?(?:kerja|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
+OPEN_FOLDER = re.compile(r"^(?:buka|open)\s+folder\s+(?:project\s+|proyek\s+)?(.+)$", re.I)
+OPEN_THING = re.compile(r"^(?:buka|bukain|open|launch)\s+(.+)$", re.I)
+RESTORE = re.compile(r"^(?:balikin|pulihin|kembaliin|restore|bring back)(?:\s+(?:sesi|session|desk|meja|semua|jendela|windows)\b.*)?$", re.I)
+ASKS_FOCUS = re.compile(r"\b(?:berapa lama|berapa jam|how long|how much)\b.*\b(?:fokus|focus\w*|kerja|work\w*|distraksi|distract\w*)\b|"
+                        r"^(?:waktu\s+)?fokus(?:\s+gua)?(?:\s+hari ini)?(?:\s+berapa(?:\s+lama)?)?\??$", re.I)
+BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
+BREAKS_ON = re.compile(r"^(nyala|hidup|idup|turn on)", re.I)
+BLOCK_LIST = re.compile(r"^(?:blokir|block)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
+ADD_TO_BLOCKED = re.compile(r"^(?:tambahin|tambahkan|tambah|add)\s+(.+?)\s+(?:ke|to)\s+(?:yang\s+)?(?:di)?blo[ck]\w*(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
+ALLOW_LIST = re.compile(r"^(?:izinin|izinkan|allow)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
+ADD_TO_MODE = re.compile(r"^(?:tambahin|tambahkan|tambah|add)\s+(.+?)\s+(?:ke|to|di|in)\s+(?:mode\s+)(\S+)$", re.I)
 IS_WORK = re.compile(r"^((ini|yang ini|this is|this's|it's)\s+)?(kerjaan|kerja|buat kerja|work|relevan|bukan distraksi|not a distraction)$", re.I)
 NOT_WORK = re.compile(r"^((ini|yang ini|this is|this's|it's)\s+)?(distraksi|(a )?distraction|bukan kerjaan|bukan kerja|not work|"
                       r"(nggak|gak|ga|tidak) relevan|not relevant)$", re.I)
+SITES = {"youtube": "https://www.youtube.com", "yt": "https://www.youtube.com", "github": "https://github.com",
+         "gitlab": "https://gitlab.com", "gmail": "https://mail.google.com", "google": "https://www.google.com",
+         "stack overflow": "https://stackoverflow.com", "stackoverflow": "https://stackoverflow.com",
+         "whatsapp": "https://web.whatsapp.com", "wa": "https://web.whatsapp.com", "instagram": "https://www.instagram.com",
+         "chatgpt": "https://chatgpt.com", "drive": "https://drive.google.com", "google drive": "https://drive.google.com",
+         "kalender": "https://calendar.google.com", "calendar": "https://calendar.google.com"}
+DOMAIN = re.compile(r"^(?:https?://)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/\S*)?$", re.I)
+# Words for apps whose name doesn't say it. Tried in order; the first one that's installed wins.
+APP_WORDS = {"terminal": ("org.gnome.Ptyxis.desktop", "org.gnome.Terminal.desktop", "org.gnome.Console.desktop"),
+             "kalkulator": ("org.gnome.Calculator.desktop",), "calculator": ("org.gnome.Calculator.desktop",),
+             "pengaturan": ("org.gnome.Settings.desktop",), "setelan": ("org.gnome.Settings.desktop",),
+             "settings": ("org.gnome.Settings.desktop",), "file manager": ("org.gnome.Nautilus.desktop",),
+             "files": ("org.gnome.Nautilus.desktop",), "berkas": ("org.gnome.Nautilus.desktop",),
+             "browser": ("google-chrome.desktop", "firefox.desktop", "org.mozilla.firefox.desktop", "chromium.desktop")}
 
 
-def quick(text, modes, watch, known_projects=()):
-    """Commands that need no AI: a mode's name, restart/stop/log and a server, closing a project, or
-    saying what the window in front of you is. None if it's not one."""
+def _trimmed(text):
+    """What was asked, without the politeness around it."""
     words = text.strip().rstrip(".!").strip()
+    for pattern in (FILLER_START, FILLER_END):
+        while pattern.search(words):
+            words = pattern.sub("", words, count=1).strip()
+    return words
+
+
+def _mode_named(name, modes):
+    """The mode a word means: its id, its label, or an everyday word for it."""
+    wanted = name.lower()
+    for key, label in modes:
+        if wanted in (key.lower(), label.lower()):
+            return key
+    for words in MODE_MEANINGS:
+        if wanted in words:
+            return next((key for key, label in modes if key.lower() in words or label.lower() in words), None)
+    return None
+
+
+def _named_server(words, watch):
+    """{"type": "server", ...} for a sentence that's about a server by name: "server php gua kenapa? nyalain lagi"."""
+    named = SERVER_NAMED.search(words)
+    if not named or not watch.match(named.group(1)):
+        return None
+    if ASKS_RESTART.search(words):
+        return {"type": "server", "op": "restart", "target": named.group(1)}
+    if ASKS_STOP.search(re.sub(r"\bmati\b", "", words)):
+        return {"type": "server", "op": "stop", "target": named.group(1)}
+    if ASKS_WHY.search(words):
+        return {"type": "server", "op": "status", "target": named.group(1)}
+    return None
+
+
+def _list_edit(words, modes):
+    for pattern, field in ((ADD_TO_BLOCKED, "block"), (BLOCK_LIST, "block"), (ALLOW_LIST, "allow"), (ADD_TO_MODE, "allow")):
+        match = pattern.match(words)
+        if match:
+            mode = _mode_named(match.group(2), modes) if match.group(2) else None
+            if match.group(2) and not mode:
+                return None
+            word = match.group(1).strip(" \"'")
+            return {"type": "mode_list", "field": field, "word": word, "mode": mode} if 0 < len(word) <= 60 else None
+    return None
+
+
+def _open_thing(name):
+    """{"type": "open_url" | "open_app", ...} for something by name. None if it isn't plain what that is."""
+    wanted = name.strip().lower()
+    if wanted in SITES:
+        return {"type": "open_url", "url": SITES[wanted]}
+    if DOMAIN.match(wanted):
+        return {"type": "open_url", "url": wanted if wanted.startswith("http") else f"https://{wanted}"}
+    for app in APP_WORDS.get(wanted, ()):
+        if find_app(app):
+            return {"type": "open_app", "app": app}
+    found = find_app(wanted) if wanted not in APP_WORDS else None
+    return {"type": "open_app", "app": found} if found else None
+
+
+def _quick_action(words, modes, watch, known_projects):
+    if BREAKS.match(words):
+        return {"type": "breaks", "on": bool(BREAKS_ON.match(words))}
+    if ASKS_FOCUS.search(words):
+        return {"type": "focus_today"}
+    server = _named_server(words, watch)
+    if server:
+        return server
     closing = CLOSE_PROJECT.match(words)
     # "matiin gudang" is the project, "matiin vite" a server: a server's own name wins.
     if closing and known_projects and find_project(closing.group(1), known_projects):
         named = closing.group(1).lower()
         if not any(named in item["label"].lower() or named in item["command"].lower() for item in watch.items.values()):
-            return {"say": "", "actions": [{"type": "close_project", "project": closing.group(1)}]}
+            return {"type": "close_project", "project": closing.group(1)}
     if IS_WORK.match(words):
-        return {"say": "", "actions": [{"type": "label", "verdict": "on_task"}]}
+        return {"type": "label", "verdict": "on_task"}
     if NOT_WORK.match(words):
-        return {"say": "", "actions": [{"type": "label", "verdict": "off_task"}]}
-    name = words.lower()
-    for _ in range(2):
+        return {"type": "label", "verdict": "off_task"}
+    name = words
+    for _ in range(3):
         name = MODE_WORDS.sub("", name).strip()
-    for key, label in modes:
-        if name in (key.lower(), label.lower()):
-            return {"say": "", "actions": [{"type": "mode", "mode": key}]}
+    mode = _mode_named(name, modes)
+    if mode:
+        return {"type": "mode", "mode": mode}
     match = SERVER_OP.match(words)
-    if match and watch.match(match.group(2)):
-        return {"say": "", "actions": [{"type": "server", "op": SERVER_OPS[match.group(1).lower()],
-                                        "target": match.group(2) or "all"}]}
-    return None
+    if match:
+        everything = re.fullmatch(r"(?:semua\s*|all\s*)?(?:server\w*)?", match.group(2).strip(), re.I)
+        target = "all" if everything else match.group(2)
+        # "matiin semua server" with none running deserves "there are none", not a guess from the model.
+        if watch.match(target) or (everything and match.group(2).strip()):
+            return {"type": "server", "op": SERVER_OPS[match.group(1).lower()], "target": target}
+    if RESTORE.match(words):
+        return {"type": "restore_desk"}
+    setting_up = SETUP_PROJECT.match(words)
+    if setting_up and known_projects:
+        name = setting_up.group(1) or setting_up.group(2)
+        if find_project(name, known_projects):
+            return {"type": "setup_project", "project": name}
+    folder = OPEN_FOLDER.match(words)
+    if folder and known_projects and find_project(folder.group(1), known_projects):
+        return {"type": "open_folder", "path": folder.group(1)}
+    opening = OPEN_THING.match(words)
+    if opening and not folder:
+        found = _open_thing(opening.group(1))
+        if found:
+            return found
+    return _list_edit(words, modes)
+
+
+def quick(text, modes, watch, known_projects=()):
+    """What needs no AI, because the words are plain: a mode, a server, setting up or closing a project, opening
+    something, how long you've focused, editing a mode's lists, or saying what the window in front of you is.
+    It's instant, and does the same thing every time. None if it's not one of these."""
+    if DANGEROUS.search(text):
+        return None
+    words = _trimmed(text)
+    action = _quick_action(words, modes, watch, known_projects)
+    return {"say": "", "actions": [action]} if action else None
 
 
 # What a request has to say before a small local model's action on it counts. It picks odd things now
@@ -134,6 +270,7 @@ ASKS_RESTART = re.compile(r"\b(restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|
 ASKS_MODE = re.compile(r"\b(mode|pindah|ganti|switch)\b", re.I)
 ASKS_RESTORE = re.compile(r"\b(sesi|session|balik\w*|restore|lanjut\w*|kembali\w*)\b", re.I)
 DANGEROUS = re.compile(r"\b(rm|sudo|mkfs|dd|chmod|chown|shutdown|reboot)\b|\brm\s+-", re.I)
+IS_QUESTION = re.compile(r"\?|^(berapa|apa|apakah|kenapa|mengapa|gimana|bagaimana|siapa|kapan|dimana|how|what|why|when|where|who|which|is|are|do|does|did)\b", re.I)
 
 
 def asked_for(action, text, known_projects):
@@ -162,7 +299,9 @@ def only_what_was_asked(result, text, known_projects):
         kept = []
     else:
         kept = [action for action in actions if asked_for(action, text, known_projects)]
-    return {**result, "actions": kept, "dropped": len(actions) - len(kept)}
+    # With nothing to do, its words are only worth showing if you asked something. Otherwise it's
+    # saying "I'll stop the server" while nothing happens: it did that for "cabut dari toko online".
+    return {**result, "actions": kept, "dropped": len(actions) - len(kept), "unsure": not kept and not IS_QUESTION.search(text.strip())}
 
 
 def projects():
@@ -176,19 +315,59 @@ def projects():
     return dict(list(named.items())[:20])
 
 
+def time_today(config):
+    """Today, in minutes: per focus mode the time you were there and not distracted, the time distracted, the
+    time in other modes, and the time away from the keyboard, which doesn't count as anything you did."""
+    try:
+        modes = json.loads((brain.STATE_DIR / "stats" / f"{time.strftime('%Y-%m-%d')}.json").read_text()).get("modes", {})
+    except (OSError, ValueError):
+        modes = {}
+    focused, elsewhere, distracted, idle = {}, 0, 0, 0
+    for key, bucket in modes.items():
+        mode = config.mode(key) or {"label": key}
+        distracted += bucket.get("off_task", 0)
+        idle += bucket.get("idle", 0)
+        there = sum(seconds for kind, seconds in bucket.items() if kind not in ("idle", "off_task"))
+        if mode.get("focus"):
+            focused[mode["label"]] = there
+        else:
+            elsewhere += there
+    return {"focused": {label: round(seconds / 60) for label, seconds in focused.items() if seconds >= 30},
+            "elsewhere": round(elsewhere / 60), "distracted": round(distracted / 60), "idle": round(idle / 60)}
+
+
 def focus_today(config):
     """Today's time, as a line for the model."""
-    try:
-        data = json.loads((brain.STATE_DIR / "stats" / f"{time.strftime('%Y-%m-%d')}.json").read_text())
-    except (OSError, ValueError):
+    spent = time_today(config)
+    if not spent["focused"] and not spent["elsewhere"] and not spent["distracted"]:
         return "nothing recorded yet"
-    modes = data.get("modes", {})
-    minutes = {key: round(sum(bucket.values()) / 60) for key, bucket in modes.items()}
-    if not sum(minutes.values()):
-        return "nothing recorded yet"
-    labels = ", ".join(f"{(config.mode(key) or {'label': key})['label']} {n} minutes" for key, n in minutes.items() if n)
-    distracted = round(sum(bucket.get("off_task", 0) for bucket in modes.values()) / 60)
-    return f"{sum(minutes.values())} minutes in total ({labels}). Distracted for {distracted} of those minutes"
+    labels = ", ".join(f"{label} {minutes} minutes" for label, minutes in spent["focused"].items()) or "none"
+    return (f"{sum(spent['focused'].values())} minutes focused ({labels}). Distracted for {spent['distracted']} more minutes, "
+            f"{spent['elsewhere']} minutes in other modes. Away from the keyboard for {spent['idle']} minutes, not counted")
+
+
+def duration(minutes, language):
+    unit_hours, unit_minutes = ("jam", "menit") if language == "id" else ("h", "min")
+    hours, rest = divmod(int(minutes), 60)
+    if hours and rest:
+        return f"{hours} {unit_hours} {rest} {unit_minutes}"
+    return f"{hours} {unit_hours}" if hours else f"{rest} {unit_minutes}"
+
+
+def focus_answer(config):
+    """"How long did I focus today?", from the numbers."""
+    language = config.language
+    spent = time_today(config)
+    if not spent["focused"] and not spent["elsewhere"] and not spent["distracted"]:
+        return brain.card_text(language, "focus_nothing")
+    total = sum(spent["focused"].values())
+    # One mode needs no sum: "10 h in Building", not "10 h: Building 10 h".
+    if len(spent["focused"]) > 1:
+        parts = ": " + ", ".join(f"{label} {duration(minutes, language)}" for label, minutes in spent["focused"].items())
+    else:
+        parts = "".join(f" ({label})" for label in spent["focused"])
+    return brain.card_text(language, "focus_today", total=duration(total, language), parts=parts,
+                           distracted=duration(spent["distracted"], language), idle=duration(spent["idle"], language))
 
 
 def desk(config, mode, watch, can_restore, known_projects=None, focus=None, apps=None):

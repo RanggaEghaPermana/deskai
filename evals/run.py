@@ -57,8 +57,10 @@ def windows(config, llm, rows):
 def notifications(rows):
     for app, title, body, wanted in cases.NOTIFICATIONS:
         def decide():
-            # A local model doesn't judge notifications either: what isn't plain waits in the tray.
-            return {"surface": bool(sites.notification_verdict(app, title, body)), "by": "list"}
+            # A local model doesn't judge notifications either. What isn't plain is put to you, once per sender,
+            # with the message on the card: right if you'd want to see it, one interruption too many if not.
+            plain = sites.notification_verdict(app, title, body)
+            return {"surface": True if plain is None else plain, "by": "asks" if plain is None else "list"}
         scored("notif", f"{app}: {body}", decide, lambda r, wanted=wanted: (bool(r.get("surface")) == wanted, r.get("by", "-"), str(r)), rows)
 
 
@@ -123,7 +125,8 @@ def main():
         part = [r for r in rows if r["section"] == section]
         by = Counter(r["by"] for r in part)
         model_times = sorted(r["seconds"] for r in part if r["by"] == "model") or [0]
-        print(f"{section:<8} {sum(r['right'] for r in part)}/{len(part)} right · {by['list']} without the model"
+        print(f"{section:<8} {sum(r['right'] for r in part)}/{len(part)} right · {by['list'] + by['asks']} without the model"
+              f"{f' ({by_asks} of them by asking you)' if (by_asks := by['asks']) else ''}"
               f" · model median {model_times[len(model_times) // 2]:.1f}s")
     score = sum(r["right"] for r in rows) / len(rows)
     print(f"total    {sum(r['right'] for r in rows)}/{len(rows)} = {score:.0%}")

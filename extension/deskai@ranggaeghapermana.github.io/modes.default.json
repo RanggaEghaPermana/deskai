@@ -24,6 +24,10 @@
       "cursor.desktop"
     ]
   },
+  "breaks": {
+    "enabled": true,
+    "after_minutes": 120
+  },
   "llm": {
     "backend": "auto",
     "model": "claude-opus-5-5",

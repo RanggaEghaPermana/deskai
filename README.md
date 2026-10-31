@@ -9,16 +9,29 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   desktop AI apps) tell you when they're done or need you. One click takes you there.
 - **Command bar.** Press `Super+/` or click the sparkle and type what you want: "set up my project",
   "restart the server", "close my project", "how long did I focus today?". It can only do what's on a
-  fixed list, never run commands. A mode's name, restarting a server and closing a project work without AI too.
-- **Servers on the dock.** The dev servers and database DeskAI started get a status dot. If one stops,
-  you see why, and one click restarts it or opens its log.
+  fixed list, never run commands. Plain requests, in English or Indonesian, are done instantly with no AI:
+  switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists.
+- **Servers on the dock.** The dev servers and database in your projects get a status dot, including the
+  ones you started yourself in a terminal. If one DeskAI started stops, you see why, and one click restarts
+  it or opens its log. Closing a project asks before stopping anything you started yourself.
+- **Music on the dock.** While something plays, in a music app or a browser tab, the dock shows what it
+  is with previous, pause and next. Click the song to go to the player. It leaves when the player closes,
+  or after half an hour on pause.
+- **Who gets through.** The first time someone new is held during a focus mode, the dock shows you the
+  message and asks once: keep holding, or always show them. Notifications that are plainly urgent, like a
+  deadline or an error, come through anyway.
 - **Pick up where you left off.** After a logout, your windows come back with their size, place and
   workspace, your terminals with their tabs and Claude Code conversations, your dev servers, your
   database and Chrome's tabs. It always asks first.
 - **Workday routine.** On workday mornings it offers to set up your project like last time.
 - **Smart places.** After a download or a screen recording, the dock offers to open it or show it,
-  and it learns the folders you go back to.
+  and it learns the folders you go back to. A screenshot or download's card leaves after a minute, and
+  opening Files soon after takes you right to it.
 - **Window motion.** Smooth animations when you switch between windows.
+- **Smooth login.** The login animation plays once your desktop and extensions have loaded, so it doesn't
+  stutter.
+- **Break reminders.** A small card after two hours without a pause. One click turns it off, and
+  `breaks.after_minutes` in `~/.config/deskai/modes.json` sets how long.
 
 ## Requirements
 
@@ -71,8 +84,9 @@ and tries Claude again every hour.
 
 Ollama is free and private. It only powers the command bar, loading the model when you type and letting it go a
 couple of minutes later: small local models judge real windows and notifications badly (see `evals/real.py`), so
-with Ollama those are decided by the lists and what DeskAI has learned from you, and notifications that aren't
-plainly urgent wait in the tray. It also can't change your modes. The default model, `qwen3:1.7b`, downloads 1.4 GB
+with Ollama those are decided by the lists and what DeskAI has learned from you, and for notifications that aren't
+plainly urgent, your answer about the sender. It also can't rewrite your modes, though allowing or blocking something
+works without it. The default model, `qwen3:1.7b`, downloads 1.4 GB
 and needs about 2 GB of free memory while thinking. On a laptop CPU it answers in about 4 seconds, or 10 to 25 when
 it has to load first. Pick another with `llm.ollama_model` in `~/.config/deskai/modes.json`.
 
@@ -85,9 +99,13 @@ allow and block lists, a built-in list of what's plain (docs for a coding mode, 
 classifier trained on your corrections, and only then Claude, if you use it. With Ollama, what's still unclear
 counts as neutral, so nothing interrupts you on a guess.
 
-To correct it, press `Super+/` and type `ini kerjaan` / `this is work`, or `ini distraksi` / `this is a distraction`,
-about the window in front of you. Choosing **Allow** or moving to another mode on a nudge counts too. All of it
-stays in `~/.local/state/deskai/learned.json`, and the classifier retrains itself right away, with no GPU.
+To correct it, press `Super+/` and click **Work** or **Distraction**, or right-click the active mode on the dock,
+about the window in front of you. Choosing **Allow** or moving to another mode on a nudge counts too. A few times a
+day, at a pause, it also asks about a window you spent a while on that it couldn't place. All of it stays in
+`~/.local/state/deskai/learned.json`, and the classifier retrains itself right away, with no GPU.
+
+What you say about senders is in `~/.local/state/deskai/senders.json`: their names, never their messages.
+`deskai senders` lists them, and `deskai senders --forget NAME` takes your word back.
 
 ## What it changes on your computer
 
@@ -100,6 +118,9 @@ stays in `~/.local/state/deskai/learned.json`, and the classifier retrains itsel
   don't come back twice.
 - **Starting your database without a password** is off unless you ask for it:
   `deskai routine allow-db` prints a polkit rule for you to install.
+- **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
+  loaded, so the desktop can appear a moment later. Turn it off in the Extensions app if you'd rather see
+  it sooner.
 
 ## Using it
 
@@ -110,6 +131,7 @@ few things are also on the command line:
 deskai doctor        # check that everything is working
 deskai status        # mode, window, inbox
 deskai stats         # today's focus recap
+deskai senders       # who always gets through, and who stays held
 deskai session       # what would come back after a logout
 deskai routine       # the workday routine
 deskai hooks install # let AI agents report to the dock
@@ -133,7 +155,7 @@ python3 -m unittest discover tests
 python3 evals/run.py    # scores the AI pipeline on set cases (needs Ollama)
 ```
 
-`extension/` is the GNOME Shell extension, `daemon/` is the background service (`deskaid`) and the
+`extension/` holds the GNOME Shell extensions, `daemon/` is the background service (`deskaid`) and the
 `deskai` command, and `setup/` is the setup window. GNOME only loads extension code when you log
 in, so test extension changes in `dev/nested.sh`.
 

@@ -29,6 +29,7 @@ import {Desk} from './desk.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
 import {INBOX_DEFAULTS, Inbox, RANK} from './inbox.js';
 import {MOTION, Motion} from './motion.js';
+import {Music, describe} from './music.js';
 import {FILES_APP, Places, baseName, displayPath} from './places.js';
 
 const BUS_NAME = 'io.github.RanggaEghaPermana.DeskAI';
@@ -142,6 +143,10 @@ const CARD_SECONDS = 8;
 const INBOX_COLORS = {attention: '#f59e0b', done: '#10b981', message: '#e5484d'};
 const SERVER_COLORS = {up: '#10b981', starting: '#f59e0b', down: '#e5484d'};
 const MESSAGE_COLORS = {whatsapp: '#25d366', telegram: '#2aabee', signal: '#3a76f0'};
+const MUSIC_COVER_SIZE = 24;
+// A preview that plays for a moment doesn't bring the music pill up, and the gap between two songs doesn't fold it.
+const MUSIC_SHOW_MS = 1000;
+const MUSIC_HIDE_MS = 3000;
 // A pointer resting on the dock this long, while you work in a window, stops holding it up.
 const POINTER_REST_MS = 3000;
 const AUTOHIDE_MODES = ['windows', 'smart', 'always', 'never'];
@@ -264,6 +269,8 @@ export default class DeskAIExtension extends Extension {
             announce: s => this._announcePlace(s),
         });
         this._places.enable();
+        this._music = new Music(() => this._onMusicChanged());
+        this._onMusicChanged();
         this._queueVisibility();
 
         this._motion = new Motion();
@@ -336,6 +343,8 @@ export default class DeskAIExtension extends Extension {
         this._commandBar = null;
         this._places?.disable();
         this._places = null;
+        this._music?.destroy();
+        this._music = null;
         this._desk?.destroy();
         this._desk = null;
         Main.layoutManager.disconnectObject(this);
@@ -364,6 +373,8 @@ export default class DeskAIExtension extends Extension {
         this._inboxButton = null;
         this._nextClip = null;
         this._nextButton = null;
+        this._musicClip = null;
+        this._musicCover = null;
         this._modeEntries = null;
         this._appButtons = [];
         this._trackedStruts = undefined;
@@ -637,6 +648,7 @@ export default class DeskAIExtension extends Extension {
         this._dock.add_child(this._appsClip);
         this._dock.add_child(this._addButton);
         this._buildNext();
+        this._buildMusic();
         this._buildServers();
         this._buildInbox();
         this._buildCommand();
@@ -1306,6 +1318,12 @@ export default class DeskAIExtension extends Extension {
         const label = this._modeLabel(key);
         const index = this._modeOrder.indexOf(key);
         this._openMenu(button, menu => {
+            // Here, not in the app's own menu: it's about this window, wherever you are in it.
+            if (key === this._mode && this._modes[key]?.focus && this._focusWindow) {
+                for (const button of this._labelButtons())
+                    this._menuItem(menu, button.menuLabel, () => this._submitCommand(button.command));
+                menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            }
             this._menuItem(menu, this._t('editMode', {mode: label}), () => this._openModeDialog(key));
             this._menuItem(menu, this._t('appsIn', {mode: label}), () => {
                 this._requestMode(key);
@@ -2529,7 +2547,8 @@ export default class DeskAIExtension extends Extension {
     }
 
     _serverRow(menu, server) {
-        const canOpen = server.kind === 'server' && server.port && server.state === 'up';
+        const started = server.kind === 'manual';
+        const canOpen = (server.kind === 'server' || started) && server.port && server.state === 'up';
         const row = new PopupMenu.PopupBaseMenuItem({style_class: 'deskai-inbox-item', reactive: Boolean(canOpen)});
         row.add_child(new St.Widget({
             style_class: 'deskai-inbox-item-dot',
@@ -2542,7 +2561,9 @@ export default class DeskAIExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
         text.add_child(new St.Label({text: server.label, style_class: 'deskai-inbox-item-title'}));
-        const state = this._t({up: 'serverUp', starting: 'serverStarting', down: 'serverDown'}[server.state]);
+        const state = started
+            ? this._t('serverYours')
+            : this._t({up: 'serverUp', starting: 'serverStarting', down: 'serverDown'}[server.state]);
         text.add_child(new St.Label({
             text: server.project ? `${state} · ${server.project}` : state,
             style_class: 'deskai-inbox-item-meta',
@@ -2554,7 +2575,7 @@ export default class DeskAIExtension extends Extension {
             server.state === 'down'
                 ? ['edit-clear-symbolic', 'serverForget', 'forget']
                 : ['media-playback-stop-symbolic', 'serverStop', 'stop'],
-        ];
+        ].filter(([, , op]) => !started || op !== 'log'); // its log is in your terminal
         for (const [icon, label, op] of buttons) {
             const button = new St.Button({
                 style_class: 'deskai-server-action',
@@ -2593,6 +2614,145 @@ export default class DeskAIExtension extends Extension {
         });
     }
 
+    // ---- music --------------------------------------------------------------
+
+    // A pill that's there while something plays: what it is, and the buttons to control it.
+    _buildMusic() {
+        this._musicWanted = false;
+        this._musicCoverUrl = null; // reset so the cover reloads after a disable/enable (e.g. screen lock)
+        this._musicClip = new St.Widget({
+            clip_to_allocation: true,
+            visible: false,
+            y_align: Clutter.ActorAlign.CENTER,
+            layout_manager: new Clutter.BinLayout(),
+        });
+        const row = new St.BoxLayout({style_class: 'deskai-inbox-row'});
+        row.add_child(separator());
+        const pill = new St.BoxLayout({style_class: 'deskai-music', y_align: Clutter.ActorAlign.CENTER});
+
+        this._musicTrack = new St.Button({style_class: 'deskai-music-track', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        const track = new St.BoxLayout();
+        this._musicArt = new St.Widget({
+            style_class: 'deskai-music-art',
+            layout_manager: new Clutter.BinLayout(),
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._musicAppIcon = new St.Icon({icon_size: MUSIC_COVER_SIZE});
+        this._musicArt.add_child(this._musicAppIcon);
+        const text = new St.BoxLayout({
+            style_class: 'deskai-music-text',
+            orientation: Clutter.Orientation.VERTICAL,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._musicTitle = new St.Label({style_class: 'deskai-music-title'});
+        this._musicArtist = new St.Label({style_class: 'deskai-music-artist'});
+        text.add_child(this._musicTitle);
+        text.add_child(this._musicArtist);
+        track.add_child(this._musicArt);
+        track.add_child(text);
+        this._musicTrack.set_child(track);
+        this._musicTrack.connect('clicked', () => {
+            this._tooltip.hide();
+            this._music?.current?.raise();
+        });
+        this._addTooltip(this._musicTrack, () => this._musicTrack.accessible_name);
+        pill.add_child(this._musicTrack);
+
+        this._musicPrevious = this._musicControl(player => player.previous(), () => this._t('musicPrevious'));
+        this._musicPlay = this._musicControl(player => player.playPause(), () => this._musicPlayLabel());
+        this._musicNext = this._musicControl(player => player.next(), () => this._t('musicNext'));
+        this._musicPrevious.child.icon_name = 'media-skip-backward-symbolic';
+        this._musicNext.child.icon_name = 'media-skip-forward-symbolic';
+        pill.add_child(this._musicPrevious);
+        pill.add_child(this._musicPlay);
+        pill.add_child(this._musicNext);
+
+        row.add_child(pill);
+        this._musicClip.add_child(row);
+        this._dock.add_child(this._musicClip);
+    }
+
+    _musicControl(act, label) {
+        const button = new St.Button({
+            style_class: 'deskai-music-control',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            child: new St.Icon({icon_size: 16}),
+        });
+        // Dimmed with a style, not by making it unreactive: a button that stops reacting under
+        // the pointer, on the last song of a playlist, never hears that the pointer has left.
+        const usable = () => !button.has_style_class_name('off');
+        button.connect('clicked', () => {
+            this._tooltip.hide();
+            const player = this._music?.current;
+            if (player && usable())
+                act(player);
+        });
+        this._addTooltip(button, () => (usable() ? label() : null));
+        return button;
+    }
+
+    _musicPlayLabel() {
+        return this._t(this._music?.current?.status === 'Playing' ? 'musicPause' : 'musicPlay');
+    }
+
+    _onMusicChanged() {
+        if (!this._musicClip)
+            return;
+        const wanted = Boolean(this._music?.current);
+        if (wanted && this._musicClip.visible) {
+            this._cancelDebounce('music');
+            this._musicWanted = true;
+            this._syncMusic();
+        } else if (wanted !== this._musicWanted) {
+            this._musicWanted = wanted;
+            this._debounce('music', wanted ? MUSIC_SHOW_MS : MUSIC_HIDE_MS, () => this._syncMusic());
+        }
+    }
+
+    _syncMusic() {
+        if (!this._musicClip)
+            return;
+        const player = this._music?.current;
+        if (player) {
+            const {title, artists} = describe(player);
+            this._musicTitle.text = title;
+            this._musicArtist.text = artists;
+            this._musicArtist.visible = Boolean(artists);
+            this._musicTrack.accessible_name = artists ? `${title} · ${artists}` : title;
+            this._musicAppIcon.gicon = player.app?.get_icon() ?? new Gio.ThemedIcon({name: 'audio-x-generic-symbolic'});
+            this._setMusicCover(player.trackCoverUrl);
+            this._musicPlay.child.icon_name = player.status === 'Playing'
+                ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+            this._musicPlay.accessible_name = this._musicPlayLabel();
+            this._musicPrevious.accessible_name = this._t('musicPrevious');
+            this._musicNext.accessible_name = this._t('musicNext');
+            this._musicPrevious[player.canGoPrevious ? 'remove_style_class_name' : 'add_style_class_name']('off');
+            this._musicNext[player.canGoNext ? 'remove_style_class_name' : 'add_style_class_name']('off');
+        }
+        this._reveal(this._musicClip, Boolean(player), () => Boolean(this._music?.current));
+    }
+
+    // The app's icon shows until the cover has loaded, and stays if it never does.
+    _setMusicCover(url) {
+        if (url === this._musicCoverUrl)
+            return;
+        this._musicCoverUrl = url;
+        this._musicCover?.destroy();
+        this._musicCover = null;
+        this._musicAppIcon.visible = true;
+        if (!url)
+            return;
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        this._musicCover = St.TextureCache.get_default().load_file_async(
+            Gio.File.new_for_uri(url), MUSIC_COVER_SIZE, -1, scale, this._frame.get_resource_scale());
+        this._musicCover.content_gravity = Clutter.ContentGravity.RESIZE_ASPECT; // a video's thumbnail is wide
+        this._musicCover.connect('notify::content', () => {
+            this._musicAppIcon.visible = false;
+        });
+        this._musicArt.add_child(this._musicCover);
+    }
+
     // ---- the command bar --------------------------------------------------
 
     _buildCommand() {
@@ -2619,7 +2779,16 @@ export default class DeskAIExtension extends Extension {
             hint: this._t('commandHint'),
             monitor: Main.layoutManager.primaryMonitor,
             bottomY: this._frame.y,
+            buttons: this._modes[this._mode]?.focus && this._focusWindow ? this._labelButtons() : [],
         });
+    }
+
+    // Saying what the window in front of you is. These words mean the same to the brain in any language.
+    _labelButtons() {
+        return [
+            {label: this._t('labelWork'), menuLabel: this._t('labelWorkMenu'), command: 'this is work'},
+            {label: this._t('labelDistraction'), menuLabel: this._t('labelDistractionMenu'), command: 'this is a distraction'},
+        ];
     }
 
     _submitCommand(text) {

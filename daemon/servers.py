@@ -4,6 +4,9 @@ Everything DeskAI sees running gets watched until you stop it: its user services
 started by the routine, a restore or the command bar) and the routine's databases. `scan()`
 looks at them every few seconds; one that stops answering is reported once, and the dock
 offers to restart it or show its log.
+
+Servers you started yourself in a project are listed too. Stopping one of those is usually you
+pressing Ctrl+C, so it just leaves the list, with no alarm.
 """
 
 import difflib
@@ -19,6 +22,7 @@ import routine
 import session
 from brain import log
 
+MANUAL = "manual"   # the kind of a server you started yourself
 GRACE_S = 90        # a server just started gets this long to answer
 MISSES = 2          # checks in a row without an answer before a running service counts as down
 START_WAIT_S = 60   # how long a restart waits for the port
@@ -32,12 +36,24 @@ class Watch:
         self.lock = threading.Lock()
 
     def _add(self, unit, kind, found, now):
-        step = {"type": kind, **found}
+        step = {**found, "type": "server" if kind == MANUAL else kind}
         self.items[unit] = {
             "unit": unit, "kind": kind, "label": routine.label(step), "command": found.get("command", ""),
             "cwd": found.get("cwd", ""), "port": found.get("port"), "state": "starting", "misses": 0,
             "started": now, "since": now,
         }
+
+    def _scan_hand_started(self, now):
+        found = {s["unit"]: s for s in session.hand_started()}
+        with self.lock:
+            for unit in [unit for unit, item in self.items.items() if item["kind"] == MANUAL and unit not in found]:
+                del self.items[unit]
+            for unit, server in found.items():
+                if unit in self.stopped:
+                    continue
+                if unit not in self.items:
+                    self._add(unit, MANUAL, server, now)
+                self.items[unit].update(state="up", pid=server["pid"], command=server["command"])
 
     def scan(self):
         """Looks at everything once. Returns the items that just went down."""
@@ -53,7 +69,9 @@ class Watch:
             for unit, found in services.items():
                 if unit not in self.items and unit not in self.stopped:
                     self._add(unit, "service", found, now)
-            items = list(self.items.values())
+        self._scan_hand_started(now)
+        with self.lock:
+            items = [item for item in self.items.values() if item["kind"] != MANUAL]
         for item in items:
             active = item["unit"] in running or item["unit"] in services
             alive = routine.port_open(item["port"]) if item["port"] else active
@@ -117,20 +135,30 @@ class Watch:
         with self.lock:
             self.items.pop(unit, None)
             self.stopped[unit] = time.time()
+        if item["kind"] == MANUAL:
+            return session.stop_hand_started(item)
         command = ["systemctl", "--user", "stop", unit] if item["kind"] == "server" else ["systemctl", "stop", unit]
         return subprocess.run(command, capture_output=True, timeout=120).returncode == 0
 
+    def hand_started_in(self, folder):
+        """The servers you started yourself in this project."""
+        with self.lock:
+            return [dict(item) for item in self.items.values() if item["kind"] == MANUAL and session.inside(item["cwd"], folder)]
+
     def restart(self, unit):
-        """Starts it again and waits for it to answer. Returns whether it did."""
+        """Starts it again and waits for it to answer. Returns whether it did. One you started yourself
+        comes back as DeskAI's own, since your terminal can't be asked to run it again."""
         item = self.get(unit)
         if not item:
+            return False
+        if item["kind"] == MANUAL and not self.stop(unit):
             return False
         with self.lock:
             live = self.items.get(unit)
             if live:
                 live.update(state="starting", misses=0, started=time.time(), since=time.time())
         try:
-            if item["kind"] == "server":
+            if item["kind"] in ("server", MANUAL):
                 path = routine.load().get("path") or os.environ.get("PATH", "")
                 routine.start_server(item, {**os.environ, "PATH": path})
             elif subprocess.run(["systemctl", "restart", unit], capture_output=True, timeout=120).returncode != 0:
@@ -185,6 +213,8 @@ def open_log(item):
 
 def last_log_line(item, limit=160):
     """The last thing it said, which is usually why it stopped."""
+    if item["kind"] == MANUAL:
+        return ""  # what it says goes to your terminal
     scope = ["--user"] if item["kind"] == "server" else []
     try:
         out = subprocess.run(["journalctl", *scope, "-u", item["unit"], "-n", "12", "-o", "cat", "--no-pager"],

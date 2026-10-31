@@ -17,6 +17,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 import brain  # noqa: E402
 import hooks  # noqa: E402
 import routine  # noqa: E402
+import senders  # noqa: E402
 import session  # noqa: E402
 from brain import BRAIN_NAME, BUS_NAME, OBJECT_PATH  # noqa: E402
 
@@ -113,7 +114,7 @@ def cmd_stats(args):
     print(f"DeskAI · {day}\n")
     for key, bucket in data["modes"].items():
         mode = config.mode(key) or {"label": key, "focus": False}
-        total = sum(bucket.values())
+        total = sum(seconds for kind, seconds in bucket.items() if kind != "idle")  # away isn't time spent
         if total < 60:
             continue
         line = f"{mode['label']:<10} {minutes(total):>5}"
@@ -131,6 +132,20 @@ def cmd_stats(args):
         print("\nBiggest distractions:")
         for label, seconds in top:
             print(f"  {minutes(seconds):>5}  {label}")
+
+
+def cmd_senders(args):
+    known = senders.Senders()
+    if args.forget:
+        if not known.forget_name(args.forget):
+            sys.exit(f"Nothing kept for {args.forget}.")
+        print(f"Forgot {args.forget}.")
+        return
+    listing = known.listing()
+    if not listing:
+        print("Nobody yet. The dock asks the first time someone new is held during a focus mode.")
+    for name, app, word in listing:
+        print(f"{'always show' if word == senders.ALWAYS else 'keep holding':<13} {name}" + (f" ({app})" if app else " (the whole app)"))
 
 
 def cmd_agent(args):
@@ -409,6 +424,10 @@ def main():
     p = sub.add_parser("stats", help="today's focus recap")
     p.add_argument("date", nargs="?", help="YYYY-MM-DD")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("senders", help="who always gets through during a focus mode, and who stays held")
+    p.add_argument("--forget", metavar="NAME", help="take back your word on someone")
+    p.set_defaults(func=cmd_senders)
 
     p = sub.add_parser("agent", help='change modes in plain language, e.g. "add a Design mode"')
     p.add_argument("instruction")

@@ -7,7 +7,7 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const WIDTH = 540;
+const WIDTH = 640;
 const GAP = 14;
 const HISTORY = 30;
 
@@ -24,8 +24,8 @@ export class CommandBar {
         return Boolean(this._backdrop);
     }
 
-    // place: {hint, monitor, bottomY}
-    open({hint, monitor, bottomY}) {
+    // place: {hint, monitor, bottomY, buttons: [{label, command}]}: a click on one submits its command
+    open({hint, monitor, bottomY, buttons = []}) {
         if (this.isOpen)
             return;
         this._backdrop = new St.Widget({
@@ -45,6 +45,19 @@ export class CommandBar {
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._bar.add_child(this._entry);
+        for (const {label, command} of buttons) {
+            const button = new St.Button({
+                style_class: 'deskai-command-chip',
+                label,
+                can_focus: false,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            button.connect('clicked', () => {
+                this.close();
+                this._onSubmit(command);
+            });
+            this._bar.add_child(button);
+        }
         this._backdrop.add_child(this._bar);
         Main.uiGroup.add_child(this._backdrop);
 

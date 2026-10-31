@@ -53,7 +53,8 @@ TITLE_GLYPHS = re.compile(r"^[^\w(\[]+")
 # bash titles a tab "user@host: ~/folder".
 SHELL_TITLE = re.compile(r"^[\w.-]+@[\w.-]+:\s*(.+)$")
 APPEAR_S = 10                  # waiting for a new terminal window to show up
-PLACE_S = 20                   # waiting for the other apps to open their windows
+PLACE_S = 20                   # waiting for the other apps to open their windows (base)
+PLACE_S_PER_WINDOW = 2         # extra seconds per non-terminal window; large sessions need more time
 WINDOW_FIELDS = ("id", "app", "title", "workspace", "sticky", "monitor", "rect", "max_h", "max_v",
                  "maximized", "fullscreen", "minimized", "above", "stack", "focused")
 # Claude flags that pick the conversation: replaced by --resume <the conversation> on restore.
@@ -375,6 +376,105 @@ def inside(path, folder):
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
 
 
+# ---- servers you started yourself -----------------------------------------------------
+
+PROJECT_MARKS = (".git", "package.json", "composer.json", "artisan", "pyproject.toml", "requirements.txt", "manage.py",
+                 "Cargo.toml", "go.mod", "Gemfile")
+HIGHEST_DEV_PORT = 32767  # above this, it's an editor's or a tool's own port, not something you'd open
+NOT_A_DEV_SERVER = re.compile(r"\b(claude|code|cursor|antigravity|chrome|chromium|firefox|ollama|language-server|langserver|"
+                              r"tsserver|intelephense|gopls|rust-analyzer|pylsp|mcp|copilot|jetbrains|idea|deskaid?)\b", re.I)
+SHELLS = {"bash", "sh", "zsh", "fish", "dash"}
+STOP_WAIT_S = 4
+
+
+def project_root(path):
+    """The project a folder belongs to: the nearest folder above it that looks like one, inside your home."""
+    here, home = Path(path), Path.home()
+    if here == home or not here.is_relative_to(home) or any(part.startswith(".") for part in here.relative_to(home).parts):
+        return None
+    for folder in (here, *here.parents):
+        if folder == home:
+            return None
+        if any((folder / mark).exists() for mark in PROJECT_MARKS):
+            return str(folder)
+    return None
+
+
+def listeners():
+    """The TCP ports your own processes listen on, as {port: pid}."""
+    try:
+        out = subprocess.run(["ss", "-ltnpH"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    found = {}
+    for line in out.splitlines():
+        parts, pid = line.split(), re.search(r"pid=(\d+)", line)
+        if len(parts) >= 4 and pid and parts[3].rsplit(":", 1)[-1].isdigit():
+            found.setdefault(int(parts[3].rsplit(":", 1)[-1]), int(pid.group(1)))
+    return found
+
+
+def _command_line(pid):
+    return [part.decode(errors="replace") for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if part]
+
+
+def hand_started():
+    """Dev servers running from a project that DeskAI didn't start: [{unit, cwd, command, port, pid}].
+    `cwd` is the project, and `command` what you typed, if that's still around ("npm run dev", not the node under it)."""
+    found = []
+    for port, pid in listeners().items():
+        if port > HIGHEST_DEV_PORT:
+            continue
+        try:
+            root = project_root(os.readlink(f"/proc/{pid}/cwd"))
+            words = _command_line(pid)
+            if not root or "deskai-" in Path(f"/proc/{pid}/cgroup").read_text() or NOT_A_DEV_SERVER.search(" ".join(words)):
+                continue
+            leader = _command_line(os.getpgid(pid))
+        except (OSError, ProcessLookupError):
+            continue  # gone already, or not yours to look at
+        typed = leader if leader and os.path.basename(leader[0]) not in SHELLS else words
+        found.append({"unit": f"manual-{port}", "cwd": root, "command": shlex.join(typed)[:300], "port": port, "pid": pid})
+    return found
+
+
+def _whole_job_is_safe(pid):
+    """Whether stopping everything in its process group only stops the server. A job typed into a terminal has a
+    group of its own, but one started by a tool can share the tool's, and that must never go down with it."""
+    pgid, sid = os.getpgid(pid), os.getsid(pid)
+    if pgid in (sid, os.getpgrp()):
+        return False
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if os.getpgid(int(entry.name)) == pgid and NOT_A_DEV_SERVER.search(" ".join(_command_line(entry.name))):
+                return False
+        except (OSError, ProcessLookupError):
+            continue
+    return True
+
+
+def stop_hand_started(item):
+    """Stops a server you started yourself, if it's still the same one on that port. Returns whether the port's free."""
+    port, pid = item["port"], item["pid"]
+    if listeners().get(port) != pid:
+        return port not in listeners()  # something else took the port since: not ours to stop
+    try:
+        if _whole_job_is_safe(pid):
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError) as e:
+        log.warning("servers: can't stop :%s: %s", port, e)
+    deadline = time.monotonic() + STOP_WAIT_S
+    while time.monotonic() < deadline:
+        if port not in listeners():
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def project_terminals(folder):
     """The terminal tabs with a Claude Code conversation open in this project: [(Claude's pid, the shell's pid, conversation)]."""
     table = processes()
@@ -646,10 +746,12 @@ def gsetting_is(schema, key, value):
     return Gio.Settings.new(schema).get_string(key) == value
 
 
-def place_windows(dock, saved, placed):
+def place_windows(dock, saved, placed, timeout=None):
     """Puts the other apps' windows back once they've opened them, then stacks everything as it was."""
     wanted = {i: w for i, w in enumerate(saved) if i not in placed and w["app"] != PTYXIS}
-    deadline = time.monotonic() + PLACE_S
+    if timeout is None:
+        timeout = max(PLACE_S, len(wanted) * PLACE_S_PER_WINDOW)
+    deadline = time.monotonic() + timeout
     while wanted and time.monotonic() < deadline:
         current = [w for w in dock.windows() or [] if w["id"] not in placed.values()]
         for app in {w["app"] for w in wanted.values()}:

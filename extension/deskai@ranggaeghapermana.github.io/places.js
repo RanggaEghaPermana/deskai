@@ -22,6 +22,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 export const FILES_APP = 'org.gnome.Nautilus.desktop';
 const FOLLOW_UP_MS = 10 * 60 * 1000; // what you do within 10 minutes is the follow-up
 const FILE_SUGGESTION_MS = 30 * 60 * 1000;
+// Screenshots and downloads disappear from the pill after 1 minute instead of 30 —
+// but if you open Files within 5 minutes, it jumps straight to the file.
+const QUICK_SUGGESTION_MS = 60 * 1000;
+const FILES_JUMP_MS = 5 * 60 * 1000;
 const FOLDER_SUGGESTION_MS = 4 * 60 * 60 * 1000;
 const MAX_FOLDERS = 200;
 // Browsers' in-progress names, hidden files, editor backups.
@@ -70,6 +74,7 @@ export class Places {
         this._hadWindows = false;
         this._pending = []; // triggers waiting for their follow-up
         this._suggestion = null;
+        this._lastQuickEvent = null; // last screenshot/download: uri + at, for Files auto-jump
         this._seq = 0;
         this._timeouts = new Map();
         this._announced = new Set();
@@ -325,6 +330,7 @@ export class Places {
                 this._open.delete(uri);
             }
         }
+        const newUris = [];
         for (const uri of current) {
             if (this._open.has(uri))
                 continue;
@@ -332,6 +338,19 @@ export class Places {
             this._lastActive = uri;
             if (!initial)
                 this._visit(uri, now);
+            newUris.push(uri);
+        }
+
+        // When Files opens at the Home folder and there's a recent screenshot or download,
+        // jump straight to the file — the pill already disappeared, but the file is still fresh.
+        if (!initial && this._lastQuickEvent) {
+            const age = now - this._lastQuickEvent.at;
+            const atHome = newUris.some(uri => uri === this._home || uri === `${this._home}/`);
+            if (atHome && age < FILES_JUMP_MS) {
+                const event = this._lastQuickEvent;
+                this._lastQuickEvent = null; // consume: only jump once per event
+                this._later('files-jump', 400, () => this.showItem(event.uri));
+            }
         }
 
         if (anyWindow && this._suggestion?.kind === 'folder' && this._suggestion.reason === 'closed')
@@ -457,10 +476,14 @@ export class Places {
         this._trigger(trigger, uri);
         // The card shows the picture (or the file type's icon); the dock pill, the plain symbol.
         const gicon = trigger === 'screenshot' ? new Gio.FileIcon({file}) : info.get_icon();
+        const quick = trigger === 'screenshot' || trigger === 'download';
+        const suggestionMs = quick ? QUICK_SUGGESTION_MS : FILE_SUGGESTION_MS;
+        if (quick)
+            this._lastQuickEvent = {uri, at: Date.now()};
         this._suggest({
             kind: 'file', trigger, uri, name: file.get_basename(), size: info.get_size(), gicon,
             symbolic: info.get_symbolic_icon(),
-            time: Date.now(), primary: this.primary(trigger), id: ++this._seq, until: Date.now() + FILE_SUGGESTION_MS,
+            time: Date.now(), primary: this.primary(trigger), id: ++this._seq, until: Date.now() + suggestionMs,
         }, announce);
     }
 

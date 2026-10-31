@@ -15,6 +15,9 @@ import time
 import brain
 
 LEARNED_FILE = brain.STATE_DIR / "learned.json"
+REVIEW_FILE = brain.STATE_DIR / "review.json"
+REVIEW_PER_DAY = 3
+REVIEW_MIN_S = 300      # a window has to matter before it's worth asking about
 KEEP = 3000
 CLASSES = ("on_task", "off_task", "neutral")
 WEIGHTS = {"you": 5.0, "claude": 1.0}
@@ -137,3 +140,47 @@ class Learned:
         self.seeded = True
         self.save()
         return added
+
+
+class Unsure:
+    """Today's windows it had no opinion on, by time spent: the ones worth asking you about, a few a day.
+    The windows are only kept in memory. All that's saved is how many it has asked today."""
+
+    def __init__(self, path=REVIEW_FILE):
+        self.path = path
+        self.day = None
+        self.seen = {}
+
+    def _today(self):
+        day = time.strftime("%Y-%m-%d")
+        if day != self.day:
+            self.day = day
+            self.seen = {}
+        return day
+
+    def note(self, mode, app_id, app_name, title, seconds):
+        self._today()
+        if title:
+            entry = self.seen.setdefault((mode, simple_title(title)), {
+                "mode": mode, "app_id": app_id, "app_name": app_name, "title": title, "seconds": 0.0})
+            entry["seconds"] += seconds
+
+    def asked_today(self):
+        try:
+            data = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return 0
+        return data.get("asked", 0) if data.get("day") == self._today() else 0
+
+    def next(self, mode, known):
+        """The window most worth asking about in this mode, taking it off the list. None if there isn't one."""
+        if self.asked_today() >= REVIEW_PER_DAY:
+            return None
+        waiting = [entry for entry in self.seen.values() if entry["mode"] == mode and entry["seconds"] >= REVIEW_MIN_S
+                   and not known.correction(mode, entry["title"])]
+        if not waiting:
+            return None
+        entry = max(waiting, key=lambda e: e["seconds"])
+        del self.seen[(mode, simple_title(entry["title"]))]
+        brain.write_json_atomic(self.path, {"day": self._today(), "asked": self.asked_today() + 1})
+        return entry
