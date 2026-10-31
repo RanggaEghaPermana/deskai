@@ -547,6 +547,9 @@ class Brain:
         elif action == "break:off":
             self._set_breaks(False)
             self._command_card(self._say("breaks_off"))
+        elif action == "system:room-off":
+            self._set_room_warnings(False)
+            self._command_card(self._say("room_off"))
         elif action == "command:apply" and self.pending_edit:
             self._apply_edit()
         elif action == "command:cancel":
@@ -880,7 +883,9 @@ class Brain:
 
     def _check_room(self):
         """Warns once when a disk or the memory runs out, and again only after it has recovered."""
-        language = self.config.language
+        if not self.config.room_warnings["enabled"]:
+            return
+        turn_off = {"id": "system:room-off", "label": self._say("room_off_button")}
         low = {disk["path"]: disk for disk in system.low_disks()}
         for path, disk in low.items():
             if path not in self.room_warned:
@@ -888,7 +893,7 @@ class Brain:
                 where = path.replace(os.path.expanduser("~"), "~")
                 self.card({"id": "room", "kind": "info", "title": self._say("disk_low", path=where, free=system.human(disk["free"])),
                            "text": "", "accent": "#e5484d", "timeout": 30,
-                           "actions": [{"id": "system:clear-offer", "label": self._say("disk_low_clear"), "primary": True}]})
+                           "actions": [turn_off, {"id": "system:clear-offer", "label": self._say("disk_low_clear"), "primary": True}]})
         self.room_warned -= {path for path in self.room_warned if path != "memory" and path not in low}
         info = system.memory()
         if not system.memory_low(info):
@@ -902,7 +907,7 @@ class Brain:
             apps = ", ".join(f"{name} {system.human(size)}" for name, size in system.heaviest_apps())
             used = info["total"] - info["available"]
             self.card({"id": "room", "kind": "info", "title": self._say("memory_low", percent=round(used * 100 / info["total"]), apps=apps),
-                       "text": "", "accent": "#e5484d", "timeout": 30, "actions": []})
+                       "text": "", "accent": "#e5484d", "timeout": 30, "actions": [turn_off]})
 
     def _offer_clearing(self):
         """Counts the caches safe to clear, then asks before clearing them."""
@@ -1126,6 +1131,9 @@ class Brain:
         elif kind == "breaks":
             on = bool(action.get("on"))
             say = self._say("breaks_on" if on else "breaks_off") if self._set_breaks(on) else self._say("command_nothing")
+        elif kind == "room_warnings":
+            on = bool(action.get("on"))
+            say = self._say("room_on" if on else "room_off") if self._set_room_warnings(on) else self._say("command_nothing")
         elif kind == "label":
             act = self.activity
             mode = self.config.mode(self.mode)
@@ -1380,13 +1388,19 @@ class Brain:
         })
 
     def _set_breaks(self, on):
+        return self._set_enabled("breaks", on)
+
+    def _set_room_warnings(self, on):
+        return self._set_enabled("room_warnings", on)
+
+    def _set_enabled(self, section, on):
         path = self.config.path
         try:
             data = json.loads(path.read_text())
-            data["breaks"] = {**data.get("breaks", {}), "enabled": on}
+            data[section] = {**data.get(section, {}), "enabled": on}
             brain.write_json_atomic(path, data)
         except (OSError, ValueError) as e:
-            log.warning("can't change break reminders: %s", e)
+            log.warning("can't change %s: %s", section, e)
             return False
         self._refresh_config()
         return True

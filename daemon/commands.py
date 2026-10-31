@@ -166,6 +166,15 @@ SERVICE_LABELS = {"me.proton.vpn.split_tunneling": "Proton VPN", "strongswan-sta
                   "cloudflared": "Cloudflare Tunnel", "gnome-remote-desktop": "Remote Desktop", "qemu-kvm": "KVM"}
 # Apps that need a service that's left off until it's wanted: opening one offers to start it.
 APP_SERVICES = {"proton.vpn.app.gtk": "me.proton.vpn.split_tunneling.service"}
+# Asking about the thing itself, not about this computer: "apa itu ram", "cara push ke git", "beli ssd apa". The model
+# answers those. "Gimana" and "cukup" count only when it isn't about your own: "storage gua gimana" is a look at it.
+ABOUT_THE_TOPIC = re.compile(
+    r"\b(?:apa itu|apaan|artinya|maksud\w*|beda\w*|perbedaan|jenis|cara|jelas\w*|ajarin|contoh\w*|bikin\w*|buatin|buatkan|tulis\w*|"
+    r"saran\w*|rekomendasi\w*|beli|harga|ideal|upgrade|nambah|leak|install\w*|pasang|"
+    r"what is|what are|what's a|how to|how do|how does|explain\w*|difference|write|draft|recommend\w*|buy|should i)\b|"
+    r"^(?!.*\b(?:gua|gue|gw|aku|saya|my|laptop|komputer)\b).*\b(?:gimana|bagaimana|cukup)\b", re.I)
+ROOM_WARNINGS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:peringatan|warnings?)"
+                           r"(?:\s+(?:ram|memori|memory|disk|storage|penyimpanan))?$", re.I)
 BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
 BREAKS_ON = re.compile(r"^(nyala|hidup|idup|turn on)", re.I)
 BLOCK_LIST = re.compile(r"^(?:blokir|block)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
@@ -335,9 +344,12 @@ def _open_thing(name):
 def _quick_action(words, modes, watch, known_projects):
     if BREAKS.match(words):
         return {"type": "breaks", "on": bool(BREAKS_ON.match(words))}
+    if ROOM_WARNINGS.match(words):
+        return {"type": "room_warnings", "on": bool(BREAKS_ON.match(words))}
     if ASKS_FOCUS.search(words):
         return {"type": "focus_today"}
-    if not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
+    topic = ABOUT_THE_TOPIC.search(words)
+    if not (topic or ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
         if ASKS_CLEAR.search(words):
             return {"type": "system", "what": "clear"}
         if ASKS_GIT.search(words):
@@ -346,15 +358,15 @@ def _quick_action(words, modes, watch, known_projects):
             return {"type": "system", "what": "memory"}
         if ASKS_STORAGE.search(words):
             return {"type": "system", "what": "storage"}
-    if ASKS_IMAGES.search(words):
+    if not topic and ASKS_IMAGES.search(words):
         return {"type": "docker_images"}
-    if ASKS_COMPOSE.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
+    if not topic and ASKS_COMPOSE.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
         return {"type": "compose_list"}
     acting = _act_on_docker_or_service(words, known_projects)
     if acting:
         return acting
     asked = RUNNING_WHAT.search(words)
-    if asked and ASKS_RUNNING.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)
+    if asked and not topic and ASKS_RUNNING.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)
                                                       or re.search(r"\blogs?\b", words, re.I)):
         what = asked.group(1).lower()
         return {"type": "servers_list",

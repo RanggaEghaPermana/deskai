@@ -42,6 +42,7 @@ SYSTEM_APPS = {
 
 MODE_DEFAULTS = {"nudge_after": 45, "renudge_after": 300, "on_distraction": "nudge"}
 BREAK_DEFAULTS = {"enabled": True, "after_minutes": 120}
+ROOM_WARNING_DEFAULTS = {"enabled": True}
 LLM_DEFAULTS = {
     "backend": "auto",
     "model": "claude-opus-5-5",
@@ -95,6 +96,9 @@ def validate_config(cfg):
         errors.append("breaks must be an object, and breaks.enabled true or false")
     elif not isinstance(breaks.get("after_minutes", 120), (int, float)) or breaks.get("after_minutes", 120) <= 0:
         errors.append("breaks.after_minutes must be a number of minutes > 0")
+    room = cfg.get("room_warnings", {})
+    if not isinstance(room, dict) or not isinstance(room.get("enabled", True), bool):
+        errors.append("room_warnings must be an object, and room_warnings.enabled true or false")
     if "default_mode" in cfg and cfg["default_mode"] not in modes:
         errors.append(f"default_mode `{cfg['default_mode']}` isn't in modes")
     for key, mode in modes.items():
@@ -167,6 +171,10 @@ class Config:
     @property
     def breaks(self):
         return {**BREAK_DEFAULTS, **self.data.get("breaks", {})}
+
+    @property
+    def room_warnings(self):
+        return {**ROOM_WARNING_DEFAULTS, **self.data.get("room_warnings", {})}
 
     def mode(self, key):
         mode = self.data["modes"].get(key)
@@ -506,6 +514,9 @@ CARD_STRINGS = {
         "break_off": "Turn off reminders",
         "breaks_off": "Break reminders are off. Type \"turn on reminders\" to bring them back.",
         "breaks_on": "Break reminders are on.",
+        "room_off_button": "Don't warn me",
+        "room_off": "Memory and disk warnings are off. Type \"turn on warnings\" to bring them back.",
+        "room_on": "Memory and disk warnings are on.",
         "guide_progress": "Step {n} of {total}",
         "guide_next": "Next",
         "guide_done": "Got it",
@@ -664,6 +675,9 @@ CARD_STRINGS = {
         "break_off": "Matiin pengingat",
         "breaks_off": "Pengingat istirahat dimatiin. Ketik \"nyalain pengingat\" kalau mau balik lagi.",
         "breaks_on": "Pengingat istirahat nyala.",
+        "room_off_button": "Jangan ingetin lagi",
+        "room_off": "Peringatan RAM dan disk dimatiin. Ketik \"nyalain peringatan\" kalau mau balik lagi.",
+        "room_on": "Peringatan RAM dan disk nyala.",
         "guide_progress": "Langkah {n} dari {total}",
         "guide_next": "Lanjut",
         "guide_done": "Siap",

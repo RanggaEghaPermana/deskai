@@ -43,6 +43,31 @@ class Quick(unittest.TestCase):
         result = commands.quick(text, MODES, watch or watch_with())
         return result["actions"][0] if result else None
 
+    def test_asking_about_a_topic_goes_to_the_model(self):
+        for text in ("apa itu ram", "berapa ram laptop ideal buat ngoding", "memory leak di react gimana", "tolong jelasin git rebase",
+                     "bikinin commit message buat git", "gimana cara push ke git", "cara install git", "beli ssd yang bagus apa",
+                     "apa bedanya ssd sama hdd", "cara hapus cache browser", "how do i clear the npm cache", "jelasin docker compose",
+                     "apa itu container", "what is a docker image", "rekomendasi database buat toko online"):
+            self.assertIsNone(self.action(text), text)
+
+    def test_asking_about_this_computer_answers_right_away(self):
+        memory, storage, clear = ({"type": "system", "what": what} for what in ("memory", "storage", "clear"))
+        git = {"type": "git_report"}
+        for text, expected in (("cek ram", memory), ("sisa ram berapa", memory), ("ram gua penuh gak", memory),
+                               ("aplikasi apa yang paling berat", memory), ("how much ram is free", memory),
+                               ("cek storage", storage), ("storage gua gimana", storage), ("storage gua cukup gak", storage),
+                               ("disk gua kenapa lemot", storage), ("bersihin storage", clear), ("tolong bersihin cache", clear),
+                               ("hapus sampah", clear), ("cek git", git), ("kerjaan apa aja yang belum di-push", git),
+                               ("cek semua project", git),
+                               ("database apa aja yang jalan", {"type": "servers_list", "show": "database"}),
+                               ("cek docker yg aktif", {"type": "servers_list", "show": "docker"})):
+            self.assertEqual(self.action(text), expected, text)
+
+    def test_turning_the_warnings_off_and_on(self):
+        for text, on in (("matiin peringatan", False), ("matiin peringatan ram", False), ("turn off warnings", False),
+                         ("nyalain peringatan", True), ("turn on warnings", True)):
+            self.assertEqual(self.action(text), {"type": "room_warnings", "on": on}, text)
+
     def test_a_mode_by_its_name(self):
         for text in ("writing", "Writing", "pindah ke writing", "switch to Writing", "writing mode", "mode writing.", "ke writing"):
             self.assertEqual(self.action(text), {"type": "mode", "mode": "writing"}, text)

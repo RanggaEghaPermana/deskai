@@ -44,6 +44,8 @@ class Fake(deskaid.Brain):
         self.restore_snap = self.routine_plan = None
         self.working_since = None
         self.break_shown = 0.0
+        self.room_warned = set()
+        self.memory_low_since = None
         self.last_wall = time.time()
         self.last_review_try = time.monotonic()
         self.closing_terminals = []
@@ -638,6 +640,42 @@ class StatsKept(unittest.TestCase):
         other.write_text("{}")
         self.stats.prune()
         self.assertTrue(other.exists())
+
+
+class RoomWarnings(unittest.TestCase):
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        self.brain = Fake(self.folder)
+
+    def look(self):
+        """One look with a nearly full disk and enough memory."""
+        with (mock.patch.object(deskaid.system, "low_disks", return_value=[{"path": "/", "total": 100, "free": 1}]),
+              mock.patch.object(deskaid.system, "memory_low", return_value=False)):
+            self.brain._check_room()
+
+    def test_a_low_disk_warns_with_a_way_to_turn_it_off(self):
+        self.look()
+        self.assertEqual([action["id"] for action in self.brain.cards[0]["actions"]], ["system:room-off", "system:clear-offer"])
+
+    def test_low_memory_warns_with_a_way_to_turn_it_off(self):
+        self.brain.memory_low_since = time.monotonic() - deskaid.ROOM_CHECK_EVERY
+        with (mock.patch.object(deskaid.system, "low_disks", return_value=[]),
+              mock.patch.object(deskaid.system, "memory", return_value={"total": 100, "available": 1}),
+              mock.patch.object(deskaid.system, "heaviest_apps", return_value=[]),
+              mock.patch.object(deskaid.system, "memory_low", return_value=True)):
+            self.brain._check_room()
+        self.assertEqual([action["id"] for action in self.brain.cards[0]["actions"]], ["system:room-off"])
+
+    def test_turned_off_it_stays_quiet_until_turned_on(self):
+        self.brain.on_card_action("room", "system:room-off")
+        self.assertFalse(json.loads((self.folder / "modes.json").read_text())["room_warnings"]["enabled"])
+        self.brain.cards.clear()
+        self.look()
+        self.assertEqual(self.brain.cards, [])
+        self.brain._run_actions({"say": "", "actions": [{"type": "room_warnings", "on": True}]})
+        self.brain.cards.clear()
+        self.look()
+        self.assertEqual(len(self.brain.cards), 1)
 
 
 if __name__ == "__main__":

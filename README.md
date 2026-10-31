@@ -23,7 +23,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 - **Docker in the command bar.** Start, stop or restart a Compose project by name, along with the containers it
   needs from other projects, and see which images you have. Running containers get a status dot too.
 - **Room on your computer.** A card when memory or a disk runs low. Ask about your RAM or storage to see what's
-  using it, and ask to clear it to see which caches can go.
+  using it, and ask to clear it to see which caches can go. The card's button or "turn off warnings" stops the
+  warnings.
 - **Music on the dock.** While something plays, in a music app or a browser tab, the dock shows what it
   is with previous, pause and next. Click the song to go to the player. It leaves when the player closes,
   or after half an hour on pause.

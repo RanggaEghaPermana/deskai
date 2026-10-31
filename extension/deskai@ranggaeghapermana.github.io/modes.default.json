@@ -28,6 +28,9 @@
     "enabled": true,
     "after_minutes": 120
   },
+  "room_warnings": {
+    "enabled": true
+  },
   "llm": {
     "backend": "auto",
     "model": "claude-opus-5-5",
