@@ -26,6 +26,19 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.0" date="2026-10-31">
+      <description>
+        <ul>
+          <li>A smooth login: the animation plays once your desktop and extensions have loaded</li>
+          <li>Music on the dock, with previous, pause and next</li>
+          <li>The first time someone new is held during a focus mode, the dock asks once whether they always get through</li>
+          <li>Plain requests in English or Indonesian run instantly in the command bar, with no AI</li>
+          <li>Status dots for servers you started yourself, and closing a project asks before stopping them</li>
+          <li>Break reminders after two hours without a pause</li>
+          <li>Restoring a large desk gives its windows more time and keeps them at their saved size</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-31">
       <description>
         <ul>
