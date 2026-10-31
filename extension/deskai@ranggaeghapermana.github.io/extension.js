@@ -150,6 +150,10 @@ const MUSIC_HIDE_MS = 3000;
 // A pointer resting on the dock this long, while you work in a window, stops holding it up.
 const POINTER_REST_MS = 3000;
 const DOUBLE_CLICK_US = 400 * 1000;
+const PREVIEW_DELAY_MS = 250;   // a pointer just passing over the dock doesn't bring previews up
+const PREVIEW_LINGER_MS = 200;  // long enough to cross from an icon to its previews
+const PREVIEW_WIDTH = 200;
+const PREVIEW_HEIGHT = 130;
 const AUTOHIDE_MODES = ['windows', 'smart', 'always', 'never'];
 const BROWSER_IDS = new Set([
     'google-chrome.desktop', 'com.google.Chrome.desktop', 'chromium.desktop', 'chromium_chromium.desktop',
@@ -366,6 +370,10 @@ export default class DeskAIExtension extends Extension {
         this._menuSignature = null;
         this._tooltip?.destroy();
         this._tooltip = null;
+        this._previewApp?.disconnectObject(this._previews);
+        this._previewApp = null;
+        this._previews?.destroy();
+        this._previews = null;
         this._edge?.destroy();
         this._edge = null;
         this._frame?.destroy();
@@ -718,6 +726,18 @@ export default class DeskAIExtension extends Extension {
 
         this._tooltip = new St.Label({style_class: 'deskai-tooltip', visible: false});
         Main.uiGroup.add_child(this._tooltip);
+        this._previews = new St.BoxLayout({style_class: 'deskai-previews', reactive: true, track_hover: true, visible: false});
+        Main.uiGroup.add_child(this._previews);
+        this._previews.connect('notify::hover', () => {
+            if (this._previews.hover)
+                this._cancelDebounce('previews-leave');
+            else
+                this._leavePreviews();
+        });
+        this._previews.connect('motion-event', () => {
+            this._noteDockMotion();
+            return Clutter.EVENT_PROPAGATE;
+        });
         this._addTooltip(this._addButton, () => this._t('addAppsTooltip', {mode: this._modeLabel(this._mode)}));
     }
 
@@ -947,6 +967,7 @@ export default class DeskAIExtension extends Extension {
             return;
         }
         this._tooltip.hide();
+        this._hidePreviews();
         const oldWidth = this._appsClip.has_allocation() ? this._appsClip.width : -1;
         this._appsBox.destroy_all_children();
         this._appButtons = [];
@@ -1029,6 +1050,7 @@ export default class DeskAIExtension extends Extension {
         button.set_child(box);
         button.connect('clicked', (_button, mouseButton) => {
             this._tooltip.hide();
+            this._hidePreviews();
             if (mouseButton === Clutter.BUTTON_SECONDARY)
                 this._openAppMenu(app, button);
             else if (mouseButton === Clutter.BUTTON_MIDDLE && app.can_open_new_window())
@@ -1040,10 +1062,14 @@ export default class DeskAIExtension extends Extension {
         });
         // New windows need to know where they minimize to.
         app.connectObject('windows-changed', () => this._queueIconGeometry(), button);
+        // Its name if it has no windows to show. Where Files would go says more than its windows do.
         this._addTooltip(button, () => {
-            const place = app.get_id() === FILES_APP ? this._places?.lastPlace : null;
-            return place ? this._t('goTo', {app: app.get_name(), name: place.name}) : app.get_name();
+            const place = this._lastPlaceOf(app);
+            if (place)
+                return this._t('goTo', {app: app.get_name(), name: place.name});
+            return this._windowsToPick(app).length ? null : app.get_name();
         });
+        button.connect('notify::hover', () => this._onAppHover(app, button));
 
         // Hold and drag to rearrange (or drag a running app in among the pinned ones).
         button._delegate = {
@@ -1101,6 +1127,7 @@ export default class DeskAIExtension extends Extension {
         const pinnedIndex = this._appButtons.filter(e => e.pinned).findIndex(e => e.app.get_id() === id);
         this._drag = {app, button, slot: button.width, home: pinnedIndex, others};
         this._tooltip.hide();
+        this._hidePreviews();
         this._updateVisibility();
         // Once DND has taken the icon's picture, hand the button's slot to a
         // placeholder so the dock doesn't change width.
@@ -1271,6 +1298,7 @@ export default class DeskAIExtension extends Extension {
         this._menu = null;
         old?.destroy();
         this._tooltip.hide();
+        this._hidePreviews();
 
         const menu = new PopupMenu.PopupMenu(sourceActor, 0.5, St.Side.BOTTOM);
         menu.actor.add_style_class_name('deskai-menu');
@@ -1315,6 +1343,104 @@ export default class DeskAIExtension extends Extension {
         item.connect('activate', () => this._debounce('menu-action', 0, action));
         menu.addMenuItem(item);
         return item;
+    }
+
+    _lastPlaceOf(app) {
+        return app.get_id() === FILES_APP ? this._places?.lastPlace : null;
+    }
+
+    // ---- window previews ---------------------------------------------------
+
+    _onAppHover(app, button) {
+        if (!button.hover) {
+            this._cancelDebounce('previews');
+            this._leavePreviews();
+            return;
+        }
+        this._cancelDebounce('previews-leave');
+        if (this._previewApp === app)
+            return;
+        // Right away when some are up, so moving along the dock doesn't wait at every icon.
+        if (this._previewApp)
+            this._showPreviews(app, button);
+        else
+            this._debounce('previews', PREVIEW_DELAY_MS, () => this._showPreviews(app, button));
+    }
+
+    _leavePreviews() {
+        this._debounce('previews-leave', PREVIEW_LINGER_MS, () => {
+            if (!this._previews?.hover)
+                this._hidePreviews();
+        });
+    }
+
+    _showPreviews(app, button) {
+        const wasUp = Boolean(this._previewApp);
+        this._hidePreviews();
+        const windows = this._windowsToPick(app).filter(win => win.get_compositor_private());
+        if (!windows.length || this._lastPlaceOf(app) || this._card?.shown || this._menu?.isOpen || this._drag)
+            return;
+
+        const monitor = Main.layoutManager.primaryMonitor;
+        const width = Math.min(PREVIEW_WIDTH, Math.floor((monitor.width - 64) / windows.length) - 24);
+        for (const win of windows)
+            this._previews.add_child(this._previewButton(app, win, width));
+        app.connectObject('windows-changed', () => this._showPreviews(app, button), this._previews);
+        this._previewApp = app;
+
+        this._previews.show();
+        this._previews.get_parent().set_child_above_sibling(this._previews, null);
+        const [x, y] = button.get_transformed_position();
+        const [w] = button.get_transformed_size();
+        const [, ownWidth] = this._previews.get_preferred_width(-1);
+        const [, ownHeight] = this._previews.get_preferred_height(-1);
+        const left = Math.max(monitor.x + 8, Math.min(x + (w - ownWidth) / 2, monitor.x + monitor.width - ownWidth - 8));
+        this._previews.set_position(Math.floor(left), Math.floor(y - ownHeight - 14));
+        this._previews.remove_all_transitions();
+        this._previews.opacity = wasUp ? 255 : 0;
+        this._previews.ease({opacity: 255, ...MOTION.fadeIn});
+    }
+
+    _previewButton(app, win, width) {
+        const title = win.get_title() || app.get_name();
+        const button = new St.Button({style_class: 'deskai-preview', accessible_name: title});
+        const box = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-preview-box'});
+        box.add_child(new St.Label({style_class: 'deskai-preview-title', text: title, width}));
+
+        const height = Math.round(width * PREVIEW_HEIGHT / PREVIEW_WIDTH);
+        const source = win.get_compositor_private();
+        const [sourceWidth, sourceHeight] = source.get_size();
+        const scale = Math.min(1, width / Math.max(sourceWidth, 1), height / Math.max(sourceHeight, 1));
+        const picture = new St.Widget({layout_manager: new Clutter.BinLayout(), width, height});
+        picture.add_child(new Clutter.Clone({
+            source,
+            width: sourceWidth * scale,
+            height: sourceHeight * scale,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            y_expand: true,
+        }));
+        box.add_child(picture);
+        button.set_child(box);
+        // Once the click is over: hiding destroys this button.
+        button.connect('clicked', () => this._debounce('preview-pick', 0, () => {
+            this._hidePreviews();
+            this._showWindow(app, win);
+        }));
+        return button;
+    }
+
+    _hidePreviews() {
+        this._cancelDebounce('previews');
+        this._cancelDebounce('previews-leave');
+        if (!this._previewApp)
+            return;
+        this._previewApp.disconnectObject(this._previews);
+        this._previewApp = null;
+        this._previews.hide();
+        this._previews.destroy_all_children();
+        this._queueVisibility();
     }
 
     // In the order they were opened, so a window keeps its row.
@@ -1614,14 +1740,17 @@ export default class DeskAIExtension extends Extension {
     // the edge). A pointer parked there while you type in a window doesn't count,
     // which also lets go of a hover state left stuck by a missed leave event.
     _pointerWantsDock() {
-        if (!this._frame.hover && !this._edgeArmed)
+        if (!this._frame.hover && !this._edgeArmed && !this._previewApp)
             return false;
         return Date.now() - this._lastDockMotion < POINTER_REST_MS;
     }
 
     _noteDockMotion() {
         this._lastDockMotion = Date.now();
-        this._debounce('pointer-rest', POINTER_REST_MS + 50, () => this._updateVisibility());
+        this._debounce('pointer-rest', POINTER_REST_MS + 50, () => {
+            this._hidePreviews(); // or they'd stay over your window while you type
+            this._updateVisibility();
+        });
     }
 
     // "windows": any app window open on this workspace and monitor hides the dock.
@@ -1672,6 +1801,7 @@ export default class DeskAIExtension extends Extension {
             this._frame.reactive = false;
             this._frame.hover = false;
             this._tooltip.hide();
+            this._hidePreviews();
             this._dock.ease({opacity: 0, ...MOTION.fadeOut});
             this._dock.ease({translation_y: this._frame.height, ...MOTION.leave});
         }
@@ -1775,6 +1905,7 @@ export default class DeskAIExtension extends Extension {
             monitor: Main.layoutManager.primaryMonitor,
         });
         this._tooltip.hide();
+        this._hidePreviews();
         if (spec.kind === 'nudge')
             this._wiggle();
         this._debounce('card', seconds * 1000, () => this._closeCard());
@@ -2834,6 +2965,7 @@ export default class DeskAIExtension extends Extension {
         if (Main.layoutManager.primaryMonitor?.inFullscreen)
             return;
         this._tooltip.hide();
+        this._hidePreviews();
         this._closeCard();
         this._peek(60000);
         this._commandBar.open({

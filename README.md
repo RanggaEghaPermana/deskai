@@ -136,7 +136,8 @@ Each day's file is deleted after 90 days.
 ## Using it
 
 Click a mode on the dock to switch to it. Click the app you're in to minimize its windows on this workspace,
-click it again to bring them back, and right-click it to pick one window. Everything else is in the dock's menus
+click it again to bring them back, and right-click it to pick one window. Point at an open app to see its windows,
+minimized ones too, and click one to go to it. Everything else is in the dock's menus
 and cards, and a few things are also on the command line:
 
 ```sh

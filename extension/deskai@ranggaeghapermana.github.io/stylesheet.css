@@ -130,6 +130,31 @@
   font-size: 0.9em;
 }
 
+.deskai-previews {
+  background-color: rgba(20, 20, 24, 0.92);
+  color: #ffffff;
+  border-radius: 14px;
+  padding: 6px;
+  spacing: 4px;
+}
+
+.deskai-preview {
+  border-radius: 9px;
+  padding: 6px;
+}
+
+.deskai-preview:hover {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+.deskai-preview-box {
+  spacing: 6px;
+}
+
+.deskai-preview-title {
+  font-size: 0.85em;
+}
+
 /* ---- cards ---------------------------------------------------------- */
 
 .deskai-card {
