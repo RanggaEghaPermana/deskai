@@ -50,6 +50,7 @@ class Fake(deskaid.Brain):
         self.card_act = self.allow_undo = self.mark_undo = None
         self.drift_since = self.last_nudge = None
         self.servers_sent = None
+        self.dock_seen = False
 
     def card(self, spec):
         self.cards.append(spec)
@@ -399,6 +400,42 @@ class ClosingWithWorkNotInGit(Base):
         state.assert_called_once_with("/w/app")
         self.brain._project_closed(*idle.call_args[0][1:])
         self.assertIn("4 file belum di-commit", self.brain.cards[-1]["text"])
+
+
+class TheOnlyDock(Base):
+    def appeared(self, names):
+        with mock.patch.object(deskaid.GLib, "timeout_add_seconds") as later, \
+                mock.patch.object(deskaid.docks, "turn_off_others", return_value=names):
+            self.brain._on_dock_appeared(None, "", "")
+        self.assertEqual(self.brain.cards, [])  # GNOME may be restarting this very dock right now
+        for call in later.call_args_list:
+            if call.args[1] == self.brain._say_docks_replaced:
+                self.assertFalse(call.args[1](*call.args[2:]))
+
+    def test_it_says_what_it_replaced_once_gnome_has_settled(self):
+        self.appeared(["Ubuntu Dock", "Dash to Panel"])
+        self.assertIn("Ubuntu Dock, Dash to Panel", self.brain.cards[-1]["text"])
+
+    def test_with_nothing_to_replace_it_says_nothing(self):
+        self.appeared([])
+        self.assertEqual(self.brain.cards, [])
+
+    def test_it_doesnt_stop_the_dock_if_it_goes_wrong(self):
+        with mock.patch.object(deskaid.GLib, "timeout_add_seconds"), \
+                mock.patch.object(deskaid.docks, "turn_off_others", side_effect=OSError("disk")):
+            self.brain._on_dock_appeared(None, "", "")
+        self.assertTrue(self.brain.dock_seen)
+
+    def test_a_dock_that_never_comes_gives_the_others_back(self):
+        with mock.patch.object(deskaid.docks, "restore") as restore:
+            self.brain._dock_never_came()
+        restore.assert_called_once_with()
+
+    def test_a_dock_that_came_keeps_its_place(self):
+        self.appeared([])
+        with mock.patch.object(deskaid.docks, "restore") as restore:
+            self.brain._dock_never_came()
+        restore.assert_not_called()
 
 
 class ServerStatus(Base):

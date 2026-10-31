@@ -26,6 +26,10 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "daemon"))
+
+import docks  # noqa: E402
+
 UUID = "deskai@ranggaeghapermana.github.io"
 LOGIN_UUID = "deskai-login@ranggaeghapermana.github.io"
 LOGIN_SCREEN_SCHEMA = "com.ubuntu.login-screen"
@@ -472,6 +476,7 @@ def uninstall_steps(purge=False):
         settings = Gio.Settings.new("org.gnome.shell")
         settings.set_strv("enabled-extensions",
                           [u for u in settings.get_strv("enabled-extensions") if u not in (UUID, LOGIN_UUID)])
+        docks.restore(settings)
         login_screen = _login_screen()
         if login_screen and login_screen.get_string("background-color") == LOGIN_BACKGROUND:
             login_screen.reset("background-color")

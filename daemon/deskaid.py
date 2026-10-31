@@ -27,6 +27,7 @@ from gi.repository import Gio, GLib, GLibUnix  # noqa: E402
 
 import brain  # noqa: E402
 import commands  # noqa: E402
+import docks  # noqa: E402
 import guide  # noqa: E402
 import learned  # noqa: E402
 import routine  # noqa: E402
@@ -41,6 +42,8 @@ ROUTINE_DELAY_S = 6          # after login or unlock, let the desktop settle bef
 ROUTINE_SNOOZE_S = 45 * 60
 SNAPSHOT_EVERY = 30          # seconds between snapshots of the desk, for after a logout
 SERVER_CHECK_EVERY = 10      # seconds between looks at the servers on the desk
+DOCKS_SETTLE_S = 3           # turning a dock off restarts the extensions GNOME loaded after it, this dock among them
+DOCK_WAIT_S = 60             # after starting, how long the dock gets to appear before the docks it replaced come back
 GUIDE_DELAY_S = 15           # the first-run guide waits for the desktop, and for anything else on offer
 GUIDE_TRIES = 8
 CLASSIFY_DELAY_MS = 1500     # ignore alt-tab flicker
@@ -193,6 +196,7 @@ class Brain:
         self.pending_edit = None  # a change to modes.json waiting for your OK
         self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
+        self.dock_seen = False
         self.guide_tries = 0
         self.whatsapp_checked = False
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
@@ -213,6 +217,7 @@ class Brain:
     # ---- wiring ---------------------------------------------------------
 
     def start(self):
+        GLib.timeout_add_seconds(DOCK_WAIT_S, self._dock_never_came)
         Gio.bus_own_name_on_connection(
             self.bus, BRAIN_NAME, Gio.BusNameOwnerFlags.DO_NOT_QUEUE, None, self._on_name_lost)
         self.bus.signal_subscribe(
@@ -240,6 +245,29 @@ class Brain:
         self.servers_sent = None  # this dock hasn't heard yet
         self.guide_tries = 0
         GLib.timeout_add_seconds(GUIDE_DELAY_S, self._maybe_guide)
+        self.dock_seen = True
+        self._replace_other_docks()
+
+    def _replace_other_docks(self):
+        try:
+            names = docks.turn_off_others()
+        except (OSError, ValueError, GLib.Error) as e:
+            log.warning("can't turn off the other docks: %s", e)
+            return
+        if names:
+            log.info("turned off: %s", names)
+            GLib.timeout_add_seconds(DOCKS_SETTLE_S, self._say_docks_replaced, names)
+
+    def _say_docks_replaced(self, names):
+        self._command_card(self._say("docks_off", names=", ".join(names)), timeout=20)
+        return False
+
+    def _dock_never_came(self):
+        """A dock that can't load, on a newer GNOME say, gives back what it replaced: you're never left without one."""
+        if not self.dock_seen:
+            log.warning("no dock %d seconds after starting: turning the other docks back on", DOCK_WAIT_S)
+            docks.restore()
+        return False
 
     def _on_dock_vanished(self, _conn, _name):
         if self.mode is not None:

@@ -130,6 +130,10 @@ Each day's file is deleted after 90 days.
 - **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
   loaded, so the desktop can appear a moment later. Turn it off in the Extensions app if you'd rather see
   it sooner. On GNOME 51 it stays out of the way, since sessions start in the overview there.
+- **Other docks go off** the first time DeskAI's dock appears: Ubuntu Dock, Dash to Dock, Dash to Panel and the like.
+  They're only turned off, not uninstalled, and removing DeskAI turns them back on. To keep one, turn it on again in
+  the Extensions app, and DeskAI leaves it alone. If the dock can't load, on a newer GNOME say, they come back by
+  themselves. Docks that are separate apps, such as Plank, aren't touched.
 - **The color before the desktop**, on Ubuntu: `com.ubuntu.login-screen background-color` is set to black, unless
   you already chose one, so there's no gray flash at login. Removing DeskAI puts it back.
 
@@ -155,7 +159,8 @@ Modes live in `~/.config/deskai/modes.json`, and the dock picks up changes right
 ## Remove
 
 Open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package if you used the
-`.deb`. Your modes and stats stay unless you tick the box to delete them too.
+`.deb`. Your modes and stats stay unless you tick the box to delete them too. Uninstalling the package without that
+step leaves your other docks off: `gnome-extensions enable ubuntu-dock@ubuntu.com` turns Ubuntu Dock back on.
 
 ## Development
 
