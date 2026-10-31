@@ -22,6 +22,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   if it has files not committed or commits not pushed.
 - **Docker in the command bar.** Start, stop or restart a Compose project by name, along with the containers it
   needs from other projects, and see which images you have. Running containers get a status dot too.
+- **Who has which port.** Ask who has a port, what's free and what's in the way. A Docker project whose port is
+  taken says who has it, instead of failing halfway through starting.
 - **Room on your computer.** A card when memory or a disk runs low. Ask about your RAM or storage to see what's
   using it, and ask to clear it to see which caches can go. The card's button or "turn off warnings" stops the
   warnings.

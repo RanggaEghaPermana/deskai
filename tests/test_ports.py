@@ -73,7 +73,8 @@ class Clashes(unittest.TestCase):
     def setUp(self):
         for name, value in (("project_ports", lambda folder: self.PORTS[folder]), ("apache_ports", lambda: [80, 8080]),
                             ("listening", lambda: {53: "", 80: "", 8080: "", 5173: "node", 41397: "code"}),
-                            ("published", lambda: {8000: "shop_app"}), ("_installed_services", lambda: {"mysql.service"}),
+                            ("published", lambda: {8000: "shop_app"}), ("compose_folders", lambda: {}),
+                            ("_installed_services", lambda: {"mysql.service"}),
                             ("_active", lambda unit: unit == "apache2.service")):
             patcher = mock.patch.object(ports, name, side_effect=value)
             patcher.start()
@@ -103,6 +104,70 @@ class Clashes(unittest.TestCase):
         self.assertEqual(ports.busy_for("infra", self.FOUND), [])
 
 
+class NotAClash(unittest.TestCase):
+    def test_two_services_that_are_both_off(self):
+        rows = [{"port": 80, "who": "apache2", "running": False}, {"port": 80, "who": "nginx", "running": False}]
+        self.assertEqual(ports.clashes(rows), {})
+
+    def test_one_of_them_on_is(self):
+        rows = [{"port": 80, "who": "apache2", "running": True}, {"port": 80, "who": "nginx", "running": False}]
+        self.assertEqual(ports.clashes(rows), {80: ["apache2", "nginx"]})
+
+
+class UnnamedContainers(unittest.TestCase):
+    """Most Compose files don't name their containers: only Compose's label says whose one is."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        (self.folder / "docker-compose.yml").write_text('services:\n  web:\n    image: nginx\n    ports:\n      - "8080:80"\n')
+        self.found = {"shop": str(self.folder), "blog": "/w/blog"}
+        for name, value in (("listening", {8080: ""}), ("published", {8080: "shop-web-1"}), ("_installed_services", set()),
+                            ("apache_ports", []), ("project_ports", None)):
+            if name == "project_ports":
+                patcher = mock.patch.object(ports, name, side_effect=lambda folder: [8080] if folder == str(self.folder) else [])
+            else:
+                patcher = mock.patch.object(ports, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(ports.compose, "project_for", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def label(self, folder):
+        return mock.patch.object(ports, "compose_folders", return_value={"shop-web-1": folder})
+
+    def test_a_running_project_isnt_in_its_own_way(self):
+        with self.label(str(self.folder)):
+            self.assertEqual(ports.busy_for("shop", self.found), [])
+
+    def test_a_running_project_shows_as_running(self):
+        with self.label(str(self.folder)), mock.patch.object(ports, "_active", return_value=False):
+            self.assertEqual([row["running"] for row in ports.claims(self.found) if row["who"] == "shop"], [True])
+
+    def test_another_projects_container_is_in_the_way(self):
+        with self.label("/w/blog"):
+            self.assertEqual(ports.busy_for("shop", self.found), [(8080, "blog")])
+
+    def test_a_stranger_goes_by_its_container_name(self):
+        with self.label("/w/not-a-project"):
+            self.assertEqual(ports.busy_for("shop", self.found), [(8080, "shop-web-1")])
+
+    def test_the_label_comes_from_docker_ps(self):
+        output = "shop-web-1\t/w/shop\nplain-container\t\n"
+        with mock.patch.object(ports.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(ports.session, "docker_running", return_value=True), \
+                mock.patch.object(ports, "_run", return_value=mock.Mock(stdout=output)) as run:
+            self.assertEqual(ports.compose_folders(), {"shop-web-1": "/w/shop"})
+        self.assertIn('{{.Label "com.docker.compose.project.working_dir"}}', run.call_args.args[0][-1])
+
+    def test_with_docker_down_nothing_asks_it(self):
+        with mock.patch.object(ports.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(ports.session, "docker_running", return_value=False), \
+                mock.patch.object(ports, "_run") as run:
+            self.assertEqual(ports.compose_folders(), {})
+        run.assert_not_called()
+
+
 class Asking(unittest.TestCase):
     def action(self, text):
         result = commands.quick(text, [], servers.Watch(), {})
@@ -119,6 +184,16 @@ class Asking(unittest.TestCase):
         self.assertIsNone(self.action("apa itu port"))
         self.assertIsNone(self.action("what is a port"))
         self.assertIsNone(self.action("cara cek port"))
+
+    def test_short_questions_about_clashes(self):
+        for text in ("ada yang bentrok gak", "apa yang bentrok", "ada yg clash", "bentrok gak?"):
+            self.assertEqual(self.action(text), {"type": "ports"}, text)
+
+    def test_other_things_that_clash_or_are_called_ports(self):
+        for text in ("jadwal gua bentrok", "jadwal meeting bentrok sama kuliah", "main clash of clans", "buka clash royale",
+                     "usb port laptop rusak", "port forwarding di router gua kenapa", "beli hub usb 4 port"):
+            action = self.action(text)
+            self.assertNotEqual((action or {}).get("type"), "ports", text)
 
     def test_a_port_in_words(self):
         rows = [{"port": 8000, "who": "shop-dev", "running": True}, {"port": 8000, "who": "staging", "running": False},

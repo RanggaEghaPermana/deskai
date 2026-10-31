@@ -151,7 +151,10 @@ ASKS_IMAGES = re.compile(r"\bdocker\s+images?\b|\bimages?\s+docker\b|^(?:cek|che
 ASKS_COMPOSE = re.compile(r"\b(?:bisa|dapat|can)\s+(?:be\s+)?(?:di)?(?:nyala|jalan|start|run|pake|pakai)\w*|"
                           r"\b(?:compose|(?:project|proyek|projek)\s+docker|docker\s+(?:project|proyek|projek))\w*\b", re.I)
 # "cek port", "port 8000 dipake siapa", "apache port berapa", "port bentrok gak".
-ASKS_PORTS = re.compile(r"\bports?\b|\bbentrok\b|\bclash\w*\b", re.I)
+# "Bentrok" alone only in a short question: "jadwal gua bentrok" and "buka clash royale" aren't about ports.
+ASKS_PORTS = re.compile(r"\bports?\b|^(?:(?:ada|apa)\s+(?:yang|yg)\s+)?(?:bentrok|clash)(?:\s+(?:gak|nggak|ga|nih))?\??$", re.I)
+# Ports you plug things into, or a router's: not what programs on this computer listen on.
+OTHER_PORTS = re.compile(r"\b(?:usb|hdmi|thunderbolt|ethernet|vga|displayport|charger|charging|router|forward\w*)\b", re.I)
 PORT_NUMBER = re.compile(r"\b(\d{2,5})\b")
 PORT_WORDS = re.compile(r"\b(cek|check|liat|lihat|port|ports|apa|aja|saja|yang|yg|dipake|dipakai|kepake|kepakai|siapa|berapa|"
                          r"ada|nggak|gak|bentrok|clash\w*|milik|siapanya|berapaan|nya)\b", re.I)
@@ -364,7 +367,7 @@ def _quick_action(words, modes, watch, known_projects):
             return {"type": "system", "what": "memory"}
         if ASKS_STORAGE.search(words):
             return {"type": "system", "what": "storage"}
-        if ASKS_PORTS.search(words):
+        if ASKS_PORTS.search(words) and not OTHER_PORTS.search(words):
             number = PORT_NUMBER.search(words)
             about = re.sub(r"\s+", " ", PORT_WORDS.sub(" ", PORT_NUMBER.sub(" ", words))).strip(" ?!.")
             action = {"type": "ports"}
@@ -730,7 +733,7 @@ def open_folder(path):
 def ports_report(language, known_projects, port=None, about=None):
     """Who has which port, what's free, and what would clash: one line per owner."""
     say = lambda key, **params: brain.card_text(language, key, **params)  # noqa: E731
-    found = compose.projects(known_projects.values()) if "compose" in globals() else {}
+    found = compose.projects(known_projects.values())
     rows = ports.claims(found)
     clash = ports.clashes(rows)
     if port:

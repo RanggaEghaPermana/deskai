@@ -60,6 +60,27 @@ def published():
     return found
 
 
+def compose_folders():
+    """{container: the folder of the Compose project that started it}, from the label Compose puts on each one.
+    Most Compose files don't name their containers, so the names in the file can't say whose a container is."""
+    if not shutil.which("docker") or not session.docker_running():
+        return {}
+    done = _run(["docker", "ps", "--format", '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'])
+    found = {}
+    for line in (done.stdout if done else "").splitlines():
+        name, _, folder = line.partition("\t")
+        if folder:
+            found[name] = os.path.realpath(folder)
+    return found
+
+
+def _owner(container, found, folders):
+    """The project a running container belongs to: Compose's own word, else its name in the Compose files."""
+    folder = folders.get(container)
+    labelled = next((name for name, path in found.items() if os.path.realpath(path) == folder), None)
+    return labelled or compose.project_for(container, found)
+
+
 def apache_ports():
     """The ports Apache listens on once started, from its configuration. Empty if it isn't installed."""
     files = [APACHE_CONFIG / "ports.conf", *sorted((APACHE_CONFIG / "sites-enabled").glob("*.conf"))]
@@ -134,14 +155,14 @@ def _active(unit):
 
 def claims(found):
     """[{port, who, running}]: everything that has a port, or takes one when started."""
-    listens, docker = listening(), published()
+    listens, docker, folders = listening(), published(), compose_folders()
     rows = []
     for name, folder in found.items():
         for port in project_ports(folder):
             # Running if Docker publishes this port for this project: infra may run its MySQL and not its
             # PostgreSQL, and staging/infra names infra's MySQL container too.
             rows.append({"port": port, "who": name,
-                         "running": port in docker and compose.project_for(docker[port], found) == name})
+                         "running": port in docker and _owner(docker[port], found, folders) == name})
     apache_running = _active("apache2.service")
     for port in apache_ports():
         rows.append({"port": port, "who": "apache2", "running": apache_running})
@@ -159,27 +180,31 @@ def claims(found):
 
 
 def clashes(rows):
-    """{port: [who]} for each port that more than one thing wants."""
-    by_port = {}
+    """{port: [who]} for each port that more than one thing wants while one of them holds it.
+    Two services that are both off, like Apache and nginx installed side by side, are in nobody's way yet."""
+    by_port, held = {}, set()
     for row in rows:
         if not row.get("other"):
             by_port.setdefault(row["port"], [])
             if row["who"] not in by_port[row["port"]]:
                 by_port[row["port"]].append(row["who"])
-    return {port: who for port, who in by_port.items() if len(who) > 1}
+            if row["running"]:
+                held.add(row["port"])
+    return {port: who for port, who in by_port.items() if len(who) > 1 and port in held}
 
 
 def busy_for(name, found):
     """[(port, who)]: the ports this project needs that something else holds right now."""
     folder = found[name]
     mine = compose.containers_of(folder)
-    listens, docker = listening(), published()
+    listens, docker, folders = listening(), published(), compose_folders()
     taken = []
     for port in project_ports(folder):
-        if port in docker and docker[port] not in mine:
-            owner = compose.project_for(docker[port], found) or docker[port]
-            taken.append((port, owner))
-        elif port in listens and port not in docker:
+        if port in docker:
+            owner = _owner(docker[port], found, folders)
+            if owner != name and docker[port] not in mine:
+                taken.append((port, owner or docker[port]))
+        elif port in listens:
             owner = listens[port] or next((row["who"] for row in claims(found)
                                             if row["port"] == port and row["running"] and row["who"] != name), "?")
             taken.append((port, owner))
