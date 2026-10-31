@@ -6,6 +6,7 @@ import GLib from 'gi://GLib';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
+import {VERTICAL_BOX} from './compat.js';
 import {MOTION} from './motion.js';
 
 const TEXT_WIDTH = 330;
@@ -146,7 +147,7 @@ export class Card {
         const icon = new St.Icon({gicon, icon_size: 28, style_class: 'deskai-card-icon', y_align: Clutter.ActorAlign.START});
         this._body.add_child(icon);
 
-        const column = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-card-col'});
+        const column = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-card-col'});
         this._body.add_child(column);
 
         if (spec.title || spec.subtitle) {
@@ -206,7 +207,16 @@ export class Card {
             return;
         this._busyIcon = icon;
         icon.set_pivot_point(0.5, 0.5);
-        icon.ease({rotation_angle_z: 360, duration: BUSY_TURN_MS, mode: Clutter.AnimationMode.LINEAR, repeatCount: -1});
+        // Not with ease(): on GNOME 46 it can't see a property with two underscores in its name, and jumps to the end.
+        const turn = new Clutter.PropertyTransition({
+            property_name: 'rotation-angle-z',
+            duration: BUSY_TURN_MS,
+            progress_mode: Clutter.AnimationMode.LINEAR,
+            repeat_count: -1,
+        });
+        turn.set_from(0);
+        turn.set_to(360);
+        icon.add_transition('rotation-angle-z', turn);
         icon.ease({
             scale_x: 0.8,
             scale_y: 0.8,

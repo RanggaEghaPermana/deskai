@@ -10,11 +10,11 @@ import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {STARTUP_ANIMATION_TIME} from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-// The scale GNOME's own animation starts from.
+// GNOME's own animation: where it starts from, and how long it takes. GNOME 46 doesn't export the time.
 const START_SCALE = 0.75;
+const STARTUP_ANIMATION_TIME = 500;
 // A dark screen is worse than a stutter: past this, the animation plays anyway.
 const WAIT_LIMIT_MS = 2000;
 const FIRST_PAINT_LIMIT_MS = 100;

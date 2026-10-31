@@ -23,6 +23,16 @@ import installer  # noqa: E402
 ICON = installer.APP_ID
 FLOW = ["welcome", "check", "ai", "extras"]  # the steps you go through by hand
 
+
+def new_spinner():
+    """Adw.Spinner came with libadwaita 1.6, and Ubuntu 24.04 has 1.5."""
+    if hasattr(Adw, "Spinner"):
+        return Adw.Spinner()
+    spinner = Gtk.Spinner()
+    spinner.start()
+    return spinner
+
+
 STRINGS = {
     "en": {
         "window": "DeskAI Setup",
@@ -46,13 +56,13 @@ STRINGS = {
         "continue": "Continue",
         "install": "Install",
         "check_title": "Checking your computer",
-        "check_text": "DeskAI is made for GNOME 50 and 51.",
+        "check_text": "DeskAI is made for GNOME 46, 50 and 51.",
         "required": "Required",
         "recommended": "Recommended",
         "recommended_text": "DeskAI works without these, with a little less.",
         "checking": "Checking…",
-        "check_gnome": "GNOME 50 or 51",
-        "check_gnome_bad": "Found {found}. This version of DeskAI only runs on a GNOME 50 or 51 desktop.",
+        "check_gnome": "GNOME 46, 50 or 51",
+        "check_gnome_bad": "Found {found}. This version of DeskAI only runs on a GNOME 46, 50 or 51 desktop.",
         "check_systemd": "Background services (systemd)",
         "check_systemd_bad": "DeskAI's background service needs systemd for your user.",
         "check_atspi": "Accessibility library",
@@ -137,13 +147,13 @@ STRINGS = {
         "continue": "Lanjut",
         "install": "Pasang",
         "check_title": "Ngecek komputer kamu",
-        "check_text": "DeskAI dibuat untuk GNOME 50 dan 51.",
+        "check_text": "DeskAI dibuat untuk GNOME 46, 50, dan 51.",
         "required": "Wajib",
         "recommended": "Disarankan",
         "recommended_text": "DeskAI tetap jalan tanpa ini, cuma fiturnya sedikit berkurang.",
         "checking": "Lagi ngecek…",
-        "check_gnome": "GNOME 50 atau 51",
-        "check_gnome_bad": "Yang ketemu {found}. Versi DeskAI ini cuma jalan di desktop GNOME 50 atau 51.",
+        "check_gnome": "GNOME 46, 50, atau 51",
+        "check_gnome_bad": "Yang ketemu {found}. Versi DeskAI ini cuma jalan di desktop GNOME 46, 50, atau 51.",
         "check_systemd": "Layanan latar belakang (systemd)",
         "check_systemd_bad": "Layanan latar DeskAI butuh systemd untuk user kamu.",
         "check_atspi": "Library aksesibilitas",
@@ -361,7 +371,7 @@ class SetupWindow(Adw.ApplicationWindow):
 
     def check_row(self, check_id, title, subtitle):
         row = Adw.ActionRow(title=self.t(title), subtitle=subtitle)
-        spinner = Adw.Spinner()
+        spinner = new_spinner()
         row.add_suffix(spinner)
         self.check_rows[check_id] = (row, spinner)
         return row
@@ -576,7 +586,7 @@ class SetupWindow(Adw.ApplicationWindow):
 
     def start_remove(self, purge):
         steps = installer.uninstall_steps(purge)
-        if not installer.POLKIT_RULE.exists():
+        if not installer.has_polkit_rule():
             steps = [step for step in steps if step[0] != "polkit"]
         if not purge:
             steps = [step for step in steps if step[0] != "settings"]
@@ -611,7 +621,7 @@ class SetupWindow(Adw.ApplicationWindow):
             if step_id in marks:
                 row.remove(marks[step_id])
             if state == "running":
-                widget = Adw.Spinner()
+                widget = new_spinner()
             else:
                 widget = Gtk.Image(icon_name="emblem-ok-symbolic" if state == "done" else "dialog-error-symbolic")
                 widget.add_css_class("success" if state == "done" else "error")

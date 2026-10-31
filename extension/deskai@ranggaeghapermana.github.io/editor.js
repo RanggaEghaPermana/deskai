@@ -10,6 +10,8 @@ import * as CheckBox from 'resource:///org/gnome/shell/ui/checkBox.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import {VERTICAL_BOX} from './compat.js';
+
 export const MODE_COLORS = [
     '#e8833a', '#3b82f6', '#10b981', '#e5484d', '#8b5cf6',
     '#ec4899', '#f59e0b', '#14b8a6', '#64748b',
@@ -40,7 +42,7 @@ export function fillAppPicker(menu, {title, searchHint, isPinned, onToggle}) {
     searchItem.add_child(entry);
     menu.addMenuItem(searchItem);
 
-    const list = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-picker-list'});
+    const list = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-picker-list'});
     const scroll = new St.ScrollView({
         style_class: 'deskai-picker-scroll',
         hscrollbar_policy: St.PolicyType.NEVER,
@@ -110,7 +112,7 @@ class ModeDialog extends ModalDialog.ModalDialog {
         this._icon = mode?.icon ?? MODE_ICONS[4];
 
         const content = new St.BoxLayout({
-            orientation: Clutter.Orientation.VERTICAL,
+            ...VERTICAL_BOX,
             style_class: 'deskai-dialog-content',
         });
         content.add_child(new St.Label({
@@ -151,7 +153,7 @@ class ModeDialog extends ModalDialog.ModalDialog {
         content.add_child(swatches);
 
         content.add_child(fieldLabel(t('icon')));
-        const grid = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-icon-grid'});
+        const grid = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-icon-grid'});
         let row = null;
         this._icons = MODE_ICONS.map((name, i) => {
             if (i % 8 === 0) {

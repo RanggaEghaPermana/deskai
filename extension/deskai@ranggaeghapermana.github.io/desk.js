@@ -8,6 +8,8 @@ import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {maximize, unmaximize} from './compat.js';
+
 const {HORIZONTAL, VERTICAL} = Meta.MaximizeFlags;
 const BOTH = HORIZONTAL | VERTICAL;
 // Apps size a new window themselves right after it maps; placing it again a moment later wins.
@@ -154,16 +156,16 @@ export class Desk {
             if (current !== BOTH) {
                 if (spec.monitor >= 0 && spec.monitor < global.display.get_n_monitors())
                     win.move_to_monitor(spec.monitor);
-                win.maximize();
+                maximize(win, BOTH);
             }
         } else {
             // Half-maximized is GNOME's tiling to one side: the rect, then the one direction.
             if (current)
-                win.set_unmaximize_flags(current);
+                unmaximize(win, current);
             if (spec.rect?.length === 4 && onScreen(spec.rect))
                 win.move_resize_frame(true, ...spec.rect);
             if (wanted)
-                win.set_maximize_flags(wanted);
+                maximize(win, wanted);
         }
         if (spec.above && !win.is_above())
             win.make_above();

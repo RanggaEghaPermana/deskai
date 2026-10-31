@@ -9,6 +9,8 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {VERTICAL_BOX} from './compat.js';
+
 const WIDTH = 640;
 const GAP = 14;
 const LIST_GAP = 6;
@@ -64,7 +66,7 @@ export class CommandBar {
             this._bar.add_child(button);
         }
         this._backdrop.add_child(this._bar);
-        this._list = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-command-list', reactive: true});
+        this._list = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-command-list', reactive: true});
         this._backdrop.add_child(this._list);
         Main.uiGroup.add_child(this._backdrop);
 

@@ -54,12 +54,14 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 
 | | |
 |---|---|
-| Desktop | **GNOME 50 or 51** on Wayland (Ubuntu 26.04, for example). Other GNOME versions and other desktops such as KDE aren't supported. |
+| Desktop | **GNOME 46, 50 or 51** on Wayland (Ubuntu 24.04 or 26.04, for example). Other GNOME versions and other desktops such as KDE aren't supported. |
 | Needed | Python 3, PyGObject, GTK 4, libadwaita, systemd. The `.deb` and the setup window take care of these. |
 | Recommended | **Ptyxis** and **Google Chrome**: terminals and browser tabs come back after a logout with these. |
 | Optional | **Claude Code**, an Anthropic API key or **[Ollama](https://ollama.com)** for the smart features. Everything else works without AI. |
 
-So far it has only been tested on Ubuntu 26.04.
+It's used daily on Ubuntu 26.04. On Ubuntu 24.04 it has been run in a test session in a virtual machine, not yet on a
+full desktop, and GNOME 51 has only been checked against its source. Ubuntu 24.04 doesn't package Ptyxis, so without it
+terminals don't come back after a logout there.
 
 ## Install
 
@@ -70,7 +72,7 @@ So far it has only been tested on Ubuntu 26.04.
 3. Open **DeskAI Setup** from the app grid and follow the steps.
 4. Log out and back in once. The dock is there from then on.
 
-### Other distributions with GNOME 50 or 51
+### Other distributions with GNOME 46, 50 or 51
 
 ```sh
 git clone https://github.com/RanggaEghaPermana/deskai.git
@@ -146,7 +148,7 @@ Each day's file is deleted after 90 days.
   `deskai routine allow-db` prints a polkit rule for you to install.
 - **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
   loaded, so the desktop can appear a moment later. Turn it off in the Extensions app if you'd rather see
-  it sooner. On GNOME 51 it stays out of the way, since sessions start in the overview there.
+  it sooner. On GNOME 46 and 51 it stays out of the way, since sessions start in the overview there.
 - **Other docks go off** the first time DeskAI's dock appears: Ubuntu Dock, Dash to Dock, Dash to Panel and the like.
   They're only turned off, not uninstalled, and removing DeskAI turns them back on. To keep one, turn it on again in
   the Extensions app, and DeskAI leaves it alone. If the dock can't load, on a newer GNOME say, they come back by

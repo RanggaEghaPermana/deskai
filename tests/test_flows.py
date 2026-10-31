@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import os
 import sys
 import tempfile
 import time
@@ -491,6 +492,30 @@ class RoutineStopping(unittest.TestCase):
                                 lambda *_: None, modes.append)
         self.assertEqual(modes, ["a", "b"])
         state.assert_called_once()
+
+
+class ConfigReload(unittest.TestCase):
+    def test_a_replaced_file_counts_even_with_the_same_time(self):
+        # On Ubuntu 24.04's kernel, two saves in the same few milliseconds get the same time.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "modes.json"
+            config = brain.Config(path)
+            defaults = json.loads(DEFAULTS.read_text())
+            brain.write_json_atomic(path, {**defaults, "language": "id"})
+            self.assertTrue(config.refresh())
+            stamp = path.stat().st_mtime_ns
+            brain.write_json_atomic(path, {**defaults, "language": "en"})
+            os.utime(path, ns=(stamp, stamp))
+            self.assertTrue(config.refresh())
+            self.assertEqual(config.language, "en")
+
+    def test_nothing_changed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "modes.json"
+            brain.write_json_atomic(path, json.loads(DEFAULTS.read_text()))
+            config = brain.Config(path)
+            self.assertTrue(config.refresh())
+            self.assertFalse(config.refresh())
 
 
 class SettingUpAProject(Base):

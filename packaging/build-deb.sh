@@ -44,11 +44,11 @@ Priority: optional
 Architecture: all
 Maintainer: Rangga Egha Permana <RanggaEghaPermana@users.noreply.github.com>
 Homepage: https://github.com/RanggaEghaPermana/deskai
-Depends: gnome-shell (>= 50~), gnome-shell (<< 52~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd
+Depends: gnome-shell (>= 46~), gnome-shell (<< 52~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd
 Recommends: ptyxis
 Installed-Size: $(du -sk "$PKG/usr" | cut -f1)
 Description: Dock for GNOME with focus modes, an inbox and desk restore
- DeskAI is a dock for GNOME 50 and 51 with focus modes, each with its own apps,
+ DeskAI is a dock for GNOME 46, 50 and 51 with focus modes, each with its own apps,
  allowed sites and notification rules, and an inbox for WhatsApp messages and
  AI agents. After a logout, your windows, terminals and servers come back.
  .

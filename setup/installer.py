@@ -35,7 +35,7 @@ UUID = "deskai@ranggaeghapermana.github.io"
 LOGIN_UUID = "deskai-login@ranggaeghapermana.github.io"
 LOGIN_SCREEN_SCHEMA = "com.ubuntu.login-screen"
 LOGIN_BACKGROUND = "#000000"
-SHELL_MAJORS = (50, 51)  # the GNOME versions this release is written for
+SHELL_MAJORS = (46, 50, 51)  # the GNOME versions this release is written for
 SERVICE = "deskaid.service"
 POLKIT_RULE = Path("/etc/polkit-1/rules.d/50-deskai-services.rules")
 PAYLOAD = ("daemon", "extension", "setup", "VERSION", "LICENSE")
@@ -45,6 +45,7 @@ DATA = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local/share")
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
 STATE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
+POLKIT_GENERATED = CACHE / "deskai" / POLKIT_RULE.name  # what `deskai routine allow-db` writes for you to install
 
 SHARE = DATA / "deskai"
 APP_DIR = SHARE / "app"           # a copy of the app, when it isn't installed system-wide
@@ -293,6 +294,14 @@ def _write_env(key):
     ENV_FILE.chmod(0o600)
 
 
+def _write_private_json(path, data):
+    temp = path.with_suffix(".json.new")
+    temp.touch(mode=0o600)
+    temp.chmod(0o600)
+    temp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    temp.replace(path)
+
+
 def _write_config(app_dir, options):
     """modes.json with this language and AI choice, keeping any modes you already have."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -308,14 +317,10 @@ def _write_config(app_dir, options):
     # Claude's login on "auto": if Claude ever stops working and Ollama is set up, it carries on with that.
     backend = "auto" if options.ai == "claude" and not has_api_key() else BACKENDS[options.ai]
     modes.setdefault("llm", {})["backend"] = backend
-    temp = MODES_FILE.with_suffix(".json.new")
-    temp.write_text(json.dumps(modes, indent=2, ensure_ascii=False) + "\n")
-    temp.replace(MODES_FILE)
+    _write_private_json(MODES_FILE, modes)
     routine = read_json(ROUTINE_FILE) or {}
     routine["enabled"] = options.routine
-    temp = ROUTINE_FILE.with_suffix(".json.new")
-    temp.write_text(json.dumps(routine, indent=2, ensure_ascii=False) + "\n")
-    temp.replace(ROUTINE_FILE)
+    _write_private_json(ROUTINE_FILE, routine)
 
 
 def _make_venv(python):
@@ -406,6 +411,17 @@ def _login_screen():
     """Ubuntu's own settings for the screen before the desktop appears. None elsewhere."""
     source = Gio.SettingsSchemaSource.get_default()
     return Gio.Settings.new(LOGIN_SCREEN_SCHEMA) if source and source.lookup(LOGIN_SCREEN_SCHEMA, True) else None
+
+
+def has_polkit_rule():
+    """Whether the rule may be installed. Only root can look in its folder, so having made it counts too."""
+    def visible(path):
+        try:
+            return path.exists()
+        except OSError:  # Python 3.12 raises on a folder it can't read, and 3.14 says the file isn't there
+            return False
+
+    return visible(POLKIT_RULE) or visible(POLKIT_GENERATED)
 
 
 def _enable_extension():
@@ -510,8 +526,9 @@ def uninstall_steps(purge=False):
 
     def polkit():
         # The workday routine's permission to start your database, if you ever gave it.
-        if POLKIT_RULE.exists():
+        if has_polkit_rule():
             run("pkexec", "rm", "-f", str(POLKIT_RULE), timeout=120)
+            POLKIT_GENERATED.unlink(missing_ok=True)
 
     def settings():
         if purge:

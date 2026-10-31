@@ -133,21 +133,23 @@ def validate_config(cfg):
 
 
 class Config:
-    """modes.json, reloaded whenever its mtime changes. A broken file keeps the last good copy."""
+    """modes.json, reloaded whenever the file changes. A broken file keeps the last good copy."""
 
     def __init__(self, path=MODES_FILE):
         self.path = Path(path)
         self.data = {"modes": {}}
-        self._mtime = None
+        self._seen = None
 
     def refresh(self):
         try:
-            mtime = self.path.stat().st_mtime_ns
+            stat = self.path.stat()
         except FileNotFoundError:
             return False
-        if mtime == self._mtime:
+        # The time alone misses two saves a few milliseconds apart, on Ubuntu 24.04's kernel.
+        seen = (stat.st_mtime_ns, stat.st_ino, stat.st_size)
+        if seen == self._seen:
             return False
-        self._mtime = mtime
+        self._seen = seen
         try:
             data = json.loads(self.path.read_text())
         except (OSError, json.JSONDecodeError) as e:

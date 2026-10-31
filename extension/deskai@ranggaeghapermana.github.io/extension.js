@@ -16,7 +16,6 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AppFavorites from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
-import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
@@ -25,6 +24,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {Card} from './card.js';
 import {CommandBar} from './commandbar.js';
+import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
 import {ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
@@ -164,7 +164,6 @@ const BROWSER_IDS = new Set([
 const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
 const FOCUSABLE_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 const {AnimationMode} = Clutter;
-const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION);
 
 function readText(file) {
     try {
@@ -255,8 +254,7 @@ export default class DeskAIExtension extends Extension {
             announce: item => this._announceInbox(item),
             hush: notification => this._quiet.add(notification),
         });
-        this._keyboard = global.stage.get_context().get_backend().get_default_seat()
-            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        this._keyboard = defaultSeat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
         this._loadConfig();
         const saved = readJson(this._stateFile);
@@ -1041,7 +1039,7 @@ export default class DeskAIExtension extends Extension {
             accessible_name: app.get_name(),
             button_mask: St.ButtonMask.ONE | St.ButtonMask.TWO | St.ButtonMask.THREE,
         });
-        const box = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL});
+        const box = new St.BoxLayout({...VERTICAL_BOX});
         const icon = app.create_icon_texture(this._config.dock?.icon_size ?? 38);
         // The inbox badge: a colored dot on the icon's corner (needs you, done, or a message).
         const iconBox = new St.Widget({layout_manager: new Clutter.BinLayout()});
@@ -1416,7 +1414,7 @@ export default class DeskAIExtension extends Extension {
     _previewButton(app, win, width) {
         const title = win.get_title() || app.get_name();
         const button = new St.Button({style_class: 'deskai-preview', accessible_name: title});
-        const box = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'deskai-preview-box'});
+        const box = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-preview-box'});
         box.add_child(new St.Label({style_class: 'deskai-preview-title', text: title, width}));
 
         const height = Math.round(width * PREVIEW_HEIGHT / PREVIEW_WIDTH);
@@ -2268,7 +2266,7 @@ export default class DeskAIExtension extends Extension {
                     y_align: Clutter.ActorAlign.CENTER,
                 }));
                 const text = new St.BoxLayout({
-                    orientation: Clutter.Orientation.VERTICAL,
+                    ...VERTICAL_BOX,
                     x_expand: true,
                     y_align: Clutter.ActorAlign.CENTER,
                 });
@@ -2474,7 +2472,7 @@ export default class DeskAIExtension extends Extension {
                 icon_size: 16,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-            const text = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, x_expand: true});
+            const text = new St.BoxLayout({...VERTICAL_BOX, x_expand: true});
             text.add_child(new St.Label({text: baseName(uri), style_class: 'deskai-inbox-item-title'}));
             text.add_child(new St.Label({text: displayPath(uri), style_class: 'deskai-inbox-item-meta'}));
             row.add_child(text);
@@ -2797,7 +2795,7 @@ export default class DeskAIExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         }));
         const text = new St.BoxLayout({
-            orientation: Clutter.Orientation.VERTICAL,
+            ...VERTICAL_BOX,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -2882,7 +2880,7 @@ export default class DeskAIExtension extends Extension {
         this._musicArt.add_child(this._musicAppIcon);
         const text = new St.BoxLayout({
             style_class: 'deskai-music-text',
-            orientation: Clutter.Orientation.VERTICAL,
+            ...VERTICAL_BOX,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._musicTitle = new St.Label({style_class: 'deskai-music-title'});

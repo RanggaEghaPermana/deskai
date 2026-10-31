@@ -711,6 +711,8 @@ export class Motion {
         });
         patches.method(ModalDialog.ModalDialog.prototype, 'close', original => function (...args) {
             const result = original.apply(this, args);
+            if (!St.Settings.get().enable_animations)
+                return result; // it's gone already
             retime(this, ['opacity'], MOTION.popOut);
             this.dialogLayout?.ease({scale_x: 0.96, scale_y: 0.96, ...MOTION.popOut});
             return result;
@@ -740,7 +742,8 @@ export class Motion {
             this._switcherList.ease({scale_x: 1, scale_y: 1, ...MOTION.pop});
         });
         patches.method(SwitcherPopup.SwitcherPopup.prototype, 'fadeAndDestroy', original => function (...args) {
-            const showing = this.opacity > 0; // a quick Alt+Tab never showed, and is destroyed on the spot
+            // A quick Alt+Tab never showed, and without animations it's gone too: destroyed on the spot.
+            const showing = this.opacity > 0 && St.Settings.get().enable_animations;
             original.apply(this, args);
             if (!showing)
                 return;
