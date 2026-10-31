@@ -1170,6 +1170,7 @@ class Brain:
 
         def work():
             try:
+                routine.write_state(last_project=path)  # what the morning offer goes by without Claude Code
                 plan = routine.learn(project=path)
             except Exception as e:  # anything from reading transcripts or the browser history
                 log.warning("command: can't plan %s: %s", path, e)

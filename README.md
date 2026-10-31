@@ -37,6 +37,9 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   workspace, your terminals with their tabs and Claude Code conversations, your dev servers, your
   database and Chrome's tabs. It always asks first.
 - **Workday routine.** On workday mornings it offers to set up your project like last time.
+- **Ready after setup.** No AI and nothing to teach it first. Setup puts the apps you use in each mode, from what's
+  installed and what GNOME has seen you open, and your projects are found in the usual folders. "Set up my project"
+  starts what a project's own files say it runs, and uses your Claude Code sessions when it has them.
 - **Smart places.** After a download or a screen recording, the dock offers to open it or show it,
   and it learns the folders you go back to. A suggestion leaves the dock after a minute, and clicking Files
   on the dock then takes you there: your latest screenshot, download or recording, or the folder you closed

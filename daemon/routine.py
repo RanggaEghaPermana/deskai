@@ -32,6 +32,7 @@ from collections import Counter
 from pathlib import Path
 
 import brain
+import projects as found_projects
 from brain import log
 
 ROUTINE_FILE = brain.CONFIG_DIR / "routine.json"
@@ -303,7 +304,8 @@ def find_claude():
 
 def tool_path(claude):
     """PATH for the servers and Claude: the node install Claude lives in, ~/.local/bin, the system."""
-    dirs = [os.path.dirname(claude), str(Path.home() / ".local/bin"),
+    node = sorted(Path.home().glob(".nvm/versions/node/*/bin"), key=lambda path: [int(n) for n in re.findall(r"\d+", path.parent.name)])
+    dirs = [os.path.dirname(claude), *(str(path) for path in node[-1:]), str(Path.home() / ".local/bin"), str(Path.home() / ".bun/bin"),
             "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
     return ":".join(dict.fromkeys(d for d in dirs if d))
 
@@ -333,13 +335,14 @@ def learn(today=None, project=None):
         folder = project_folders().get(project)
         entries = [e for e in scan_sessions(since, [folder]) if e[1] == project] if folder else []
         if not entries:
-            return None
+            return _plan_from_files(plan, project, today)
         day = max(e[0] for e in entries).date()
     else:
         entries = scan_sessions(since)
         day = last_workday(entries, today, plan["days"])
         if not day:
-            return None
+            last = read_state().get("last_project")
+            return _plan_from_files(plan, last, today) if last and os.path.isdir(last) else None
         work = [e for e in entries if e[0].date() == day and WORK_HOURS[0] <= e[0].hour < WORK_HOURS[1]]
         project = Counter(e[1] for e in work).most_common(1)[0][0]
     # The conversation you were in last in that project (what `claude --continue` would pick).
@@ -366,6 +369,25 @@ def learn(today=None, project=None):
 
     plan.update({"learned_from": day.isoformat(), "project": project,
                  "path": tool_path(claude), "steps": steps})
+    return plan
+
+
+def _plan_from_files(plan, project, today):
+    """For a project Claude Code never saw: what its own files say it runs, then a terminal there."""
+    steps = []
+    mode = usual_mode(today)
+    if mode:
+        steps.append({"type": "mode", "mode": mode})
+    db = database_service(project)
+    if db:
+        steps.append({"type": "service", **db})
+    servers = found_projects.servers(project)
+    steps += [{"type": "server", **server} for server in servers]
+    port = next((server["port"] for server in servers if server["port"]), None)
+    if port:
+        steps.append({"type": "url", "url": f"http://127.0.0.1:{port}"})
+    steps.append({"type": "terminal", "cwd": project})
+    plan.update({"learned_from": today.isoformat(), "project": project, "path": tool_path(find_claude()), "steps": steps})
     return plan
 
 
@@ -496,8 +518,8 @@ def label(step):
         return f"{name} :{step['port']}" if step.get("port") else name
     if kind == "url":
         return re.sub(r"^https?://", "", step["url"])
-    if kind == "claude":
-        return "claude"
+    if kind in ("claude", "terminal"):
+        return kind
     return step.get("mode", kind)
 
 
@@ -554,6 +576,9 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                 command = " ".join(shlex.quote(part) for part in step["command"])
                 inner = f"{command}; exec bash"
                 subprocess.Popen(terminal_args(step["cwd"], inner), env=env, cwd=step["cwd"], start_new_session=True)
+                progress(step, "done")
+            elif kind == "terminal":
+                subprocess.Popen(terminal_args(step["cwd"], "exec bash"), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:
             log.warning("routine: %s failed: %s", kind, e)

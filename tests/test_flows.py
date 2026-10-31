@@ -493,6 +493,19 @@ class RoutineStopping(unittest.TestCase):
         state.assert_called_once()
 
 
+class SettingUpAProject(Base):
+    def test_it_remembers_the_project_for_the_morning(self):
+        with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
+                mock.patch.object(deskaid.commands, "projects", return_value={}), \
+                mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain._setup_project("app")
+        with mock.patch.object(deskaid.routine, "learn", return_value=None), \
+                mock.patch.object(deskaid.routine, "write_state") as state, \
+                mock.patch.object(deskaid.GLib, "idle_add"):
+            thread.call_args.kwargs["target"]()
+        state.assert_called_once_with(last_project="/w/app")
+
+
 class CardsThatMeanStillWorking(Base):
     def run_in_thread(self, start):
         with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \

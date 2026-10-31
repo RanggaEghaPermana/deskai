@@ -24,6 +24,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 
 import brain  # noqa: E402
 import compose  # noqa: E402
+import projects as found_projects  # noqa: E402
 import routine  # noqa: E402
 import servers  # noqa: E402
 import system  # noqa: E402
@@ -494,15 +495,18 @@ def only_what_was_asked(result, text, known_projects):
     return {**result, "actions": kept, "dropped": len(actions) - len(kept), "unsure": not kept and not IS_QUESTION.search(text.strip())}
 
 
+MAX_PROJECTS = 30
+
+
 def projects():
     """Your projects by name, newest first (not the scratch folders tools leave under hidden ones)."""
     home = Path.home()
     named = {}
-    for path in routine.project_folders():
+    for path in [*routine.project_folders(), *found_projects.find()]:
         relative = Path(path).relative_to(home) if Path(path).is_relative_to(home) else None
         if relative and not any(part.startswith(".") for part in relative.parts):
             named.setdefault(Path(path).name, path)
-    return dict(list(named.items())[:20])
+    return dict(list(named.items())[:MAX_PROJECTS])
 
 
 def time_today(config):

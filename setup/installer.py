@@ -23,12 +23,13 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gio", "2.0")
-from gi.repository import Gio  # noqa: E402
+from gi.repository import Gio, GLib  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "daemon"))
 
 import docks  # noqa: E402
+import personalize  # noqa: E402
 
 UUID = "deskai@ranggaeghapermana.github.io"
 LOGIN_UUID = "deskai-login@ranggaeghapermana.github.io"
@@ -296,7 +297,13 @@ def _write_config(app_dir, options):
     """modes.json with this language and AI choice, keeping any modes you already have."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     defaults = app_dir / "extension" / UUID / "modes.default.json"
-    modes = read_json(MODES_FILE) or json.loads(defaults.read_text())
+    modes = read_json(MODES_FILE)
+    if not modes:
+        modes = json.loads(defaults.read_text())
+        try:
+            personalize.personalize(modes)
+        except (OSError, ValueError, GLib.Error) as e:
+            print(f"Keeping the default apps: {e}", file=sys.stderr)
     modes["language"] = options.language
     # Claude's login on "auto": if Claude ever stops working and Ollama is set up, it carries on with that.
     backend = "auto" if options.ai == "claude" and not has_api_key() else BACKENDS[options.ai]
