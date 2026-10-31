@@ -42,6 +42,7 @@ ROUTINE_DELAY_S = 6          # after login or unlock, let the desktop settle bef
 ROUTINE_SNOOZE_S = 45 * 60
 SNAPSHOT_EVERY = 30          # seconds between snapshots of the desk, for after a logout
 SERVER_CHECK_EVERY = 10      # seconds between looks at the servers on the desk
+ROUTINE_STOP_WAIT_S = 3      # closing a project lets a setup still going finish the step it's on, if it's quick
 DOCKS_SETTLE_S = 3           # turning a dock off restarts the extensions GNOME loaded after it, this dock among them
 DOCK_WAIT_S = 60             # after starting, how long the dock gets to appear before the docks it replaced come back
 GUIDE_DELAY_S = 15           # the first-run guide waits for the desktop, and for anything else on offer
@@ -197,6 +198,7 @@ class Brain:
         self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
         self.dock_seen = False
+        self.routine_running = None  # the setup going on right now
         self.guide_tries = 0
         self.whatsapp_checked = False
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
@@ -700,21 +702,27 @@ class Brain:
         return next((s["mode"] for s in plan["steps"] if s["type"] == "mode" and self.config.mode(s["mode"])), None)
 
     def _run_routine(self, plan):
+        cancel = threading.Event()
+
         def progress(step, state):
-            GLib.idle_add(self._routine_progress, plan, step, state)
+            if not cancel.is_set():
+                GLib.idle_add(self._routine_progress, plan, step, state)
 
         def set_mode(mode):
             GLib.idle_add(lambda: self.call("SetMode", "(s)", (mode,)) and False)
 
         def work():
             try:
-                routine.run(plan, progress, set_mode)
+                routine.run(plan, progress, set_mode, cancel.is_set)
             except Exception as e:  # never take the daemon down with it
                 log.exception("routine failed: %s", e)
-            GLib.idle_add(self._routine_finished, plan)
+            if not cancel.is_set():
+                GLib.idle_add(self._routine_finished, plan)
 
         log.info("routine: setting up %s", plan.get("project"))
-        threading.Thread(target=work, name="routine", daemon=True).start()
+        thread = threading.Thread(target=work, name="routine", daemon=True)
+        self.routine_running = {"project": plan.get("project"), "cancel": cancel, "thread": thread}
+        thread.start()
 
     def _routine_card(self, plan, title, timeout):
         marks = {"running": "…", "done": "✓", "skipped": "✓", "failed": "✗"}
@@ -743,6 +751,7 @@ class Brain:
         title = self._say("routine_partly", n=failed) if failed else self._say("routine_ready")
         self._routine_card(plan, title, 12)
         self.routine_plan = None
+        self.routine_running = None
         return False
 
     # ---- servers on the desk ---------------------------------------------
@@ -996,8 +1005,15 @@ class Brain:
             self._command_card(self._say("command_no_project"))
             return
         self._command_card(self._say("project_closing", name=os.path.basename(path)), timeout=120, busy=True)
+        # A setup still going mustn't start things or open pages after this.
+        setting_up = self.routine_running if self.routine_running and self.routine_running["project"] == path else None
+        if setting_up:
+            setting_up["cancel"].set()
+            self.routine_running = self.routine_plan = None
 
         def work():
+            if setting_up:
+                setting_up["thread"].join(timeout=ROUTINE_STOP_WAIT_S)
             try:
                 report = servers.close_project(self.watch, path)
                 terminals = session.project_terminals(path)

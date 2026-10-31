@@ -51,6 +51,7 @@ class Fake(deskaid.Brain):
         self.drift_since = self.last_nudge = None
         self.servers_sent = None
         self.dock_seen = False
+        self.routine_running = None
 
     def card(self, spec):
         self.cards.append(spec)
@@ -400,6 +401,94 @@ class ClosingWithWorkNotInGit(Base):
         state.assert_called_once_with("/w/app")
         self.brain._project_closed(*idle.call_args[0][1:])
         self.assertIn("4 file belum di-commit", self.brain.cards[-1]["text"])
+
+
+class ClosingWhileSettingUp(Base):
+    PLAN = {"project": "/w/app", "steps": []}
+
+    def start(self, plan=PLAN):
+        with mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain._run_routine(plan)
+        return thread.call_args.kwargs["target"]
+
+    def close(self, path="/w/app"):
+        with mock.patch.object(deskaid.commands, "find_project", return_value=path), \
+                mock.patch.object(deskaid.commands, "projects", return_value={}), \
+                mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain._close_project("x")
+        return thread.call_args.kwargs["target"]
+
+    def what_the_setup_sees(self, setup):
+        seen = {}
+
+        def run(_plan, progress, _set_mode, cancelled):
+            seen["cancelled"] = cancelled()
+            progress({"type": "server"}, "running")
+
+        with mock.patch.object(deskaid.routine, "run", side_effect=run), mock.patch.object(deskaid.GLib, "idle_add") as idle:
+            setup()
+        seen["told_the_dock"] = idle.called
+        return seen
+
+    def test_closing_the_project_stops_its_setup_and_its_cards(self):
+        setup = self.start()
+        self.close()
+        self.assertEqual(self.what_the_setup_sees(setup), {"cancelled": True, "told_the_dock": False})
+
+    def test_closing_another_project_leaves_it_running(self):
+        setup = self.start()
+        self.close("/w/other")
+        self.assertEqual(self.what_the_setup_sees(setup), {"cancelled": False, "told_the_dock": True})
+
+    def test_closing_waits_a_moment_for_the_step_in_progress(self):
+        self.start()
+        running = self.brain.routine_running
+        closing = self.close()
+        with mock.patch.object(deskaid.servers, "close_project", return_value=[]), \
+                mock.patch.object(deskaid.session, "project_terminals", return_value=[]), \
+                mock.patch.object(self.brain.watch, "hand_started_in", return_value=[]), \
+                mock.patch.object(deskaid.servers, "git_state", return_value=None), \
+                mock.patch.object(deskaid.GLib, "idle_add"):
+            closing()
+        running["thread"].join.assert_called_once_with(timeout=deskaid.ROUTINE_STOP_WAIT_S)
+
+    def test_a_setup_that_finished_is_forgotten(self):
+        self.start()
+        self.brain.routine_marks = {}
+        self.brain._routine_finished(self.PLAN)
+        self.assertIsNone(self.brain.routine_running)
+
+
+class RoutineStopping(unittest.TestCase):
+    def test_no_step_runs_after_it_is_cancelled(self):
+        modes = []
+        steps = [{"type": "mode", "mode": "a"}, {"type": "mode", "mode": "b"}]
+        with mock.patch.object(deskaid.routine, "write_state") as state:
+            deskaid.routine.run({"steps": steps}, lambda *_: None, modes.append, lambda: bool(modes))
+        self.assertEqual(modes, ["a"])
+        state.assert_not_called()  # it didn't set up your day
+
+    def test_the_page_doesnt_open_if_it_was_cancelled_while_waiting(self):
+        waited = []
+
+        def wait(_port, _seconds):
+            waited.append(True)
+            return True
+
+        with mock.patch.object(deskaid.routine, "wait_port", side_effect=wait), \
+                mock.patch.object(deskaid.routine.subprocess, "Popen") as popen, \
+                mock.patch.object(deskaid.routine, "write_state"):
+            deskaid.routine.run({"steps": [{"type": "url", "url": "http://127.0.0.1:8000/"}]}, lambda *_: None, lambda _mode: None,
+                                lambda: bool(waited))
+        popen.assert_not_called()
+
+    def test_without_cancelling_it_runs_everything(self):
+        modes = []
+        with mock.patch.object(deskaid.routine, "write_state") as state:
+            deskaid.routine.run({"steps": [{"type": "mode", "mode": "a"}, {"type": "mode", "mode": "b"}]},
+                                lambda *_: None, modes.append)
+        self.assertEqual(modes, ["a", "b"])
+        state.assert_called_once()
 
 
 class CardsThatMeanStillWorking(Base):

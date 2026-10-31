@@ -95,6 +95,28 @@ class Instant(unittest.TestCase):
                      "capek, stop dulu kerja di toko online"):
             self.assertEqual(self.action(text), {"type": "close_project", "project": "toko online"}, text)
 
+    def test_turning_a_project_off_in_other_words(self):
+        for text in ("matikan gudang", "matikan project gudang", "matikan proyek gudang", "tolong matikan gudang",
+                     "matikan gudang sekarang", "matikan gudang dong", "hentikan gudang", "nonaktifkan gudang",
+                     "akhiri gudang", "turn off gudang", "kill gudang", "stopin gudang", "matikan server gudang",
+                     "matiin server gudang", "stop server gudang", "matikan servernya gudang"):
+            self.assertEqual(self.action(text), {"type": "close_project", "project": "gudang"}, text)
+
+    def test_turning_a_project_on_in_other_words(self):
+        for text in ("nyalakan gudang", "nyalain gudang", "hidupkan gudang", "hidupin gudang", "idupin gudang",
+                     "jalankan gudang", "jalanin gudang", "aktifkan gudang", "run gudang", "nyalain server gudang",
+                     "jalankan project gudang"):
+            self.assertEqual(self.action(text), {"type": "setup_project", "project": "gudang"}, text)
+
+    def test_those_words_about_something_else_arent_a_project(self):
+        for text in ("matikan wifi", "matikan laptop", "kill semuanya", "hentikan musik", "jalankan tests", "run tests", "nyalain bluetooth"):
+            self.assertIsNone(self.action(text), text)
+
+    def test_a_servers_own_name_still_wins_over_those_words(self):
+        watch = watch_with(("gudang :8000", 8000))
+        self.assertEqual(self.action("matikan gudang", watch)["type"], "server")
+        self.assertEqual(self.action("hentikan gudang", watch)["type"], "server")
+
     def test_starting_work_on_a_project(self):
         for text, name in (("siapin project gudang", "gudang"), ("set up gudnag", "gudnag"), ("mulai kerja di gudang", "gudang"),
                            ("gua mau kerja di toko online, siapin dong", "toko online"), ("kerja di gudang", "gudang"),

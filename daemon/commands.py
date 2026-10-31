@@ -102,7 +102,7 @@ WANTS_TO = re.compile(r"^(?:lagi\s+)?(?:mau|pengen|pingin|ingin|kepengen|mulai|l
 AND_THEN = re.compile(r"\b(?:terus|lalu|habis itu|abis itu|sambil|dari|pake|pakai|lewat|then|and|from|using|via)\b|,", re.I)
 SERVER_OPS = {"restart": "restart", "ulang": "restart", "ulangin": "restart", "nyalain ulang": "restart", "nyalain": "restart",
               "hidupin": "restart", "idupin": "restart", "start": "restart",
-              "stop": "stop", "matiin": "stop", "matikan": "stop",
+              "stop": "stop", "matiin": "stop", "matikan": "stop", "hentikan": "stop", "kill": "stop",
               "log": "log", "logs": "log", "liat log": "log", "lihat log": "log"}
 SERVER_OP = re.compile(r"^(%s)\b\s*(.*)$" % "|".join(sorted(SERVER_OPS, key=len, reverse=True)), re.I)
 SERVER_NAMED = re.compile(r"\bserver\s+(?!gua\b|gue\b|gw\b|aku\b|saya\b|my\b|the\b|nya\b)([\w.:-]+)", re.I)
@@ -114,13 +114,15 @@ FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm
                           r"(?:capek|cape|ok|oke),?)\s+", re.I)
 FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|aja|lagi|nih|tuh)$", re.I)
 # Telling it about the window in front of you, which is how it learns.
-CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|stop|shut down|"
-                           r"done with|finished with|finish|udahan|cabut|berhenti|quit)\s+(?:dulu\s+)?"
-                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding|working)\s+)?(?:(?:di|on|sama|dari|with|from)\s+)?"
-                           r"(?:project\s+|proyek\s+)?(.+)$", re.I)
+CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|matikan|stop|stopin|"
+                           r"shut down|turn off|kill|hentikan|nonaktifkan|akhiri|done with|finished with|finish|udahan|cabut|berhenti|quit)\s+"
+                           r"(?:dulu\s+)?(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding|working)\s+)?(?:(?:di|on|sama|dari|with|from)\s+)?"
+                           r"(?:server(?:nya)?\s+)?(?:project\s+|proyek\s+)?(.+)$", re.I)
 CLOSED_PROJECT = re.compile(r"^(?:project\s+|proyek\s+)?(.+?)\s+(?:(?:udah|sudah|dah)\s+)?(?:kelar|selesai|beres|done)$", re.I)
-SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai|lanjut|lanjutin)\s+"
-                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding)\s+)?(?:(?:di|on)\s+)?(?:project\s+|proyek\s+)?(.+)"
+SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai|lanjut|lanjutin|nyalain|nyalakan|hidupin|hidupkan|"
+                           r"idupin|jalanin|jalankan|aktifkan|run)\s+"
+                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding)\s+)?(?:(?:di|on)\s+)?"
+                           r"(?:server(?:nya)?\s+)?(?:project\s+|proyek\s+)?(.+)"
                            r"|(?:mau\s+)?(?:kerja|kerjain|ngerjain|garap|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)"
                            r"(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
 OPEN_FOLDER = re.compile(r"^(?:buka|open)\s+folder\s+(?:project\s+|proyek\s+)?(.+)$", re.I)

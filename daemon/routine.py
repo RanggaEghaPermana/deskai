@@ -499,11 +499,14 @@ def label(step):
     return step.get("mode", kind)
 
 
-def run(plan, progress, set_mode):
-    """Performs the plan. progress(step, state) with state in running, done, skipped, failed."""
+def run(plan, progress, set_mode, cancelled=lambda: False):
+    """Performs the plan. progress(step, state) with state in running, done, skipped, failed.
+    Stops before the next thing it would start or open once cancelled() says so."""
     env = {**os.environ, "PATH": plan.get("path") or os.environ.get("PATH", "")}
     servers = []
     for step in plan["steps"]:
+        if cancelled():
+            return
         kind = step["type"]
         progress(step, "running")
         try:
@@ -533,7 +536,10 @@ def run(plan, progress, set_mode):
                     elif server.get("port"):
                         progress(server, "failed")
                 servers = []
-                if wait_port(port, 30):
+                answered = wait_port(port, 30)
+                if cancelled():
+                    return
+                if answered:
                     subprocess.Popen(["gio", "open", step["url"]], env=env, start_new_session=True)
                     progress(step, "done")
                 else:
