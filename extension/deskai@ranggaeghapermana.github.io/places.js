@@ -2,9 +2,10 @@
 //
 // It follows the folders open in Files (Nautilus reports them over D-Bus), the
 // screen recording you just made, the screenshot you just took and the file you
-// just downloaded. One suggestion at a time sits in the dock: the folder you
-// closed Files on, the recording or download that just landed, or a folder you
-// habitually open in the mode you just entered.
+// just downloaded. One suggestion at a time sits in the dock for a minute: the
+// folder you closed Files on, the recording, screenshot or download that just
+// landed, or a folder you habitually open in the mode you just entered. Once it
+// has left, clicking Files on the dock still goes there.
 //
 // Habits are plain counts of what you did next. After a recording or a
 // download: did you play it, show it in its folder, or delete it? After
@@ -21,12 +22,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 export const FILES_APP = 'org.gnome.Nautilus.desktop';
 const FOLLOW_UP_MS = 10 * 60 * 1000; // what you do within 10 minutes is the follow-up
-const FILE_SUGGESTION_MS = 30 * 60 * 1000;
-// Screenshots and downloads disappear from the pill after 1 minute instead of 30 —
-// but if you open Files within 5 minutes, it jumps straight to the file.
-const QUICK_SUGGESTION_MS = 60 * 1000;
-const FILES_JUMP_MS = 5 * 60 * 1000;
-const FOLDER_SUGGESTION_MS = 4 * 60 * 60 * 1000;
+const SUGGESTION_MS = 60 * 1000;
+// With the pointer on it or its menu open, it stays: it mustn't vanish under a click.
+const BUSY_RECHECK_MS = 5000;
+// How long after being suggested a place is still where the Files icon goes.
+const FILE_PLACE_MS = 30 * 60 * 1000;
+const FOLDER_PLACE_MS = 4 * 60 * 60 * 1000;
 const MAX_FOLDERS = 200;
 // Browsers' in-progress names, hidden files, editor backups.
 const TEMP_RE = /\.(crdownload|part|partial|download|tmp|opdownload)$|^\.|~$/i;
@@ -58,10 +59,12 @@ function parentUri(uri) {
 }
 
 export class Places {
-    // changed(): the suggestion or the history changed; announce(suggestion): worth a card.
-    constructor({changed, announce}) {
+    // changed(): the suggestion or the history changed; announce(suggestion): worth a card;
+    // busy(): you're using the suggestion on the dock right now.
+    constructor({changed, announce, busy}) {
         this._changed = changed;
         this._announce = announce;
+        this._busy = busy;
     }
 
     enable() {
@@ -74,7 +77,6 @@ export class Places {
         this._hadWindows = false;
         this._pending = []; // triggers waiting for their follow-up
         this._suggestion = null;
-        this._lastQuickEvent = null; // last screenshot/download: uri + at, for Files auto-jump
         this._seq = 0;
         this._timeouts = new Map();
         this._announced = new Set();
@@ -110,6 +112,27 @@ export class Places {
         return this._suggestion;
     }
 
+    // Where clicking Files on the dock goes: the last thing suggested, if you haven't been there.
+    get lastPlace() {
+        const place = this._data.lastPlace;
+        if (!place || Date.now() > place.until || !Gio.File.new_for_uri(place.uri).query_exists(null))
+            return null;
+        return place;
+    }
+
+    goToLastPlace() {
+        const place = this.lastPlace;
+        this._forgetPlace();
+        if (!place)
+            return false;
+        if (place.kind === 'file')
+            this.showItem(place.uri);
+        else
+            this.openFolder(place.uri);
+        this._clear();
+        return true;
+    }
+
     // ---- what you do ------------------------------------------------------
 
     // Folders you've been in lately, newest first, that still exist and aren't open now.
@@ -134,6 +157,8 @@ export class Places {
         const s = this._suggestion;
         if (!s)
             return;
+        if (action !== 'copy')
+            this._forgetPlace();
         if (s.kind === 'folder') {
             this.openFolder(s.uri);
             this._clear();
@@ -161,6 +186,7 @@ export class Places {
     }
 
     dismiss() {
+        this._forgetPlace();
         this._clear();
     }
 
@@ -243,7 +269,7 @@ export class Places {
             Main.notifyError('DeskAI', e.message);
             return;
         }
-        this._suggest({...s, id: ++this._seq, until: Date.now() + FILE_SUGGESTION_MS}, false);
+        this._suggest({...s, id: ++this._seq}, false);
     }
 
     // ---- where you are --------------------------------------------------------
@@ -266,6 +292,7 @@ export class Places {
         const stem = s.name.replace(/\.[^.]+$/, '');
         if (stem.length >= 4 && title.includes(stem)) {
             this._learn(s, 'open');
+            this._forgetPlace();
             this._clear();
         }
     }
@@ -276,9 +303,12 @@ export class Places {
         const folder = this._habitFolder(trigger);
         if (folder && !this._open.has(folder)) {
             this._suggest({kind: 'folder', reason: 'habit', mode: key, uri: folder, name: baseName(folder),
-                id: ++this._seq, until: Date.now() + FILE_SUGGESTION_MS}, false);
-        } else if (this._suggestion?.reason === 'habit') {
-            this._clear();
+                id: ++this._seq}, false);
+        } else {
+            if (this._data.lastPlace?.reason === 'habit')
+                this._forgetPlace();
+            if (this._suggestion?.reason === 'habit')
+                this._clear();
         }
     }
 
@@ -330,7 +360,6 @@ export class Places {
                 this._open.delete(uri);
             }
         }
-        const newUris = [];
         for (const uri of current) {
             if (this._open.has(uri))
                 continue;
@@ -338,27 +367,17 @@ export class Places {
             this._lastActive = uri;
             if (!initial)
                 this._visit(uri, now);
-            newUris.push(uri);
         }
 
-        // When Files opens at the Home folder and there's a recent screenshot or download,
-        // jump straight to the file — the pill already disappeared, but the file is still fresh.
-        if (!initial && this._lastQuickEvent) {
-            const age = now - this._lastQuickEvent.at;
-            const atHome = newUris.some(uri => uri === this._home || uri === `${this._home}/`);
-            if (atHome && age < FILES_JUMP_MS) {
-                const event = this._lastQuickEvent;
-                this._lastQuickEvent = null; // consume: only jump once per event
-                this._later('files-jump', 400, () => this.showItem(event.uri));
-            }
-        }
-
+        // Files is open again: you're already on your way.
+        if (anyWindow && this._data.lastPlace?.reason === 'closed')
+            this._forgetPlace();
         if (anyWindow && this._suggestion?.kind === 'folder' && this._suggestion.reason === 'closed')
-            this._clear(); // Files is open again: you're already on your way
+            this._clear();
         if (this._hadWindows && !anyWindow && this._lastActive) {
             // You closed Files: keep the way back to where you were.
             this._suggest({kind: 'folder', reason: 'closed', uri: this._lastActive, name: baseName(this._lastActive),
-                id: ++this._seq, until: now + FOLDER_SUGGESTION_MS}, false);
+                id: ++this._seq}, false);
         }
         this._hadWindows = anyWindow;
         this._changed();
@@ -377,9 +396,12 @@ export class Places {
             const outcome = p.uri && parentUri(p.uri) === uri ? 'show' : `folder:${uri}`;
             counts[outcome] = (counts[outcome] ?? 0) + 1;
         }
-        const s = this._suggestion;
-        if (s && (s.kind === 'folder' ? s.uri === uri : parentUri(s.uri) === uri))
-            this._clear(); // you went there yourself
+        // You went there yourself.
+        const isHere = target => (target.kind === 'folder' ? target.uri : parentUri(target.uri)) === uri;
+        if (this._data.lastPlace && isHere(this._data.lastPlace))
+            this._forgetPlace();
+        if (this._suggestion && isHere(this._suggestion))
+            this._clear();
         this._trim();
         this._queueSave();
     }
@@ -476,14 +498,10 @@ export class Places {
         this._trigger(trigger, uri);
         // The card shows the picture (or the file type's icon); the dock pill, the plain symbol.
         const gicon = trigger === 'screenshot' ? new Gio.FileIcon({file}) : info.get_icon();
-        const quick = trigger === 'screenshot' || trigger === 'download';
-        const suggestionMs = quick ? QUICK_SUGGESTION_MS : FILE_SUGGESTION_MS;
-        if (quick)
-            this._lastQuickEvent = {uri, at: Date.now()};
         this._suggest({
             kind: 'file', trigger, uri, name: file.get_basename(), size: info.get_size(), gicon,
             symbolic: info.get_symbolic_icon(),
-            time: Date.now(), primary: this.primary(trigger), id: ++this._seq, until: Date.now() + suggestionMs,
+            time: Date.now(), primary: this.primary(trigger), id: ++this._seq,
         }, announce);
     }
 
@@ -511,7 +529,17 @@ export class Places {
     // ---- the suggestion ----------------------------------------------------------
 
     _suggest(s, announce) {
+        s.until = Date.now() + SUGGESTION_MS;
         this._suggestion = s;
+        this._data.lastPlace = {
+            kind: s.kind,
+            reason: s.reason ?? null,
+            uri: s.uri,
+            name: s.name,
+            until: Date.now() + (s.kind === 'file' ? FILE_PLACE_MS : FOLDER_PLACE_MS),
+        };
+        this._queueSave();
+        this._later('expire', SUGGESTION_MS, () => this._expire());
         this._changed();
         if (announce)
             this._announce(s);
@@ -524,10 +552,26 @@ export class Places {
         this._changed();
     }
 
+    _forgetPlace() {
+        if (!this._data.lastPlace)
+            return;
+        delete this._data.lastPlace;
+        this._queueSave();
+    }
+
     _expire() {
         const s = this._suggestion;
-        if (s && (Date.now() > s.until || (s.uri && !Gio.File.new_for_uri(s.uri).query_exists(null))))
-            this._clear();
+        if (s) {
+            const left = s.until - Date.now();
+            if (!Gio.File.new_for_uri(s.uri).query_exists(null))
+                this._clear();
+            else if (left > 0)
+                this._later('expire', left, () => this._expire());
+            else if (this._busy())
+                this._later('expire', BUSY_RECHECK_MS, () => this._expire());
+            else
+                this._clear();
+        }
         this._account(Date.now());
         this._queueSave();
     }

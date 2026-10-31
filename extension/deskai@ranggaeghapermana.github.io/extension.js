@@ -149,6 +149,7 @@ const MUSIC_SHOW_MS = 1000;
 const MUSIC_HIDE_MS = 3000;
 // A pointer resting on the dock this long, while you work in a window, stops holding it up.
 const POINTER_REST_MS = 3000;
+const DOUBLE_CLICK_US = 400 * 1000;
 const AUTOHIDE_MODES = ['windows', 'smart', 'always', 'never'];
 const BROWSER_IDS = new Set([
     'google-chrome.desktop', 'com.google.Chrome.desktop', 'chromium.desktop', 'chromium_chromium.desktop',
@@ -267,6 +268,7 @@ export default class DeskAIExtension extends Extension {
         this._places = new Places({
             changed: () => this._syncNext(),
             announce: s => this._announcePlace(s),
+            busy: () => this._nextButton?.hover || (this._menu?.isOpen && this._menu.sourceActor === this._nextButton),
         });
         this._places.enable();
         this._music = new Music(() => this._onMusicChanged());
@@ -1034,11 +1036,14 @@ export default class DeskAIExtension extends Extension {
             else if (this._inbox.list(app.get_id()).length)
                 this._openInboxItem(this._inbox.list(app.get_id())[0]); // a badge means "take me there"
             else
-                app.activate();
+                this._clickApp(app);
         });
         // New windows need to know where they minimize to.
         app.connectObject('windows-changed', () => this._queueIconGeometry(), button);
-        this._addTooltip(button, () => app.get_name());
+        this._addTooltip(button, () => {
+            const place = app.get_id() === FILES_APP ? this._places?.lastPlace : null;
+            return place ? this._t('goTo', {app: app.get_name(), name: place.name}) : app.get_name();
+        });
 
         // Hold and drag to rearrange (or drag a running app in among the pinned ones).
         button._delegate = {
@@ -1053,6 +1058,31 @@ export default class DeskAIExtension extends Extension {
 
         this._appButtons.push({app, button, badge, pinned: !foreign});
         return button;
+    }
+
+    // Clicking the app you're already in puts all its windows here away, and clicking it again brings them
+    // all back. The second click of a double-click doesn't count, or they'd come up and go right back.
+    _clickApp(app) {
+        const now = GLib.get_monotonic_time();
+        const doubled = this._lastClick?.app === app && now - this._lastClick.time < DOUBLE_CLICK_US;
+        this._lastClick = {app, time: now};
+        if (doubled)
+            return;
+
+        const focused = global.display.focus_window;
+        if (!this._inOverview && focused && Shell.WindowTracker.get_default().get_window_app(focused) === app) {
+            this._appWindowsOn(app, focused.get_workspace()).filter(win => win.can_minimize()).forEach(win => win.minimize());
+        } else if (!(app.get_id() === FILES_APP && this._places?.goToLastPlace())) {
+            // Before activating: a workspace switch only knows the windows showing when it starts.
+            const [next] = app.get_windows(); // the one activating goes to
+            if (next)
+                this._appWindowsOn(app, next.get_workspace()).forEach(win => win.unminimize());
+            app.activate();
+        }
+    }
+
+    _appWindowsOn(app, workspace) {
+        return app.get_windows().filter(win => isAppWindow(win) && win.located_on_workspace(workspace));
     }
 
     // ---- rearranging by drag ------------------------------------------------

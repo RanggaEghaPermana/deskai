@@ -25,8 +25,9 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   database and Chrome's tabs. It always asks first.
 - **Workday routine.** On workday mornings it offers to set up your project like last time.
 - **Smart places.** After a download or a screen recording, the dock offers to open it or show it,
-  and it learns the folders you go back to. A screenshot or download's card leaves after a minute, and
-  opening Files soon after takes you right to it.
+  and it learns the folders you go back to. A suggestion leaves the dock after a minute, and clicking Files
+  on the dock then takes you there: your latest screenshot, download or recording, or the folder you closed
+  Files on.
 - **Window motion.** Smooth animations when you switch between windows.
 - **Smooth login.** The login animation plays once your desktop and extensions have loaded, so it doesn't
   stutter.
