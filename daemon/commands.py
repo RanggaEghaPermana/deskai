@@ -153,7 +153,8 @@ ASKS_COMPOSE = re.compile(r"\b(?:bisa|dapat|can)\s+(?:be\s+)?(?:di)?(?:nyala|jal
 # "cek port", "port 8000 dipake siapa", "apache port berapa", "port bentrok gak".
 ASKS_PORTS = re.compile(r"\bports?\b|\bbentrok\b|\bclash\w*\b", re.I)
 PORT_NUMBER = re.compile(r"\b(\d{2,5})\b")
-PORT_ABOUT = re.compile(r"^(?:(?:cek|check|liat|lihat|status|berapa|apa|siapa)\s+)?(?:port\s+)?([a-zA-Z0-9_.-]+)(?:\s+(?:port(?:nya)?|port berapa|\?))?$", re.I)
+PORT_WORDS = re.compile(r"\b(cek|check|liat|lihat|port|ports|apa|aja|saja|yang|yg|dipake|dipakai|kepake|kepakai|siapa|berapa|"
+                         r"ada|nggak|gak|bentrok|clash\w*|milik|siapanya|berapaan|nya)\b", re.I)
 ACT = re.compile(r"^(nyalain ulang|restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|jalanin|jalankan|start|run|up|"
                  r"matiin|matikan|stop|stopin)\s+(.+)$", re.I)
 ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
@@ -364,16 +365,13 @@ def _quick_action(words, modes, watch, known_projects):
         if ASKS_STORAGE.search(words):
             return {"type": "system", "what": "storage"}
         if ASKS_PORTS.search(words):
-            num = PORT_NUMBER.search(words)
-            about = PORT_ABOUT.match(words)
-            name = about.group(1).lower() if about and about.group(1).lower() not in (
-                "cek", "check", "liat", "lihat", "berapa", "apa", "siapa", "ada", "yang", "kepake", "dipake", "bentrok", "clash", "port", "ports"
-            ) else None
+            number = PORT_NUMBER.search(words)
+            about = re.sub(r"\s+", " ", PORT_WORDS.sub(" ", PORT_NUMBER.sub(" ", words))).strip(" ?!.")
             action = {"type": "ports"}
-            if num:
-                action["port"] = int(num.group(1))
-            if name:
-                action["about"] = name
+            if number:
+                action["port"] = int(number.group(1))
+            if about:
+                action["about"] = about
             return action
     if not topic and ASKS_IMAGES.search(words):
         return {"type": "docker_images"}

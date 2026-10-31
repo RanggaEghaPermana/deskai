@@ -134,5 +134,13 @@ class Asking(unittest.TestCase):
                              ["Others: :53 DNS (systemd-resolved)", "⚠ Clash: :8000 is wanted by shop-dev and staging"])
 
 
+class States(unittest.TestCase):
+    def test_a_project_partly_running_runs(self):
+        listed = [{"Name": "infra", "Status": "exited(1), running(1)", "ConfigFiles": "/w/infra/docker-compose.yml"},
+                  {"Name": "staging", "Status": "exited(1)", "ConfigFiles": "/w/staging/docker-compose.yml"}]
+        with mock.patch.object(compose, "_docker_ls", return_value=listed):
+            self.assertEqual(compose.states({"infra": "/w/infra", "staging": "/w/staging"}), {"infra": "running", "staging": "stopped"})
+
+
 if __name__ == "__main__":
     unittest.main()

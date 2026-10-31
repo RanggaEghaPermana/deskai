@@ -66,7 +66,7 @@ def _docker_ls():
 def states(found):
     """{name: "running" | "stopped"} for these projects: running if any of its containers is."""
     running = {str(Path(item.get("ConfigFiles", "").split(",")[0]).parent)
-               for item in _docker_ls() if item.get("Status", "").startswith("running")}
+               for item in _docker_ls() if "running" in item.get("Status", "")}
     return {name: "running" if folder in running else "stopped" for name, folder in found.items()}
 
 

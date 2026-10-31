@@ -945,6 +945,15 @@ class Brain:
                    "text": "", "actions": [{"id": f"service:start:{unit}", "label": self._say("service_start"), "primary": True},
                                            {"id": "later", "label": self._say("not_now")}]})
 
+    def _start_project(self, name, found, op):
+        """compose.start, unless its ports are held by something else: say who, rather than Docker's
+        "address already in use" halfway through."""
+        taken = ports.busy_for(name, found) if op == "up" else []
+        if taken:
+            held = ", ".join(f":{port} ({who})" for port, who in taken)
+            return False, self._say("ports_taken", ports=held), []
+        return compose.start(name, found, op)
+
     def _docker_or_service(self, kind, action):
         """Starts, stops or restarts a Compose project or a system service, off the main thread: a first
         start can pull images, and a system service asks for your password."""
@@ -962,7 +971,7 @@ class Brain:
                 hurt = [other for other in compose.dependents(name, found) if running.get(other) == "running"]
                 work = lambda: (*compose.act(folder, op), hurt)  # noqa: E731
             else:
-                work = lambda: compose.start(name, found, op)  # noqa: E731
+                work = lambda: self._start_project(name, found, op)  # noqa: E731
         else:
             name = commands.service_label(action.get("unit", ""))
             op = {"start": "up"}.get(op, op)
