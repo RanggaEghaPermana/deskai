@@ -26,6 +26,7 @@ MANUAL = "manual"   # the kind of a server you started yourself
 GRACE_S = 90        # a server just started gets this long to answer
 MISSES = 2          # checks in a row without an answer before a running service counts as down
 START_WAIT_S = 60   # how long a restart waits for the port
+GIT_WAIT_S = 5      # how long closing a project waits to hear what isn't in git
 STOP_SETTLE_S = 15  # a look that started before a stop may still see it running
 
 
@@ -199,6 +200,28 @@ def close_project(watch, folder):
                 subprocess.run(["systemctl", "stop", database["unit"]], capture_output=True, timeout=120).returncode == 0
             report.append((label, "stopped" if ok else "failed", ""))
     return report
+
+
+def _git(folder, *args):
+    """A git command's output in this folder, or None if it has no answer: not a repository, no git, too slow."""
+    try:
+        done = subprocess.run(["git", "--no-optional-locks", "-C", folder, *args], capture_output=True, text=True,
+                              errors="replace", timeout=GIT_WAIT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def git_state(folder):
+    """What of a project is only on this computer: (files not committed, commits on no remote), or None if git
+    can't say. Nothing is fetched, so it knows the remotes as of the last fetch or push."""
+    status = _git(folder, "status", "--porcelain", "--untracked-files=all", "--", ".")
+    if status is None:
+        return None
+    unpushed = 0
+    if _git(folder, "remote"):
+        unpushed = int(_git(folder, "rev-list", "--count", "HEAD", "--not", "--remotes") or 0)
+    return len(status.splitlines()), unpushed
 
 
 def log_command(item):

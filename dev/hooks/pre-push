@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The last check before something public: the tests, no AI credit in what's being pushed, and no
-# private data in the files or the messages. Turn on with: git config core.hooksPath dev/hooks
+# The last check before something public: the tests, that the JavaScript parses and the metadata is
+# valid, no AI credit in what's being pushed, and no private data in the files or the messages.
+# Turn on with: git config core.hooksPath dev/hooks
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 hooks="$root/dev/hooks"
@@ -9,7 +10,8 @@ zero=0000000000000000000000000000000000000000
 words="$(git rev-parse --git-path info/private-words)"
 patterns="$(mktemp)"
 message="$(mktemp)"
-trap 'rm -f "$patterns" "$message"' EXIT
+script="$(mktemp --suffix=.mjs)"
+trap 'rm -f "$patterns" "$message" "$script"' EXIT
 printf '%s\n' "$HOME" > "$patterns"
 [ -s "$words" ] && grep -v '^[[:space:]]*$' "$words" >> "$patterns"
 
@@ -42,4 +44,26 @@ cd "$root"
 if ! python3 -m unittest discover -s tests >/dev/null 2>&1; then
   echo "pre-push: the tests fail. Run: python3 -m unittest discover -s tests" >&2
   exit 1
+fi
+
+# A missing tool is said out loud, so a push never looks more checked than it was.
+if command -v node >/dev/null; then
+  for file in extension/*/*.js; do
+    cp "$file" "$script"
+    if ! node --check "$script" >/dev/null 2>&1; then
+      echo "pre-push: $file doesn't parse" >&2
+      exit 1
+    fi
+  done
+else
+  echo "pre-push: node isn't installed, so the JavaScript wasn't checked" >&2
+fi
+
+if command -v appstreamcli >/dev/null; then
+  if ! appstreamcli validate --no-net packaging/*.metainfo.xml >/dev/null 2>&1; then
+    echo "pre-push: the metadata isn't valid. Run: appstreamcli validate --no-net packaging/*.metainfo.xml" >&2
+    exit 1
+  fi
+else
+  echo "pre-push: appstreamcli isn't installed, so the metadata wasn't checked" >&2
 fi

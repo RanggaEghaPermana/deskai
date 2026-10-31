@@ -1317,11 +1317,34 @@ export default class DeskAIExtension extends Extension {
         return item;
     }
 
+    // In the order they were opened, so a window keeps its row.
+    _windowsToPick(app) {
+        return app.get_windows()
+            .filter(isAppWindow)
+            .sort((a, b) => a.get_stable_sequence() - b.get_stable_sequence());
+    }
+
+    _showWindow(app, win) {
+        if (!app.get_windows().includes(win))
+            return; // closed while the menu was open
+        win.unminimize(); // before activating, as in _clickApp
+        Main.activateWindow(win);
+    }
+
     _openAppMenu(app, button) {
         const id = app.get_id();
         const key = this._mode;
         const label = this._modeLabel(key);
         this._openMenu(button, menu => {
+            const windows = this._windowsToPick(app);
+            if (windows.length > 1) {
+                for (const win of windows) {
+                    const item = this._menuItem(menu, win.get_title() || app.get_name(), () => this._showWindow(app, win));
+                    item.label.add_style_class_name('deskai-menu-window');
+                    item.setOrnament(win.has_focus() ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
+                }
+                menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            }
             if (app.can_open_new_window()) {
                 this._menuItem(menu, this._t('newWindow'), () => app.open_new_window(-1));
                 menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());

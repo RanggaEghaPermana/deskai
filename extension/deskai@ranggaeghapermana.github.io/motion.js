@@ -739,8 +739,11 @@ export class Motion {
             this._switcherList.set_scale(0.92, 0.92);
             this._switcherList.ease({scale_x: 1, scale_y: 1, ...MOTION.pop});
         });
-        patches.method(SwitcherPopup.SwitcherPopup.prototype, '_fadeAndDestroy', original => function (...args) {
+        patches.method(SwitcherPopup.SwitcherPopup.prototype, 'fadeAndDestroy', original => function (...args) {
+            const showing = this.opacity > 0; // a quick Alt+Tab never showed, and is destroyed on the spot
             original.apply(this, args);
+            if (!showing)
+                return;
             retime(this, ['opacity'], MOTION.popOut);
             this._switcherList?.ease({scale_x: 0.96, scale_y: 0.96, ...MOTION.popOut});
         });

@@ -441,6 +441,10 @@
   max-width: 300px;
 }
 
+.deskai-menu-window {
+  max-width: 300px;
+}
+
 .deskai-inbox-item-meta {
   font-size: 0.85em;
   color: rgba(127, 127, 127, 1);

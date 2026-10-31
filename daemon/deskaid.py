@@ -977,20 +977,27 @@ class Brain:
                 log.warning("command: can't close %s: %s", path, e)
                 GLib.idle_add(self._command_failed, e)
                 return
-            GLib.idle_add(self._project_closed, path, report, terminals, hand)
+            GLib.idle_add(self._project_closed, path, report, terminals, hand, servers.git_state(path))
 
         threading.Thread(target=work, name="close-project", daemon=True).start()
 
-    def _project_closed(self, path, report, terminals, hand):
+    def _not_in_git(self, git):
+        """The line about (files not committed, commits not pushed), or "" if there's nothing to say."""
+        changed, unpushed = git or (0, 0)
+        return " · ".join(([self._say("project_uncommitted", count=changed)] if changed else []) +
+                          ([self._say("project_unpushed", count=unpushed)] if unpushed else []))
+
+    def _project_closed(self, path, report, terminals, hand, git=None):
         """Servers you started yourself don't get stopped without asking. If nobody answers, they keep running."""
         if not hand:
-            return self._project_report(path, report, terminals)
-        self.closing_hand = {"path": path, "report": report, "terminals": terminals, "items": hand}
+            return self._project_report(path, report, terminals, git)
+        self.closing_hand = {"path": path, "report": report, "terminals": terminals, "items": hand, "git": git}
+        lines = [self._say("project_hand_started"), " · ".join(item["label"] for item in hand), self._not_in_git(git)]
         self.card({
             "id": "close-project",
             "kind": "command",
             "title": self._say("project_hand_title", name=os.path.basename(path)),
-            "text": f"{self._say('project_hand_started')}\n" + " · ".join(item["label"] for item in hand),
+            "text": "\n".join(line for line in lines if line),
             "actions": [{"id": "project:keep-hand", "label": self._say("project_hand_keep")},
                         {"id": "project:stop-hand", "label": self._say("project_hand_stop"), "primary": True}],
             "timeout": 45,
@@ -1009,18 +1016,20 @@ class Brain:
                     log.warning("command: can't stop %s: %s", item["label"], e)
                     state = "failed"
                 report.append((item["label"], state, ""))
-            GLib.idle_add(self._project_report, closing["path"], report, closing["terminals"])
+            GLib.idle_add(self._project_report, closing["path"], report, closing["terminals"], closing["git"])
 
         threading.Thread(target=work, name="close-project", daemon=True).start()
 
-    def _project_report(self, path, report, terminals):
+    def _project_report(self, path, report, terminals, git=None):
         name = os.path.basename(path)
         log.info("closed %s: %s, %d terminals open", name, report, len(terminals))
         self._send_servers()
         marks = {"stopped": "✓", "failed": "✗"}
-        lines = [self._say("project_kept", label=label, other=other) if state == "kept"
-                 else self._say("project_hand_kept", label=label) if state == "left"
-                 else f"{marks[state]} {label}" for label, state, other in report]
+        not_in_git = self._not_in_git(git)
+        lines = [not_in_git] if not_in_git else []
+        lines += [self._say("project_kept", label=label, other=other) if state == "kept"
+                  else self._say("project_hand_kept", label=label) if state == "left"
+                  else f"{marks[state]} {label}" for label, state, other in report]
         lines.append(self._say("project_tabs"))
         self.closing_terminals = terminals
         actions = []
@@ -1031,7 +1040,7 @@ class Brain:
         closed = any(state != "left" for _label, state, _other in report)
         title = self._say("project_closed", name=name) if closed else self._say("project_nothing", name=name)
         self.card({"id": "close-project", "kind": "command", "title": title, "text": "\n".join(lines),
-                   "actions": actions, "timeout": 45 if terminals else 12})
+                   "actions": actions, "timeout": 45 if terminals or not_in_git else 12})
         return False
 
     def _project_planned(self, plan):

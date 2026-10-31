@@ -337,6 +337,69 @@ class ClosingWithHandStarted(Base):
         self.brain._project_closed("/w/app", [("vite :5173", "stopped", "")], [], [])
         self.assertIn("✓ vite :5173", self.brain.cards[0]["text"])
 
+    def test_the_question_says_whats_not_in_git(self):
+        self.brain._project_closed("/w/app", [], [], [self.ITEM], (2, 0))
+        self.assertIn("2 file belum di-commit", self.brain.cards[0]["text"])
+
+    def test_the_answer_says_it_too(self):
+        self.brain._project_closed("/w/app", [], [], [self.ITEM], (2, 0))
+        self.answer("project:keep-hand")
+        self.assertIn("2 file belum di-commit", self.brain.cards[-1]["text"])
+
+
+class ClosingWithWorkNotInGit(Base):
+    REPORT = [("vite :5173", "stopped", "")]
+
+    def closed(self, git, report=REPORT):
+        self.brain._project_closed("/w/app", list(report), [], [], git)
+        return self.brain.cards[-1]
+
+    def test_both(self):
+        card = self.closed((3, 2))
+        self.assertIn("3 file belum di-commit · 2 commit belum di-push", card["text"])
+        self.assertIn("✓ vite :5173", card["text"])
+
+    def test_it_stays_long_enough_to_read(self):
+        self.assertEqual(self.closed((3, 0))["timeout"], 45)
+        self.assertEqual(self.closed((0, 0))["timeout"], 12)
+
+    def test_only_files(self):
+        card = self.closed((1, 0))
+        self.assertIn("1 file belum di-commit", card["text"])
+        self.assertNotIn("di-push", card["text"])
+
+    def test_only_commits(self):
+        card = self.closed((0, 1))
+        self.assertIn("1 commit belum di-push", card["text"])
+        self.assertNotIn("di-commit", card["text"])
+
+    def test_nothing_to_say(self):
+        for git in ((0, 0), None):
+            self.assertNotIn("belum", self.closed(git)["text"])
+
+    def test_even_with_nothing_running(self):
+        card = self.closed((1, 0), report=[])
+        self.assertIn("Nggak ada", card["title"])
+        self.assertIn("1 file belum di-commit", card["text"])
+
+    def test_in_english(self):
+        self.brain.config.data["language"] = "en"
+        self.assertIn("Files not committed: 3 · Commits not pushed: 2", self.closed((3, 2))["text"])
+
+    def test_closing_a_project_asks_git_about_its_folder(self):
+        with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
+                mock.patch.object(deskaid.servers, "close_project", return_value=self.REPORT), \
+                mock.patch.object(deskaid.session, "project_terminals", return_value=[]), \
+                mock.patch.object(self.brain.watch, "hand_started_in", return_value=[]), \
+                mock.patch.object(deskaid.servers, "git_state", return_value=(4, 0)) as state, \
+                mock.patch.object(deskaid.threading, "Thread") as thread, \
+                mock.patch.object(deskaid.GLib, "idle_add") as idle:
+            self.brain._close_project("app")
+            thread.call_args.kwargs["target"]()
+        state.assert_called_once_with("/w/app")
+        self.brain._project_closed(*idle.call_args[0][1:])
+        self.assertIn("4 file belum di-commit", self.brain.cards[-1]["text"])
+
 
 class ServerStatus(Base):
     def item(self, **values):

@@ -17,7 +17,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists.
 - **Servers on the dock.** The dev servers and database in your projects get a status dot, including the
   ones you started yourself in a terminal. If one DeskAI started stops, you see why, and one click restarts
-  it or opens its log. Closing a project asks before stopping anything you started yourself.
+  it or opens its log. Closing a project asks before stopping anything you started yourself, and tells you
+  if it has files not committed or commits not pushed.
 - **Music on the dock.** While something plays, in a music app or a browser tab, the dock shows what it
   is with previous, pause and next. Click the song to go to the player. It leaves when the player closes,
   or after half an hour on pause.
@@ -134,8 +135,9 @@ Each day's file is deleted after 90 days.
 
 ## Using it
 
-Click a mode on the dock to switch to it. Everything else is in the dock's menus and cards, and a
-few things are also on the command line:
+Click a mode on the dock to switch to it. Click the app you're in to minimize its windows on this workspace,
+click it again to bring them back, and right-click it to pick one window. Everything else is in the dock's menus
+and cards, and a few things are also on the command line:
 
 ```sh
 deskai doctor        # check that everything is working

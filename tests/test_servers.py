@@ -153,6 +153,122 @@ class ClosingAProject(unittest.TestCase):
         self.assertTrue(servers.session.inside("/work/app/web", "/work/app"))
 
 
+class GitState(unittest.TestCase):
+    """On real repositories in a temporary folder. Git's own variables are cleared first: a hook sets
+    them, and they would point these commands at the real repository."""
+
+    def setUp(self):
+        env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+        patcher = mock.patch.dict(os.environ, {**env, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.repo = self.root / "app"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+
+    def git(self, *args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+                       cwd=self.repo, check=True, capture_output=True)
+
+    def write(self, name, text="x"):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def commit(self, name="a.txt"):
+        self.write(name, name)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", name)
+
+    def remote(self):
+        self.git("init", "-q", "--bare", str(self.root / "remote.git"))
+        self.git("remote", "add", "origin", str(self.root / "remote.git"))
+
+    def state(self, folder=None):
+        return servers.git_state(str(folder or self.repo))
+
+    def test_nothing_waiting(self):
+        self.remote()
+        self.commit()
+        self.git("push", "-q", "origin", "main")
+        self.assertEqual(self.state(), (0, 0))
+
+    def test_changed_and_new_files_count_one_by_one(self):
+        self.commit()
+        self.write("a.txt", "changed")
+        self.write("new/one.txt")
+        self.write("new/two.txt")
+        self.assertEqual(self.state(), (3, 0))
+
+    def test_ignored_files_dont_count(self):
+        self.write(".gitignore", "vendor/\n")
+        self.commit("b.txt")
+        self.write("vendor/lib.php")
+        self.assertEqual(self.state(), (0, 0))
+
+    def test_a_project_inside_a_bigger_repository_counts_its_own_files(self):
+        self.commit("web/a.txt")
+        self.write("web/b.txt")
+        self.write("api/c.txt")
+        self.write("api/d.txt")
+        self.assertEqual(self.state(self.repo / "web"), (1, 0))
+
+    def test_commits_that_arent_on_a_remote(self):
+        self.remote()
+        self.commit()
+        self.git("push", "-q", "origin", "main")
+        self.commit("b.txt")
+        self.commit("c.txt")
+        self.assertEqual(self.state(), (0, 2))
+
+    def test_a_new_branch_counts_what_it_added(self):
+        self.remote()
+        self.commit()
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "-b", "feature")
+        self.commit("b.txt")
+        self.assertEqual(self.state(), (0, 1))
+
+    def test_commits_on_another_remote_branch_are_safe(self):
+        self.remote()
+        self.commit()
+        self.git("push", "-q", "origin", "main:elsewhere")
+        self.assertEqual(self.state(), (0, 0))
+
+    def test_without_a_remote_nothing_counts_as_not_pushed(self):
+        self.commit()
+        self.commit("b.txt")
+        self.assertEqual(self.state(), (0, 0))
+
+    def test_no_commits_yet(self):
+        self.remote()
+        self.write("a.txt")
+        self.assertEqual(self.state(), (1, 0))
+
+    def test_a_file_name_that_isnt_utf8(self):
+        self.commit()
+        self.git("config", "core.quotePath", "false")
+        (self.repo / b"caf\xe9.txt".decode("utf-8", "surrogateescape")).write_text("x")
+        self.assertEqual(self.state(), (1, 0))
+
+    def test_a_folder_git_doesnt_know(self):
+        self.assertIsNone(self.state(self.root))
+
+    def test_a_folder_thats_gone(self):
+        self.assertIsNone(self.state(self.root / "gone"))
+
+    def test_no_git_installed(self):
+        with mock.patch.object(servers.subprocess, "run", side_effect=FileNotFoundError("git")):
+            self.assertIsNone(self.state())
+
+    def test_git_taking_too_long(self):
+        with mock.patch.object(servers.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)):
+            self.assertIsNone(self.state())
+
+
 HAND = {"unit": "manual-8000", "cwd": "/work/app", "command": "php artisan serve", "port": 8000, "pid": 4321}
 
 
