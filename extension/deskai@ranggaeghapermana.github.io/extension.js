@@ -2990,7 +2990,7 @@ export default class DeskAIExtension extends Extension {
             return;
         }
         this._emitSignal('Command', '(s)', [text]);
-        this._showCard({id: 'command', kind: 'command', title: this._t('commandThinking'), text, timeout: 120});
+        this._showCard({id: 'command', kind: 'command', title: this._t('commandThinking'), text, busy: true, timeout: 120});
     }
 
     // Super+/ from anywhere, even with the dock hidden.

@@ -843,9 +843,10 @@ class Brain:
 
     # ---- the command bar --------------------------------------------------
 
-    def _command_card(self, text, actions=(), timeout=10):
-        self.card({"id": "command", "kind": "command", "title": text if len(text) <= 60 else "DeskAI",
-                   "text": "" if len(text) <= 60 else text, "actions": list(actions), "timeout": timeout})
+    def _command_card(self, text, actions=(), timeout=10, busy=False):
+        spec = {"id": "command", "kind": "command", "title": text if len(text) <= 60 else "DeskAI",
+                "text": "" if len(text) <= 60 else text, "actions": list(actions), "timeout": timeout}
+        self.card({**spec, "busy": True} if busy else spec)
 
     def on_command(self, text):
         log.info("command: %s", text[:120])
@@ -994,7 +995,7 @@ class Brain:
         if not path:
             self._command_card(self._say("command_no_project"))
             return
-        self._command_card(self._say("project_closing", name=os.path.basename(path)), timeout=120)
+        self._command_card(self._say("project_closing", name=os.path.basename(path)), timeout=120, busy=True)
 
         def work():
             try:
@@ -1082,7 +1083,7 @@ class Brain:
         return False
 
     def _edit_modes(self, request):
-        self._command_card(self._say("command_edit_wait"), timeout=300)
+        self._command_card(self._say("command_edit_wait"), timeout=300, busy=True)
         language = self.config.language
 
         def work():

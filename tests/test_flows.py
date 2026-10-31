@@ -402,6 +402,26 @@ class ClosingWithWorkNotInGit(Base):
         self.assertIn("4 file belum di-commit", self.brain.cards[-1]["text"])
 
 
+class CardsThatMeanStillWorking(Base):
+    def run_in_thread(self, start):
+        with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
+                mock.patch.object(deskaid.threading, "Thread"):
+            start()
+        return self.brain.cards[-1]
+
+    def test_closing_a_project(self):
+        self.assertTrue(self.run_in_thread(lambda: self.brain._close_project("app"))["busy"])
+
+    def test_editing_modes(self):
+        self.assertTrue(self.run_in_thread(lambda: self.brain._edit_modes("x"))["busy"])
+
+    def test_the_answer_isnt_busy(self):
+        self.brain._project_report("/w/app", [], [])
+        self.assertNotIn("busy", self.brain.cards[-1])
+        self.brain._command_card("done")
+        self.assertNotIn("busy", self.brain.cards[-1])
+
+
 class TheOnlyDock(Base):
     def appeared(self, names):
         with mock.patch.object(deskaid.GLib, "timeout_add_seconds") as later, \

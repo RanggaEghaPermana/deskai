@@ -13,6 +13,8 @@ const TAIL_WIDTH = 18;
 const TAIL_HEIGHT = 9;
 const TAIL_INSET = 34; // the tail sits this far from the card's left edge when it can
 const GAP = 6;
+const BUSY_TURN_MS = 2400;
+const BUSY_PULSE_MS = 700;
 
 const GRAY = '#8e8e93';
 const SPARKLE = '#7c5cff';
@@ -75,7 +77,7 @@ export class Card {
         this.actor.destroy();
     }
 
-    // spec: {title, subtitle, text, verdict: {label, reason}, chip: {label, detail},
+    // spec: {title, subtitle, text, busy, verdict: {label, reason}, chip: {label, detail},
     //        actions: [{id, label, primary, icon}], click}
     // place: {gicon, accent, anchorX, bottomY, monitor}
     open(spec, place) {
@@ -86,6 +88,9 @@ export class Card {
         // St applies fonts on map, so show (transparent) before measuring.
         this.actor.remove_all_transitions();
         this.actor.show();
+        // Only once it's showing: an actor off screen jumps straight to the end of an animation.
+        if (spec.busy)
+            this._turn(this._body.get_first_child());
         for (const label of this._wrapLabels) {
             label.width = -1;
             const [, natural] = label.get_preferred_width(-1);
@@ -119,6 +124,8 @@ export class Card {
         if (!this.spec)
             return;
         this.spec = null;
+        this._busyIcon?.remove_all_transitions();
+        this._busyIcon = null;
         this.actor.ease({
             opacity: 0,
             scale_x: 0.97,
@@ -133,6 +140,7 @@ export class Card {
 
     _populate(spec, {gicon, accent}) {
         this._body.destroy_all_children();
+        this._busyIcon = null;
         this._wrapLabels = [];
 
         const icon = new St.Icon({gicon, icon_size: 28, style_class: 'deskai-card-icon', y_align: Clutter.ActorAlign.START});
@@ -188,6 +196,25 @@ export class Card {
                 row.add_child(this._button(action, accent));
             column.add_child(row);
         }
+    }
+
+    // Still working: the icon turns and breathes until the card changes. Its color says so too, for
+    // anyone who asked for less animation.
+    _turn(icon) {
+        icon.add_style_class_name('busy');
+        if (!St.Settings.get().enable_animations)
+            return;
+        this._busyIcon = icon;
+        icon.set_pivot_point(0.5, 0.5);
+        icon.ease({rotation_angle_z: 360, duration: BUSY_TURN_MS, mode: Clutter.AnimationMode.LINEAR, repeatCount: -1});
+        icon.ease({
+            scale_x: 0.8,
+            scale_y: 0.8,
+            duration: BUSY_PULSE_MS,
+            mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+            repeatCount: -1,
+            autoReverse: true,
+        });
     }
 
     _wrap(label) {

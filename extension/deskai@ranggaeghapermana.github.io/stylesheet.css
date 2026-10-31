@@ -171,6 +171,10 @@
   color: #1d1d1f;
 }
 
+.deskai-card-icon.busy {
+  color: #7c5cff;
+}
+
 .deskai-card-col {
   spacing: 4px;
 }
