@@ -26,6 +26,18 @@ def watch_with(*labels):
     return watch
 
 
+
+def setUpModule():
+    # The tests don't look at this computer's Docker projects or system services.
+    for patcher in (mock.patch.object(commands.compose, "ROOTS", []), mock.patch.object(commands.compose, "_docker_ls", return_value=[]),
+                    mock.patch.object(commands, "dev_service_unit", return_value=None)):
+        patcher.start()
+
+
+def tearDownModule():
+    mock.patch.stopall()
+
+
 class Quick(unittest.TestCase):
     def action(self, text, watch=None):
         result = commands.quick(text, MODES, watch or watch_with())
@@ -195,6 +207,39 @@ class Instant(unittest.TestCase):
     def test_bringing_the_desk_back(self):
         for text in ("balikin sesi sebelumnya", "balikin sesi", "restore", "restore session"):
             self.assertEqual(self.action(text), {"type": "restore_desk"}, text)
+
+    def test_whats_running(self):
+        for text, show in (("cek docker yg aktif?", "docker"), ("docker apa aja yang jalan", "docker"),
+                           ("list container", "docker"), ("database apa yg aktif", "database"), ("cek db", "database"),
+                           ("server apa aja yang nyala?", "all"), ("what's running on docker", "docker")):
+            self.assertEqual(self.action(text), {"type": "servers_list", "show": show}, text)
+
+    def test_doing_something_to_one_isnt_asking_whats_running(self):
+        self.assertEqual(self.action("matiin semua server", self.php())["type"], "server")
+        self.assertEqual(self.action("restart server php", self.php())["op"], "restart")
+        self.assertNotEqual((self.action("liat log server php", self.php()) or {}).get("type"), "servers_list")
+
+    def test_listing_what_runs_by_kind(self):
+        watch = servers.Watch()
+        for unit, kind, label, state in (("docker:app", "container", "app :8000", "up"), ("mysql.service", "service", "mysql", "up"),
+                                         ("deskai-x", "server", "vite :5173", "down")):
+            watch.items[unit] = {"unit": unit, "kind": kind, "label": label, "state": state, "port": None, "cwd": "",
+                                 "since": 0, "command": ""}
+        self.assertEqual(commands.running_list(watch, "docker", "id"), "Docker: app :8000 (jalan)")
+        self.assertEqual(commands.running_list(watch, "database", "en"), "Database: mysql (up)")
+        self.assertEqual(commands.running_list(watch, "all", "id").splitlines(),
+                         ["Docker: app :8000 (jalan)", "Database: mysql (jalan)", "Server: vite :5173 (mati)"])
+        self.assertEqual(commands.running_list(servers.Watch(), "docker", "id"), "")
+
+    def test_a_database_in_docker_is_a_database(self):
+        watch = servers.Watch()
+        for unit, kind, label, image in (("docker:app", "container", "app :8000", "shop-app:latest"),
+                                         ("docker:db", "container", "db :3309", "mysql:5.7"),
+                                         ("docker:cache", "container", "cache", "docker.io/library/redis:7")):
+            watch.items[unit] = {"unit": unit, "kind": kind, "label": label, "state": "up", "port": None, "cwd": "",
+                                 "since": 0, "command": image}
+        self.assertEqual(commands.running_list(watch, "database", "id"), "Database: cache (jalan, docker), db :3309 (jalan, docker)")
+        self.assertEqual(commands.running_list(watch, "docker", "id"), "Docker: app :8000 (jalan), cache (jalan), db :3309 (jalan)")
 
     def test_how_long_you_focused(self):
         for text in ("berapa lama gua fokus hari ini?", "how long did I focus today?", "fokus hari ini berapa", "berapa jam kerja gua"):

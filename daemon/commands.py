@@ -13,6 +13,7 @@ import difflib
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -22,7 +23,10 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 import brain  # noqa: E402
+import compose  # noqa: E402
 import routine  # noqa: E402
+import servers  # noqa: E402
+import system  # noqa: E402
 
 COMMAND_SYSTEM = """\
 You are the assistant in DeskAI, a dock for the GNOME desktop. The owner typed a request into the dock. \
@@ -130,6 +134,38 @@ OPEN_THING = re.compile(r"^(?:buka|bukain|open|launch)\s+(?:the\s+)?(.+)$", re.I
 RESTORE = re.compile(r"^(?:balikin|pulihin|kembaliin|restore|bring back)(?:\s+(?:sesi|session|desk|meja|semua|jendela|windows)\b.*)?$", re.I)
 ASKS_FOCUS = re.compile(r"\b(?:berapa lama|berapa jam|how long|how much)\b.*\b(?:fokus|focus\w*|kerja|work\w*|distraksi|distract\w*)\b|"
                         r"^(?:waktu\s+)?fokus(?:\s+gua)?(?:\s+hari ini)?(?:\s+berapa(?:\s+(?:lama|jam|menit))?)?\??$", re.I)
+# "cek docker yg aktif", "database apa aja yang jalan?", "list container": what's running, with no AI.
+RUNNING_WHAT = re.compile(r"\b(docker|containers?|kontainer|database|databases|db|servers?)\b", re.I)
+ASKS_RUNNING = re.compile(r"\b(aktif|jalan|berjalan|nyala|hidup|running|up|on)\b|^(?:cek|check|liat|lihat|list|daftar|show|status)\b|"
+                          r"\bapa\s+(?:aja|saja)\b|\bwhat'?s\b|\bwhich\b", re.I)
+# The computer itself: "cek ram", "storage gua penuh gak", "bersihin storage", "project mana yang belum di-push".
+ASKS_MEMORY = re.compile(r"\b(ram|memori|memory|swap)\b|\b(aplikasi|app|apps|program)\b.*\b(berat|boros|makan|heavy|hog\w*)\b", re.I)
+ASKS_STORAGE = re.compile(r"\b(storage|penyimpanan|disk|disk space|ssd|hdd|hardisk|harddisk|memori internal)\b", re.I)
+ASKS_CLEAR = re.compile(r"\b(bersih\w*|clean\w*|kosong\w*|hapus|buang|clear)\b.*\b(storage|penyimpanan|disk|cache|sampah|junk|ssd|laptop)\b|"
+                        r"^(?:bersih[- ]?bersih|bersihin|clean ?up)(?:\s+(?:dong|laptop|laptop gua))?$", re.I)
+ASKS_GIT = re.compile(r"\b(git|uncommitted|unpushed)\b|\b(belum|not|blm)\s+(?:di-?)?(commit|push)\w*|"
+                      r"^(?:cek|check|liat|lihat|status)\s+(?:semua\s+)?(?:project|proyek|projek|repo)\w*(?:\s+(?:gua|gue|aku|saya))?\??$", re.I)
+# Docker: "cek image docker", "docker apa aja yang bisa dinyalain", "nyalain shop", "matiin infra".
+ASKS_IMAGES = re.compile(r"\bdocker\s+images?\b|\bimages?\s+docker\b|^(?:cek|check|liat|lihat|list|daftar)\s+(?:semua\s+)?images?\b", re.I)
+ASKS_COMPOSE = re.compile(r"\b(?:bisa|dapat|can)\s+(?:be\s+)?(?:di)?(?:nyala|jalan|start|run|pake|pakai)\w*|"
+                          r"\b(?:compose|(?:project|proyek|projek)\s+docker|docker\s+(?:project|proyek|projek))\w*\b", re.I)
+ACT = re.compile(r"^(nyalain ulang|restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|jalanin|jalankan|start|run|up|"
+                 r"matiin|matikan|stop|stopin)\s+(.+)$", re.I)
+ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
+# A system service you'd start for coding, by the word you'd use for it. php-fpm is whichever version is installed.
+DEV_SERVICES = {"mysql": "mysql", "mariadb": "mariadb", "postgres": "postgresql", "postgresql": "postgresql",
+                "redis": "redis-server", "mongo": "mongod", "mongodb": "mongod", "apache": "apache2", "apache2": "apache2",
+                "nginx": "nginx", "php": "php-fpm", "php-fpm": "php-fpm", "fpm": "php-fpm",
+                "tunnel": "cloudflared", "cloudflared": "cloudflared", "cloudflare": "cloudflared",
+                "vpn": "strongswan-starter", "strongswan": "strongswan-starter", "ipsec": "strongswan-starter",
+                "proton": "me.proton.vpn.split_tunneling", "proton vpn": "me.proton.vpn.split_tunneling",
+                "protonvpn": "me.proton.vpn.split_tunneling", "remote desktop": "gnome-remote-desktop",
+                "rdp": "gnome-remote-desktop", "kvm": "qemu-kvm", "qemu": "qemu-kvm", "vm": "qemu-kvm"}
+# What to call a service on a card, when its unit's name isn't it.
+SERVICE_LABELS = {"me.proton.vpn.split_tunneling": "Proton VPN", "strongswan-starter": "VPN strongSwan",
+                  "cloudflared": "Cloudflare Tunnel", "gnome-remote-desktop": "Remote Desktop", "qemu-kvm": "KVM"}
+# Apps that need a service that's left off until it's wanted: opening one offers to start it.
+APP_SERVICES = {"proton.vpn.app.gtk": "me.proton.vpn.split_tunneling.service"}
 BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
 BREAKS_ON = re.compile(r"^(nyala|hidup|idup|turn on)", re.I)
 BLOCK_LIST = re.compile(r"^(?:blokir|block)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
@@ -206,6 +242,70 @@ def _named_server(words, watch, known_projects=()):
     return None
 
 
+def _act_on_docker_or_service(words, known_projects):
+    """{"type": "compose" | "dev_service", ...} for starting, stopping or restarting a Compose project or a
+    system service by name: "nyalain shop", "matiin infra", "nyalain mysql". None for anything else."""
+    match = ACT.match(words)
+    if not match:
+        return None
+    op = {"matiin": "stop", "matikan": "stop", "stop": "stop", "stopin": "stop", "restart": "restart",
+          "nyalain ulang": "restart"}.get(match.group(1).lower(), "restart" if match.group(1).lower().startswith("ulang") else "up")
+    name = re.sub(r"\s+", " ", ACT_NOISE.sub(" ", match.group(2))).strip(" ?!.")
+    if not name or re.fullmatch(r"(?:semua|all)(?:\s+\w+)?", name, re.I):
+        return None
+    unit = dev_service_unit(name)
+    if unit:
+        return {"type": "dev_service", "op": "start" if op == "up" else op, "unit": unit}
+    found = compose.projects(known_projects.values() if known_projects else ())
+    folder = find_project(name, found)
+    if folder:
+        return {"type": "compose", "op": op, "project": next(key for key, path in found.items() if path == folder)}
+    # By a container or an image of the project: "nyalain shop-app", "nyalain shared-db_mysql".
+    word = name.replace(" ", "")
+    owner = compose.project_for(word, found)
+    if owner:
+        return {"type": "compose", "op": op, "project": owner}
+    if op == "up" and compose.image_exists(word):
+        return {"type": "image_alone", "image": word}
+    return None
+
+
+def systemctl(unit, op):
+    """Starts, stops or restarts a system service. GNOME asks for your password. Returns (ok, why not)."""
+    try:
+        done = subprocess.run(["systemctl", op, unit], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, str(e)
+    return done.returncode == 0, done.stderr.strip().splitlines()[-1][:200] if done.stderr.strip() else ""
+
+
+def service_label(unit):
+    stem = unit.removesuffix(".service")
+    return SERVICE_LABELS.get(stem, stem)
+
+
+def service_active(unit):
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return True  # can't tell: don't offer
+
+
+def dev_service_unit(name):
+    """The installed system service a word like "mysql" or "php" means, or None."""
+    wanted = DEV_SERVICES.get(name.lower())
+    if not wanted:
+        return None
+    try:
+        out = subprocess.run(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--plain"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    units = [line.split()[0] for line in out.splitlines() if line.strip()]
+    pattern = re.compile(r"^php[\d.]+-fpm\.service$") if wanted == "php-fpm" else re.compile(rf"^{re.escape(wanted)}\.service$")
+    return next((unit for unit in sorted(units, reverse=True) if pattern.match(unit)), None)
+
+
 def _list_edit(words, modes):
     for pattern, field in ((ADD_TO_BLOCKED, "block"), (BLOCK_LIST, "block"), (ALLOW_LIST, "allow"), (ADD_TO_MODE, "allow")):
         match = pattern.match(words)
@@ -237,6 +337,29 @@ def _quick_action(words, modes, watch, known_projects):
         return {"type": "breaks", "on": bool(BREAKS_ON.match(words))}
     if ASKS_FOCUS.search(words):
         return {"type": "focus_today"}
+    if not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
+        if ASKS_CLEAR.search(words):
+            return {"type": "system", "what": "clear"}
+        if ASKS_GIT.search(words):
+            return {"type": "git_report"}
+        if ASKS_MEMORY.search(words):
+            return {"type": "system", "what": "memory"}
+        if ASKS_STORAGE.search(words):
+            return {"type": "system", "what": "storage"}
+    if ASKS_IMAGES.search(words):
+        return {"type": "docker_images"}
+    if ASKS_COMPOSE.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
+        return {"type": "compose_list"}
+    acting = _act_on_docker_or_service(words, known_projects)
+    if acting:
+        return acting
+    asked = RUNNING_WHAT.search(words)
+    if asked and ASKS_RUNNING.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)
+                                                      or re.search(r"\blogs?\b", words, re.I)):
+        what = asked.group(1).lower()
+        return {"type": "servers_list",
+                "show": "docker" if what in ("docker", "container", "containers", "kontainer") else
+                        "database" if what in ("database", "databases", "db") else "all"}
     server = _named_server(words, watch, known_projects)
     if server:
         return server
@@ -407,9 +530,86 @@ def focus_answer(config):
                            distracted=duration(spent["distracted"], language), idle=duration(spent["idle"], language))
 
 
+KIND_WORDS = {"container": "docker", "service": "database"}
+
+
+def images_report(language):
+    found = compose.images()
+    if not found:
+        return brain.card_text(language, "images_none")
+    words = {key: brain.card_text(language, key) for key in ("image_running", "image_used", "image_unused")}
+    projects_found = compose.projects(projects().values())
+    lines = []
+    for image in found:
+        state = words["image_running"] if image["running"] else words["image_used"] if image["used"] else words["image_unused"]
+        owner = compose.project_for(image["name"], projects_found)
+        lines.append(f"{image['name']} {image['size']} ({state}){f' → {owner}' if owner else ''}")
+    return "\n".join(lines)
+
+
+def compose_report(language, known_projects):
+    found = compose.projects(known_projects.values())
+    if not found:
+        return brain.card_text(language, "compose_none")
+    states = compose.states(found)
+    return "\n".join(f"{name}: {brain.card_text(language, 'compose_' + states[name])}" for name in found)
+
+
+def memory_report(language):
+    info = system.memory()
+    if not info:
+        return ""
+    used = info["total"] - info["available"]
+    apps = ", ".join(f"{name} {system.human(size)}" for name, size in system.heaviest_apps())
+    return brain.card_text(language, "memory_report", used=system.human(used), total=system.human(info["total"]),
+                           percent=round(used * 100 / info["total"]), swap=system.human(info["swap_used"]), apps=apps)
+
+
+def storage_report(language):
+    return "\n".join(brain.card_text(language, "storage_line", path=disk["path"].replace(str(Path.home()), "~"),
+                                     free=system.human(disk["free"]), total=system.human(disk["total"])) for disk in system.disks())
+
+
+def git_report(language, known_projects):
+    """A line per project with something only on this computer: files not committed, commits not pushed."""
+    lines = []
+    for name, folder in known_projects.items():
+        state = servers.git_state(folder)
+        if not state or not any(state):
+            continue
+        branch = (servers._git(folder, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+        parts = [brain.card_text(language, key, n=n) for key, n in (("git_changed", state[0]), ("git_unpushed", state[1])) if n]
+        lines.append(f"{name}{f' ({branch})' if branch else ''}: {', '.join(parts)}")
+    return "\n".join(lines) or brain.card_text(language, "git_all_clean")
+
+
+# A container that runs one of these images is a database too.
+DATABASE_IMAGE = re.compile(r"(?:^|/)(mysql|mariadb|postgres|postgis|redis|valkey|mongo|memcached)\b", re.I)
+
+
+def running_list(watch, show, language):
+    """What's running, by kind, for "cek docker yg aktif": one line per kind that has anything.
+    A database in Docker is under Docker, and under Database when that's what's asked about."""
+    kinds = {"docker": ("container",), "database": ("service", "container"), "all": ("server", "manual", "service", "container")}[show]
+    names = {"server": "Server", "manual": "Server", "service": "Database", "container": "Docker"}
+    states = {"id": {"up": "jalan", "starting": "baru nyala", "down": "mati"}}.get(language, {})
+    lines = {}
+    for item in watch.summary():
+        if item["kind"] not in kinds:
+            continue
+        state = states.get(item["state"], item["state"])
+        if show == "database" and item["kind"] == "container":
+            if not DATABASE_IMAGE.search((watch.get(item["unit"]) or {}).get("command", "")):
+                continue
+            lines.setdefault("Database", []).append(f"{item['label']} ({state}, docker)")
+        else:
+            lines.setdefault(names[item["kind"]], []).append(f"{item['label']} ({state})")
+    return "\n".join(f"{kind}: {', '.join(lines[kind])}" for kind in ("Docker", "Database", "Server") if kind in lines)
+
+
 def desk(config, mode, watch, can_restore, known_projects=None, focus=None, apps=None):
     """The desk as the model reads it. (The evaluation passes made-up projects, focus time and apps.)"""
-    servers = "; ".join(f"{s['label']} ({s['state']})" for s in watch.summary()) or "none"
+    servers = "; ".join(f"{s['label']} ({KIND_WORDS.get(s['kind'], 'server')}, {s['state']})" for s in watch.summary()) or "none"
     modes = "; ".join(f"{key} = {m['label']}{' (current)' if key == mode else ''}" for key, m in config.modes())
     names = projects() if known_projects is None else known_projects
     return (f"Modes: {modes}\nServers: {servers}\nProjects, newest first: {', '.join(names) or 'none'}\n"

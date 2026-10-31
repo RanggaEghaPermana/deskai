@@ -268,9 +268,79 @@ def servers():
 
 
 def databases():
-    """The routine's system services (your database) that are running."""
+    """The routine's system services (your database) that are running, and any database server
+    installed on the system that's running, whether a project uses it or not."""
     units = [s for s in routine.load().get("steps", []) if s["type"] == "service"]
-    return [s for s in units if subprocess.run(["systemctl", "is-active", "--quiet", s["unit"]]).returncode == 0]
+    found = [s for s in units if subprocess.run(["systemctl", "is-active", "--quiet", s["unit"]]).returncode == 0]
+    known = {s["unit"] for s in found}
+    return found + [{"type": "service", "unit": unit} for unit in system_databases() if unit not in known]
+
+
+# Database servers by their systemd unit. postgresql.service is only Ubuntu's umbrella over the clusters,
+# so it's each postgresql@<version>-<cluster>.service that counts.
+DATABASE_UNITS = re.compile(r"^(?:mysql|mariadb|redis-server|redis|valkey-server|mongod|postgresql@[\w.-]+)\.service$")
+
+
+def system_databases():
+    """The database servers running as system services."""
+    try:
+        out = subprocess.run(["systemctl", "list-units", "--type=service", "--state=active", "--no-legend", "--plain"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.split()[0] for line in out.splitlines() if line.strip() and DATABASE_UNITS.match(line.split()[0])]
+
+
+DOCKER_PORT = re.compile(r"(?:[\d.]+|\[::\]):(\d+)->")
+
+
+def docker_running():
+    """Whether Docker's daemon is up. Asking docker itself would start it when it's left to start on first use."""
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", "docker.service"], timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def containers():
+    """The Docker containers that are running, from the docker command, so with your own rights:
+    nothing if Docker isn't installed, isn't running, or you aren't in the docker group."""
+    if not shutil.which("docker") or not docker_running():
+        return []
+    try:
+        out = subprocess.run(["docker", "ps", "--no-trunc", "--format", "{{json .}}"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in out.splitlines():
+        try:
+            info = json.loads(line)
+        except ValueError:
+            continue
+        name = info.get("Names", "").split(",")[0]
+        if not name:
+            continue
+        ports = DOCKER_PORT.findall(info.get("Ports", ""))
+        labels = dict(pair.split("=", 1) for pair in info.get("Labels", "").split(",") if "=" in pair)
+        found.append({"unit": f"docker:{name}", "name": name, "command": info.get("Image", ""),
+                      "port": int(ports[0]) if ports else None,
+                      "cwd": labels.get("com.docker.compose.project.working_dir", "")})
+    return found
+
+
+def container_stopped_by_you(name):
+    """Whether a container that's gone exited the way `docker stop` or Ctrl+C leaves it, rather than crashing."""
+    if not docker_running():
+        return True  # Docker itself was stopped, and its containers with it
+    try:
+        out = subprocess.run(["docker", "inspect", "-f", "{{.State.ExitCode}} {{.State.OOMKilled}}", name],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if len(out) != 2:
+        return True  # removed, as `docker compose down` does
+    return out[1] == "false" and out[0] in ("0", "130", "137", "143")
 
 
 def files_locations(bus):

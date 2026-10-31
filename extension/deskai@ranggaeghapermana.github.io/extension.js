@@ -16,6 +16,7 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AppFavorites from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
@@ -163,6 +164,7 @@ const BROWSER_IDS = new Set([
 const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
 const FOCUSABLE_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 const {AnimationMode} = Clutter;
+const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION);
 
 function readText(file) {
     try {
@@ -223,8 +225,14 @@ function isAppWindow(win) {
         FOCUSABLE_TYPES.includes(win.get_window_type());
 }
 
+// The first enable in a shell is the login; later ones are unlocking or switching DeskAI back on.
+let firstEnable = true;
+
 export default class DeskAIExtension extends Extension {
     enable() {
+        // Without Ubuntu Dock, GNOME 46 starts a session in the overview. Later versions keep their dash.
+        if (SHELL_MAJOR < 50)
+            this._beTheOnlyDock();
         const configDir = GLib.build_filenamev([GLib.get_user_config_dir(), 'deskai']);
         this._modesFile = Gio.File.new_for_path(GLib.build_filenamev([configDir, 'modes.json']));
         this._stateFile = Gio.File.new_for_path(
@@ -301,6 +309,7 @@ export default class DeskAIExtension extends Extension {
     }
 
     disable() {
+        this._giveBackDash();
         this._motion?.disable();
         this._motion = null;
         if (this._busNameId) {
@@ -671,7 +680,8 @@ export default class DeskAIExtension extends Extension {
         this._dockShown = true;
         this._peekUntil = 0;
         this._edgeArmed = false;
-        this._inOverview = Main.overview.visible;
+        // Where the overview is going: at login it may be on its way out, and 'hiding' already past.
+        this._inOverview = Main.overview.visibleTarget;
 
         // A one-pixel strip on the bottom edge; touching it brings a hidden dock back.
         this._edge = new St.Widget({name: 'deskaiEdge', reactive: true, track_hover: true, visible: false});
@@ -1720,6 +1730,43 @@ export default class DeskAIExtension extends Extension {
 
     _queueVisibility() {
         this._debounce('visibility', 40, () => this._updateVisibility());
+    }
+
+    // One dock, this one. GNOME starts a session in the overview, whose dash would sit on top of this
+    // dock as the desktop appears (Ubuntu Dock used to prevent that), and shows it again in the overview.
+    _beTheOnlyDock() {
+        const layout = Main.layoutManager;
+        if (firstEnable && Main.overview.visible) {
+            // GNOME 46 enables extensions once its startup animation into the overview has begun:
+            // hiding it now is a case GNOME handles, and the session lands on the desktop.
+            Main.overview.hide();
+        } else if (layout._startingUp && Main.sessionMode.hasOverview) {
+            Main.sessionMode.hasOverview = false;
+            this._overviewSkipped = true;
+            layout.connectObject('startup-complete', () => this._restoreOverview(), this);
+        }
+        firstEnable = false;
+        const dash = Main.overview.dash;
+        if (dash) {
+            dash.hide();
+            dash.height = 0; // a hidden dash still takes its height in the overview's layout
+            this._overviewDash = dash;
+        }
+    }
+
+    _restoreOverview() {
+        if (this._overviewSkipped)
+            Main.sessionMode.hasOverview = true;
+        this._overviewSkipped = false;
+    }
+
+    _giveBackDash() {
+        this._restoreOverview();
+        if (this._overviewDash) {
+            this._overviewDash.height = -1;
+            this._overviewDash.show();
+        }
+        this._overviewDash = null;
     }
 
     _wantVisible() {

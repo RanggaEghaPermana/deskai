@@ -21,8 +21,11 @@ DB = {"type": "service", "unit": "postgresql@18-main.service", "port": 5432}
 class Scan(unittest.TestCase):
     def setUp(self):
         self.watch = servers.Watch()
-        self.running, self.databases, self.open_ports = [], [], set()
-        for name, target in (("servers", lambda: list(self.running)), ("databases", lambda: list(self.databases))):
+        self.running, self.databases, self.containers, self.open_ports = [], [], [], set()
+        self.crashed = set()  # containers that exited on their own, not by `docker stop`
+        for name, target in (("servers", lambda: list(self.running)), ("databases", lambda: list(self.databases)),
+                             ("containers", lambda: list(self.containers)),
+                             ("container_stopped_by_you", lambda name: name not in self.crashed)):
             patcher = mock.patch.object(servers.session, name, side_effect=target)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -269,6 +272,97 @@ class GitState(unittest.TestCase):
             self.assertIsNone(self.state())
 
 
+APP = {"unit": "docker:shop_app", "name": "shop_app", "command": "shop-app:latest", "port": 8000,
+       "cwd": "/work/shop"}
+MYSQL = {"unit": "docker:ubp_mysql", "name": "ubp_mysql", "command": "mysql:5.7", "port": 3309, "cwd": ""}
+
+
+class Containers(Scan):
+    def test_a_running_container_is_listed_with_its_port(self):
+        self.containers, self.open_ports = [APP], {8000}
+        self.watch.scan()
+        row = self.watch.summary()[0]
+        self.assertEqual((row["kind"], row["state"], row["label"], row["project"]), ("container", "up", "shop_app :8000", "shop"))
+
+    def test_one_you_stopped_just_leaves(self):
+        self.containers, self.open_ports = [APP], {8000}
+        self.watch.scan()
+        self.containers = []
+        self.assertEqual(self.watch.scan(), [])
+        self.assertIsNone(self.watch.get(APP["unit"]))
+
+    def test_one_that_crashed_is_down_and_reported_once(self):
+        self.containers, self.open_ports = [MYSQL], {3309}
+        self.watch.scan()
+        self.containers, self.open_ports, self.crashed = [], set(), {"ubp_mysql"}
+        self.assertEqual([item["unit"] for item in self.watch.scan()], [MYSQL["unit"]])
+        self.assertEqual(self.state(MYSQL["unit"]), "down")
+        self.assertEqual(self.watch.scan(), [])
+
+    def test_docker_finds_them_all(self):
+        self.containers = [APP, MYSQL]
+        self.watch.scan()
+        self.assertEqual(sorted(self.watch.match("docker")), [APP["unit"], MYSQL["unit"]])
+        self.assertEqual(self.watch.match("mysql"), [MYSQL["unit"]])
+
+    def test_stop_and_restart_go_through_docker(self):
+        self.containers, self.open_ports = [APP], {8000}
+        self.watch.scan()
+        with mock.patch.object(servers.subprocess, "run", return_value=mock.Mock(returncode=0)) as run, \
+                mock.patch.object(servers.routine, "wait_port", return_value=True):
+            self.assertTrue(self.watch.restart(APP["unit"]))
+            self.assertEqual(run.call_args.args[0], ["docker", "restart", "shop_app"])
+            self.assertTrue(self.watch.stop(APP["unit"]))
+            self.assertEqual(run.call_args.args[0], ["docker", "stop", "shop_app"])
+
+    def test_its_log_is_dockers(self):
+        item = {"unit": APP["unit"], "kind": "container"}
+        self.assertEqual(servers.log_command(item), "docker logs -n 200 -f shop_app")
+
+
+class DockerOutput(unittest.TestCase):
+    PS = ('{"Names":"shop_app","Image":"shop-app:latest","Ports":"0.0.0.0:8000->80/tcp",'
+          '"Labels":"com.docker.compose.project=shop,com.docker.compose.project.working_dir=/work/shop"}\n'
+          '{"Names":"shared-db_mysql","Image":"mysql:5.7","Ports":"33060/tcp, 0.0.0.0:3309->3306/tcp, [::]:3309->3306/tcp",'
+          '"Labels":""}\n'
+          '{"Names":"worker","Image":"busybox","Ports":"","Labels":""}\n')
+
+    def test_containers_from_docker_ps(self):
+        with mock.patch.object(servers.session.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(servers.session, "docker_running", return_value=True), \
+                mock.patch.object(servers.session.subprocess, "run", return_value=mock.Mock(stdout=self.PS)):
+            found = servers.session.containers()
+        self.assertEqual([(c["unit"], c["port"], c["cwd"]) for c in found],
+                         [("docker:shop_app", 8000, "/work/shop"), ("docker:shared-db_mysql", 3309, ""),
+                          ("docker:worker", None, "")])
+
+    def test_no_docker_no_containers(self):
+        with mock.patch.object(servers.session.shutil, "which", return_value=None):
+            self.assertEqual(servers.session.containers(), [])
+
+    def test_docker_left_to_start_on_first_use_isnt_woken(self):
+        with mock.patch.object(servers.session.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(servers.session, "docker_running", return_value=False), \
+                mock.patch.object(servers.session.subprocess, "run") as run:
+            self.assertEqual(servers.session.containers(), [])
+            self.assertTrue(servers.session.container_stopped_by_you("shop_app"))
+        run.assert_not_called()
+
+    def test_system_databases(self):
+        units = ("mysql.service loaded active running MySQL\npostgresql.service loaded active exited PostgreSQL\n"
+                 "postgresql@16-main.service loaded active running PostgreSQL Cluster 16-main\n"
+                 "redis-server.service loaded active running Redis\nnginx.service loaded active running nginx\n")
+        with mock.patch.object(servers.session.subprocess, "run", return_value=mock.Mock(stdout=units)):
+            self.assertEqual(servers.session.system_databases(), ["mysql.service", "postgresql@16-main.service", "redis-server.service"])
+
+    def test_how_a_container_ended(self):
+        for out, yours in (("0 false", True), ("137 false", True), ("143 false", True), ("1 false", False),
+                           ("137 true", False), ("", True)):
+            with mock.patch.object(servers.session, "docker_running", return_value=True), \
+                    mock.patch.object(servers.session.subprocess, "run", return_value=mock.Mock(stdout=out)):
+                self.assertEqual(servers.session.container_stopped_by_you("x"), yours, out)
+
+
 HAND = {"unit": "manual-8000", "cwd": "/work/app", "command": "php artisan serve", "port": 8000, "pid": 4321}
 
 
@@ -276,7 +370,8 @@ class HandStarted(unittest.TestCase):
     def setUp(self):
         self.watch = servers.Watch()
         self.found = [HAND]
-        for name, target in (("servers", list), ("databases", list), ("hand_started", lambda: list(self.found))):
+        for name, target in (("servers", list), ("databases", list), ("containers", list),
+                             ("hand_started", lambda: list(self.found))):
             patcher = mock.patch.object(servers.session, name, side_effect=target)
             patcher.start()
             self.addCleanup(patcher.stop)

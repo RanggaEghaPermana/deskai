@@ -1,9 +1,56 @@
 // What's playing, from GNOME Shell's own list of media players: anything that speaks MPRIS,
 // like Spotify, VLC, or a browser for whatever one of its tabs is playing.
 
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {MprisSource} from 'resource:///org/gnome/shell/ui/mpris.js';
+import * as Signals from 'resource:///org/gnome/shell/misc/signals.js';
+import * as Mpris from 'resource:///org/gnome/shell/ui/mpris.js';
+
+const MPRIS_PLAYER_PREFIX = 'org.mpris.MediaPlayer2.';
+
+// GNOME 46 has no MprisSource (it came in 48): the same list of players, built the way 46's
+// MediaSection builds its own, with the signals the dock listens to.
+class OwnMprisSource extends Signals.EventEmitter {
+    constructor() {
+        super();
+        this._players = new Map(); // bus name → player
+        this._watch = Gio.DBus.session.signal_subscribe('org.freedesktop.DBus', 'org.freedesktop.DBus',
+            'NameOwnerChanged', '/org/freedesktop/DBus', 'org.mpris.MediaPlayer2', Gio.DBusSignalFlags.MATCH_ARG0_NAMESPACE,
+            (_conn, _sender, _path, _iface, _signal, params) => {
+                const [name, oldOwner, newOwner] = params.deepUnpack();
+                if (name.startsWith(MPRIS_PLAYER_PREFIX) && newOwner && !oldOwner)
+                    this._addPlayer(name);
+            });
+        Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+            'ListNames', null, null, Gio.DBusCallFlags.NONE, -1, null, (conn, result) => {
+                try {
+                    const [names] = conn.call_finish(result).deepUnpack();
+                    names.filter(name => name.startsWith(MPRIS_PLAYER_PREFIX)).forEach(name => this._addPlayer(name));
+                } catch (e) {
+                    logError(e, 'DeskAI: listing media players');
+                }
+            });
+    }
+
+    get players() {
+        return [...this._players.values()];
+    }
+
+    _addPlayer(busName) {
+        if (this._players.has(busName))
+            return;
+        const player = new Mpris.MprisPlayer(busName);
+        player.connect('closed', () => {
+            this._players.delete(busName);
+            this.emit('player-removed', player);
+        });
+        this._players.set(busName, player);
+        this.emit('player-added', player);
+    }
+}
+
+const MprisSource = Mpris.MprisSource ?? OwnMprisSource;
 
 // Paused this long, a player stops taking up room on the dock until it plays again.
 export const PAUSED_KEEP_S = 30 * 60;

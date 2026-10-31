@@ -27,6 +27,7 @@ from gi.repository import Gio, GLib, GLibUnix  # noqa: E402
 
 import brain  # noqa: E402
 import commands  # noqa: E402
+import compose  # noqa: E402
 import docks  # noqa: E402
 import guide  # noqa: E402
 import learned  # noqa: E402
@@ -35,6 +36,7 @@ import senders  # noqa: E402
 import servers  # noqa: E402
 import session  # noqa: E402
 import sites  # noqa: E402
+import system  # noqa: E402
 from brain import BRAIN_NAME, BUS_NAME, OBJECT_PATH, log  # noqa: E402
 
 TICK_SECONDS = 5
@@ -42,6 +44,7 @@ ROUTINE_DELAY_S = 6          # after login or unlock, let the desktop settle bef
 ROUTINE_SNOOZE_S = 45 * 60
 SNAPSHOT_EVERY = 30          # seconds between snapshots of the desk, for after a logout
 SERVER_CHECK_EVERY = 10      # seconds between looks at the servers on the desk
+ROOM_CHECK_EVERY = 60        # seconds between looks at memory and disk space
 ROUTINE_STOP_WAIT_S = 3      # closing a project lets a setup still going finish the step it's on, if it's quick
 DOCKS_SETTLE_S = 3           # turning a dock off restarts the extensions GNOME loaded after it, this dock among them
 DOCK_WAIT_S = 60             # after starting, how long the dock gets to appear before the docks it replaced come back
@@ -194,6 +197,11 @@ class Brain:
         self.servers_checking = False
         self.servers_sent = None
         self.last_server_check = 0.0
+        self.last_room_check = 0.0
+        self.memory_low_since = None  # the first look that found memory running out
+        self.room_warned = set()      # what's been warned about and hasn't recovered yet: disks by path, "memory"
+        self.clearing = None          # the cache ids on offer to clear, or being cleared
+        self.services_offered = set()  # services an opened app needed, offered once a login
         self.pending_edit = None  # a change to modes.json waiting for your OK
         self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
@@ -401,6 +409,7 @@ class Brain:
         self.activity = Activity(self.seq, app_id, app_name, title)
         if not self.whatsapp_checked and app_id in session.BROWSER_APPS and "whatsapp" in title.lower():
             self._maybe_ask_whatsapp()
+        self._maybe_offer_service(app_id, app_name)
         seq = self.seq
         GLib.timeout_add(CLASSIFY_DELAY_MS, lambda: self._classify(seq))
 
@@ -512,6 +521,12 @@ class Brain:
         elif action.startswith("server:"):
             _, op, unit = action.split(":", 2)
             self._server_action(op, unit)
+        elif action.startswith("service:start:"):
+            self._docker_or_service("dev_service", {"op": "start", "unit": action.split(":", 2)[2]})
+        elif action == "system:clear-offer":
+            self._offer_clearing()
+        elif action == "system:clear" and self.clearing:
+            self._clear_caches()
         elif action == "project:close-terminals":
             terminals, self.closing_terminals = self.closing_terminals, []
             closed = [session.close_terminal(*terminal) for terminal in terminals]
@@ -850,6 +865,117 @@ class Brain:
             self._server_problem(item, self._say("server_failed", name=item["label"]), servers.last_log_line(item))
         return False
 
+    # ---- memory and disk space --------------------------------------------
+
+    def _in_background(self, work, then):
+        """Runs work() on a thread, and then(its result) back on the main one."""
+        def run():
+            try:
+                result = work()
+            except Exception as e:  # du, docker, git: never fatal
+                log.warning("background work failed: %s", e)
+                result = None
+            GLib.idle_add(lambda: then(result) and False)
+        threading.Thread(target=run, name="background", daemon=True).start()
+
+    def _check_room(self):
+        """Warns once when a disk or the memory runs out, and again only after it has recovered."""
+        language = self.config.language
+        low = {disk["path"]: disk for disk in system.low_disks()}
+        for path, disk in low.items():
+            if path not in self.room_warned:
+                self.room_warned.add(path)
+                where = path.replace(os.path.expanduser("~"), "~")
+                self.card({"id": "room", "kind": "info", "title": self._say("disk_low", path=where, free=system.human(disk["free"])),
+                           "text": "", "accent": "#e5484d", "timeout": 30,
+                           "actions": [{"id": "system:clear-offer", "label": self._say("disk_low_clear"), "primary": True}]})
+        self.room_warned -= {path for path in self.room_warned if path != "memory" and path not in low}
+        info = system.memory()
+        if not system.memory_low(info):
+            self.memory_low_since = None
+            self.room_warned.discard("memory")
+            return
+        # A moment of it, like a build, isn't worth a word: it has to last two looks.
+        self.memory_low_since = self.memory_low_since or time.monotonic()
+        if "memory" not in self.room_warned and time.monotonic() - self.memory_low_since >= ROOM_CHECK_EVERY:
+            self.room_warned.add("memory")
+            apps = ", ".join(f"{name} {system.human(size)}" for name, size in system.heaviest_apps())
+            used = info["total"] - info["available"]
+            self.card({"id": "room", "kind": "info", "title": self._say("memory_low", percent=round(used * 100 / info["total"]), apps=apps),
+                       "text": "", "accent": "#e5484d", "timeout": 30, "actions": []})
+
+    def _offer_clearing(self):
+        """Counts the caches safe to clear, then asks before clearing them."""
+        self._command_card(self._say("clear_counting"), timeout=60)
+
+        def offer(found):
+            found = found or []
+            if not found:
+                self.clearing = None
+                self._command_card(self._say("clear_nothing"))
+                return
+            self.clearing = [item["id"] for item in found]
+            size = system.human(sum(item["size"] for item in found))
+            items = ", ".join(f"{item['label']} {system.human(item['size'])}" for item in found)
+            self._command_card(self._say("clear_offer", size=size, items=items), timeout=45, actions=[
+                {"id": "system:clear", "label": self._say("clear_go", size=size), "primary": True},
+                {"id": "later", "label": self._say("not_now")}])
+        self._in_background(system.clearable, offer)
+
+    def _clear_caches(self):
+        ids, self.clearing = self.clearing, None
+        self._command_card(self._say("clear_counting"), timeout=120)
+        self._in_background(lambda: system.clear(ids),
+                            lambda freed: self._command_card(self._say("clear_done", size=system.human(freed or 0))))
+
+    def _maybe_offer_service(self, app_id, app_name):
+        """An app opened that needs a service left off until it's wanted: offers to start it, once a login."""
+        unit = commands.APP_SERVICES.get((app_id or "").removesuffix(".desktop"))
+        if not unit or unit in self.services_offered or commands.service_active(unit):
+            return
+        self.services_offered.add(unit)
+        self.card({"id": "service-offer", "kind": "info", "timeout": 30,
+                   "title": self._say("service_offer", app=app_name or commands.service_label(unit), name=commands.service_label(unit)),
+                   "text": "", "actions": [{"id": f"service:start:{unit}", "label": self._say("service_start"), "primary": True},
+                                           {"id": "later", "label": self._say("not_now")}]})
+
+    def _docker_or_service(self, kind, action):
+        """Starts, stops or restarts a Compose project or a system service, off the main thread: a first
+        start can pull images, and a system service asks for your password."""
+        op = action.get("op")
+        if kind == "compose":
+            name = action.get("project", "")
+            folder = compose.projects(commands.projects().values()).get(name)
+            if not folder or op not in ("up", "stop", "restart"):
+                self._command_card(self._say("compose_none"))
+                return
+            found = compose.projects(commands.projects().values())
+            if op == "stop":
+                # Stopping what others need: say so on the card, they lose their database.
+                running = compose.states(found)
+                hurt = [other for other in compose.dependents(name, found) if running.get(other) == "running"]
+                work = lambda: (*compose.act(folder, op), hurt)  # noqa: E731
+            else:
+                work = lambda: compose.start(name, found, op)  # noqa: E731
+        else:
+            name = commands.service_label(action.get("unit", ""))
+            op = {"start": "up"}.get(op, op)
+            if not name or op not in ("up", "stop", "restart"):
+                self._command_card(self._say("command_no_server"))
+                return
+            work = lambda: commands.systemctl(action["unit"], {"up": "start"}.get(op, op))  # noqa: E731
+        self._command_card(self._say(f"compose_working_{op}", name=name), timeout=120)
+
+        def done(result):
+            ok, said, *more = result or (False, "")
+            others = ", ".join(more[0]) if more and more[0] else ""
+            text = self._say(f"compose_done_{op}", name=name) if ok else self._say("compose_failed", name=name, error=said or "?")
+            if ok and others:
+                text += " " + self._say("compose_also_stopped" if op == "stop" else "compose_also_started", names=others)
+            self._command_card(text, timeout=20 if others else 15)
+            self._check_servers()
+        self._in_background(work, done)
+
     # ---- the command bar --------------------------------------------------
 
     def _command_card(self, text, actions=(), timeout=10, busy=False):
@@ -928,6 +1054,35 @@ class Brain:
                 answered_elsewhere = op == "status" or (op == "log" and bool(item) and item["kind"] == servers.MANUAL)
                 self._server_action(op, unit)
                 say = say or self._say("command_done")
+        elif kind == "system" and action.get("what") == "clear":
+            self._offer_clearing()
+            answered_elsewhere = True
+        elif kind == "system":
+            say = (commands.memory_report(self.config.language) if action.get("what") == "memory"
+                   else commands.storage_report(self.config.language))
+        elif kind == "git_report":
+            self._command_card(self._say("command_working"))
+            self._in_background(lambda: commands.git_report(self.config.language, commands.projects()),
+                                lambda text: self._command_card(text, timeout=20))
+            answered_elsewhere = True
+        elif kind == "docker_images":
+            self._command_card(self._say("command_working"), timeout=30)
+            self._in_background(lambda: commands.images_report(self.config.language),
+                                lambda text: self._command_card(text, timeout=25))
+            answered_elsewhere = True
+        elif kind == "compose_list":
+            self._command_card(self._say("command_working"), timeout=30)
+            self._in_background(lambda: commands.compose_report(self.config.language, commands.projects()),
+                                lambda text: self._command_card(text, timeout=20))
+            answered_elsewhere = True
+        elif kind == "image_alone":
+            say = self._say("image_alone", image=action.get("image", ""))
+        elif kind in ("compose", "dev_service"):
+            self._docker_or_service(kind, action)
+            answered_elsewhere = True
+        elif kind == "servers_list":
+            say = commands.running_list(self.watch, action.get("show", "all"), self.config.language) \
+                or self._say("command_nothing_running")
         elif kind == "setup_project":
             self._setup_project(action.get("project"))
             answered_elsewhere = True
@@ -1584,6 +1739,10 @@ class Brain:
         if self.mode is not None and time.monotonic() - self.last_server_check > SERVER_CHECK_EVERY:
             self._check_servers()
 
+        if time.monotonic() - self.last_room_check > ROOM_CHECK_EVERY:
+            self.last_room_check = time.monotonic()
+            self._check_room()
+
         if self.mode is not None and time.monotonic() - self.last_snapshot > SNAPSHOT_EVERY:
             self.last_snapshot = time.monotonic()
             self._snapshot_desk()
@@ -1657,7 +1816,8 @@ def main():
         return GLib.SOURCE_REMOVE
 
     for sig in (signal.SIGINT, signal.SIGTERM):
-        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, sig, stop)
+        # GLib 2.80 (Ubuntu 24.04) has no GLibUnix.signal_add yet; GLib.unix_signal_add is the same call.
+        getattr(GLibUnix, "signal_add", GLib.unix_signal_add)(GLib.PRIORITY_DEFAULT, sig, stop)
     try:
         loop.run()
     finally:

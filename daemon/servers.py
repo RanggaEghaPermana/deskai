@@ -6,7 +6,8 @@ looks at them every few seconds; one that stops answering is reported once, and 
 offers to restart it or show its log.
 
 Servers you started yourself in a project are listed too. Stopping one of those is usually you
-pressing Ctrl+C, so it just leaves the list, with no alarm.
+pressing Ctrl+C, so it just leaves the list, with no alarm. So are running Docker containers and
+the database servers on the system: a container you stop leaves the list, one that crashes is down.
 """
 
 import difflib
@@ -23,6 +24,7 @@ import session
 from brain import log
 
 MANUAL = "manual"   # the kind of a server you started yourself
+CONTAINER = "container"  # a Docker container
 GRACE_S = 90        # a server just started gets this long to answer
 MISSES = 2          # checks in a row without an answer before a running service counts as down
 START_WAIT_S = 60   # how long a restart waits for the port
@@ -60,6 +62,7 @@ class Watch:
         """Looks at everything once. Returns the items that just went down."""
         running = {s["unit"]: s for s in session.servers()}
         services = {d["unit"]: d for d in session.databases()}
+        containers = {c["unit"]: c for c in session.containers()}
         now = time.time()
         down = []
         with self.lock:
@@ -70,11 +73,20 @@ class Watch:
             for unit, found in services.items():
                 if unit not in self.items and unit not in self.stopped:
                     self._add(unit, "service", found, now)
+            for unit, found in containers.items():
+                if unit not in self.items and unit not in self.stopped:
+                    self._add(unit, CONTAINER, found, now)
+            gone = [unit for unit, item in self.items.items()
+                    if item["kind"] == CONTAINER and unit not in containers and item["state"] != "down"]
+        # A container you stopped yourself just leaves, like a server you pressed Ctrl+C on.
+        for unit in gone:
+            if session.container_stopped_by_you(container_name(unit)):
+                self.forget(unit)
         self._scan_hand_started(now)
         with self.lock:
             items = [item for item in self.items.values() if item["kind"] != MANUAL]
         for item in items:
-            active = item["unit"] in running or item["unit"] in services
+            active = item["unit"] in running or item["unit"] in services or item["unit"] in containers
             alive = routine.port_open(item["port"]) if item["port"] else active
             with self.lock:
                 if self.items.get(item["unit"]) is not item:
@@ -140,7 +152,8 @@ class Watch:
             self.stopped[unit] = time.time()
         if item["kind"] == MANUAL:
             return session.stop_hand_started(item)
-        command = ["systemctl", "--user", "stop", unit] if item["kind"] == "server" else ["systemctl", "stop", unit]
+        command = (["systemctl", "--user", "stop", unit] if item["kind"] == "server" else
+                   ["docker", "stop", container_name(unit)] if item["kind"] == CONTAINER else ["systemctl", "stop", unit])
         return subprocess.run(command, capture_output=True, timeout=120).returncode == 0
 
     def hand_started_in(self, folder):
@@ -164,6 +177,9 @@ class Watch:
             if item["kind"] in ("server", MANUAL):
                 path = routine.load().get("path") or os.environ.get("PATH", "")
                 routine.start_server(item, {**os.environ, "PATH": path})
+            elif item["kind"] == CONTAINER:
+                if subprocess.run(["docker", "restart", container_name(unit)], capture_output=True, timeout=120).returncode != 0:
+                    return False
             elif subprocess.run(["systemctl", "restart", unit], capture_output=True, timeout=120).returncode != 0:
                 return False  # no permission, or it failed to start
         except (OSError, subprocess.SubprocessError) as e:
@@ -224,8 +240,14 @@ def git_state(folder):
     return len(status.splitlines()), unpushed
 
 
+def container_name(unit):
+    return unit.removeprefix("docker:")
+
+
 def log_command(item):
-    """The journal of a server or database, following along."""
+    """The journal of a server or database, or a container's own log, following along."""
+    if item["kind"] == CONTAINER:
+        return shlex.join(["docker", "logs", "-n", "200", "-f", container_name(item["unit"])])
     scope = ["--user"] if item["kind"] == "server" else []
     return shlex.join(["journalctl", *scope, "-u", item["unit"], "-n", "200", "-f"])
 
@@ -241,9 +263,11 @@ def last_log_line(item, limit=160):
     if item["kind"] == MANUAL:
         return ""  # what it says goes to your terminal
     scope = ["--user"] if item["kind"] == "server" else []
+    command = (["docker", "logs", "-n", "12", container_name(item["unit"])] if item["kind"] == CONTAINER else
+               ["journalctl", *scope, "-u", item["unit"], "-n", "12", "-o", "cat", "--no-pager"])
     try:
-        out = subprocess.run(["journalctl", *scope, "-u", item["unit"], "-n", "12", "-o", "cat", "--no-pager"],
-                             capture_output=True, text=True, timeout=5).stdout
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        out = result.stdout + result.stderr if item["kind"] == CONTAINER else result.stdout
     except (OSError, subprocess.SubprocessError):
         return ""
     # What it said itself, not systemd's own lines around it.

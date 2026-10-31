@@ -487,6 +487,8 @@ def label(step):
     kind = step["type"]
     if kind == "service":
         return step["unit"].removesuffix(".service")
+    if kind == "container":
+        return f"{step['name']} :{step['port']}" if step.get("port") else step["name"]
     if kind == "server":
         command = step["command"]
         name = ("vite" if re.search(r"\b(dev|vite)\b", command) else

@@ -14,11 +14,16 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 - **Command bar.** Press `Super+/` or click the sparkle and type what you want: "set up my project",
   "restart the server", "close my project", "how long did I focus today?". It can only do what's on a
   fixed list, never run commands. Plain requests, in English or Indonesian, are done instantly with no AI:
-  switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists.
+  switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists,
+  which projects have work not committed or pushed.
 - **Servers on the dock.** The dev servers and database in your projects get a status dot, including the
   ones you started yourself in a terminal. If one DeskAI started stops, you see why, and one click restarts
   it or opens its log. Closing a project asks before stopping anything you started yourself, and tells you
   if it has files not committed or commits not pushed.
+- **Docker in the command bar.** Start, stop or restart a Compose project by name, along with the containers it
+  needs from other projects, and see which images you have. Running containers get a status dot too.
+- **Room on your computer.** A card when memory or a disk runs low. Ask about your RAM or storage to see what's
+  using it, and ask to clear it to see which caches can go.
 - **Music on the dock.** While something plays, in a music app or a browser tab, the dock shows what it
   is with previous, pause and next. Click the song to go to the player. It leaves when the player closes,
   or after half an hour on pause.
@@ -128,6 +133,9 @@ Each day's file is deleted after 90 days.
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs
   don't come back twice.
+- **Clearing caches** only happens when you press the button on the card. It empties the caches of npm, pip, yarn
+  and Composer and your thumbnails, and prunes Docker's build cache: all things their tools fill again.
+- **Starting and stopping system services** from the command bar goes through GNOME's password prompt.
 - **Starting your database without a password** is off unless you ask for it:
   `deskai routine allow-db` prints a polkit rule for you to install.
 - **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
