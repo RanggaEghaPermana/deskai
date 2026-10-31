@@ -8,6 +8,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from gi.repository import Gio, GLib
@@ -42,6 +45,8 @@ LLM_DEFAULTS = {
     "backend": "auto",
     "model": "claude-opus-5-5",
     "effort": "low",
+    "ollama_model": "qwen3:1.7b",
+    "ollama_url": "http://127.0.0.1:11434",
     "triage_notifications": True,
     "exclude_apps": [],
 }
@@ -310,8 +315,8 @@ applied to the whole shell.
 the dock's inbox as a message, e.g. "WhatsApp"], agent_apps: [desktop ids of AI apps whose notifications \
 mean done or needs attention]}: the dock's inbox, which also gets Claude Code, Codex and Gemini CLI through \
 `deskai hooks install`.
-- llm: {backend: "auto" | "api" | "claude-cli" | "none", model, effort, triage_notifications: bool, \
-exclude_apps: [desktop ids never sent to the model]}
+- llm: {backend: "auto" | "api" | "claude-cli" | "ollama" | "none", model, effort, ollama_model, \
+triage_notifications: bool, exclude_apps: [desktop ids never sent to the model]}
 - modes: object keyed by a short lowercase id; key order is the order in the dock. Each mode has:
   label; icon (a GNOME symbolic icon name, e.g. document-edit-symbolic, applications-engineering-symbolic, \
 accessories-dictionary-symbolic, face-smile-symbolic, media-playback-start-symbolic, mail-unread-symbolic, \
@@ -392,6 +397,11 @@ CARD_STRINGS = {
         "server_back": "{name} is back up",
         "server_failed": "{name} won't start",
         "server_stopped": "{name} is stopped",
+        "llm_none": "No AI is set up. You can pick one in DeskAI Setup.",
+        "llm_claude_stopped": "Claude isn't available right now: signed out, plan ended or limit reached. Sign in again, or pick another AI in DeskAI Setup.",
+        "llm_ollama_down": "Ollama isn't answering. Start it, or pick another AI in DeskAI Setup.",
+        "llm_ollama_model": "The local model isn't downloaded yet. Run: ollama pull {model}",
+        "llm_edit_needs_claude": "The local model can't do that yet. If you meant changing your modes, that needs Claude.",
         "command_needs_ai": "That needs AI, which is off. You can turn it on in DeskAI Setup.",
         "command_failed": "Couldn't do that: {error}",
         "command_nothing": "Nothing to do there.",
@@ -401,6 +411,20 @@ CARD_STRINGS = {
         "command_no_project": "No history for that project yet.",
         "command_no_desk": "No earlier session to bring back.",
         "command_no_folder": "Couldn't find that folder.",
+        "project_closing": "Closing {name}…",
+        "project_closed": "{name} is closed",
+        "project_nothing": "Nothing of {name} was running",
+        "project_kept": "{label} stays on: {other} uses it",
+        "project_tabs": "The Chrome tabs stay open.",
+        "project_terminals": "Its Claude Code terminal is still open. If Claude is working, closing it stops that. The conversation can be resumed.",
+        "project_close_terminals": "Close terminal",
+        "project_keep_terminals": "Keep it",
+        "project_terminals_closed": "Terminal closed. The conversation can be resumed.",
+        "command_no_app": "Couldn't find that app.",
+        "command_no_window": "No window to go by right now.",
+        "command_free_mode": "That only applies in a focus mode.",
+        "marked": "Not for {mode}",
+        "marked_text": "Counts as a distraction in {mode} from now on.",
         "command_edit_wait": "Working on that change…",
         "command_edit_same": "Nothing needed changing.",
         "command_apply": "Apply",
@@ -465,6 +489,11 @@ CARD_STRINGS = {
         "server_back": "{name} udah nyala lagi",
         "server_failed": "{name} nggak mau nyala",
         "server_stopped": "{name} udah dimatiin",
+        "llm_none": "Belum ada AI yang dipilih. Bisa dipilih di DeskAI Setup.",
+        "llm_claude_stopped": "Claude lagi nggak bisa dipake: belum login, langganan habis, atau kena limit. Login lagi, atau pilih AI lain di DeskAI Setup.",
+        "llm_ollama_down": "Ollama-nya nggak nyaut. Nyalain dulu, atau pilih AI lain di DeskAI Setup.",
+        "llm_ollama_model": "Model lokalnya belum ke-download. Jalanin: ollama pull {model}",
+        "llm_edit_needs_claude": "Model lokal belum bisa ngerjain itu. Kalau maksudnya ngubah mode, itu butuh Claude.",
         "command_needs_ai": "Itu butuh AI, dan AI-nya lagi mati. Bisa dinyalain di DeskAI Setup.",
         "command_failed": "Nggak bisa: {error}",
         "command_nothing": "Nggak ada yang perlu dilakuin.",
@@ -474,6 +503,20 @@ CARD_STRINGS = {
         "command_no_project": "Belum ada riwayat buat project itu.",
         "command_no_desk": "Nggak ada sesi sebelumnya buat dibalikin.",
         "command_no_folder": "Folder itu nggak ketemu.",
+        "project_closing": "Lagi nutup {name}…",
+        "project_closed": "{name} udah ditutup",
+        "project_nothing": "Nggak ada yang jalan dari {name}",
+        "project_kept": "{label} tetep nyala, dipake {other}",
+        "project_tabs": "Tab Chrome tetep kebuka.",
+        "project_terminals": "Terminal Claude Code-nya masih kebuka. Kalau Claude lagi ngerjain sesuatu, nutupnya bakal ngehentiin itu. Percakapannya tetep bisa dilanjut.",
+        "project_close_terminals": "Tutup terminal",
+        "project_keep_terminals": "Biarin",
+        "project_terminals_closed": "Terminal ditutup. Percakapannya tetep bisa dilanjut.",
+        "command_no_app": "App itu nggak ketemu.",
+        "command_no_window": "Lagi nggak ada jendela yang bisa dinilai.",
+        "command_free_mode": "Itu cuma berlaku di mode fokus.",
+        "marked": "Bukan buat {mode}",
+        "marked_text": "Mulai sekarang dianggap distraksi di {mode}.",
         "command_edit_wait": "Lagi nyiapin perubahannya…",
         "command_edit_same": "Nggak ada yang perlu diubah.",
         "command_apply": "Terapin",
@@ -555,7 +598,11 @@ def notification_prompt(key, mode, modes, app, title, body):
     )
 
 
-# ---- Claude -----------------------------------------------------------------
+# ---- the model ----------------------------------------------------------------
+
+def cli_error(message):
+    return LLMError(message, hint="llm_claude_stopped" if CLAUDE_STOPPED.search(message) else None)
+
 
 def installed_apps():
     lines = []
@@ -565,18 +612,49 @@ def installed_apps():
     return "\n".join(sorted(lines))
 
 
+# What Claude Code says when it can't be used right now, however good the request.
+CLAUDE_STOPPED = re.compile(r"not logged in|/login|invalid api key|authentication|unauthori[sz]ed|forbidden|"
+                            r"subscription|billing|credit balance|usage limit|limit reached|hit your .*limit", re.I)
+LOOK_AGAIN_NONE_S = 60       # "auto" with nothing to use: Ollama may just be starting
+LOOK_AGAIN_LOCAL_S = 3600    # "auto" on the local model: is Claude back?
+OLLAMA_CONTEXT = 4096        # plenty for what's sent, and memory grows with it
+OLLAMA_KEEP_ALIVE = "2m"     # let go of the memory soon after: laptops need it back
+
+
 class LLMError(RuntimeError):
-    pass
+    """A call that failed. `hint`: a card string saying what to do about it, when there's something to do."""
+
+    def __init__(self, message, hint=None, **params):
+        super().__init__(message)
+        self.hint = hint
+        self.params = params
 
 
-class Claude:
-    """Calls Claude through the Anthropic SDK when API credentials exist,
-    otherwise through the Claude Code CLI (which uses your Claude login)."""
+class LLM:
+    """The model behind the smart features: Claude (an API key, or Claude Code's login) or a local
+    one through Ollama. "auto" takes the first that works, in that order, and if Claude stops
+    working (signed out, plan ended, limit reached) carries on locally and tries Claude again later."""
 
     def __init__(self, settings):
+        self.wanted = settings["backend"]
         self.model = settings["model"]
         self.effort = settings["effort"]
-        self.backend = self._pick(settings["backend"])
+        self.ollama_model = settings["ollama_model"]
+        self.ollama_url = settings["ollama_url"].rstrip("/")
+        self.look_again_at = 0.0
+        self._choose()
+
+    def _choose(self):
+        self.backend = self._pick(self.wanted)
+        # "auto" on less than its first choice looks again now and then.
+        if self.wanted != "auto" or self.backend in ("api", "claude-cli"):
+            self.look_again_at = 0.0
+        else:
+            self.look_again_at = time.monotonic() + (LOOK_AGAIN_NONE_S if self.backend == "none" else LOOK_AGAIN_LOCAL_S)
+
+    def _look_again(self):
+        if self.look_again_at and time.monotonic() >= self.look_again_at:
+            self._choose()
 
     def _pick(self, wanted):
         has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
@@ -584,29 +662,105 @@ class Claude:
             try:
                 import anthropic
             except ImportError:
-                log.warning("anthropic SDK not installed; run install.sh")
+                log.warning("anthropic SDK not installed; pick the API key in DeskAI Setup")
             else:
                 self._anthropic = anthropic
                 self._client = anthropic.Anthropic(timeout=30.0, max_retries=1)
                 return "api"
         if wanted in ("auto", "claude-cli"):
             self._cli = shutil.which("claude")
-            if self._cli:
+            if self._cli and (wanted == "claude-cli" or self._cli_signed_in()):
                 return "claude-cli"
-            log.warning("claude CLI not found on PATH")
+            if wanted == "claude-cli":
+                log.warning("claude CLI not found on PATH")
+        if wanted == "ollama" or (wanted == "auto" and self._ollama_has_model()):
+            return "ollama"
         return "none"
+
+    def _cli_signed_in(self):
+        try:
+            out = subprocess.run([self._cli, "auth", "status", "--json"], capture_output=True, text=True, timeout=15).stdout
+            return bool(json.loads(out).get("loggedIn", True))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return True  # an older Claude Code, say: the first call will tell
+
+    def _ollama_models(self):
+        """The models Ollama has downloaded, or None if it isn't answering."""
+        try:
+            with urllib.request.urlopen(f"{self.ollama_url}/api/tags", timeout=1) as response:
+                return [model["name"] for model in json.load(response).get("models", [])]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _ollama_has_model(self):
+        return any(name in (self.ollama_model, f"{self.ollama_model}:latest") for name in self._ollama_models() or [])
 
     @property
     def available(self):
+        self._look_again()
         return self.backend != "none"
 
-    def ask(self, system, prompt, schema, *, effort=None, max_tokens=2048, timeout=90):
+    def describe(self):
+        model = {"none": "", "ollama": self.ollama_model}.get(self.backend, self.model)
+        return f"{self.backend} · {model}" if model else self.backend
+
+    def problem(self):
+        """What's keeping it from working, if anything, for `deskai doctor`."""
+        if self.backend == "none":
+            return ("no AI found. Sign in to Claude Code, set ANTHROPIC_API_KEY in ~/.config/deskai/env, "
+                    f"or install Ollama and run: ollama pull {self.ollama_model}")
+        if self.backend == "claude-cli" and not self._cli_signed_in():
+            return "Claude Code isn't signed in. Run: claude"
+        if self.backend == "ollama":
+            if self._ollama_models() is None:
+                return "Ollama isn't running"
+            if not self._ollama_has_model():
+                return f"the model isn't downloaded. Run: ollama pull {self.ollama_model}"
+        return None
+
+    def ask(self, system, prompt, schema, *, effort=None, max_tokens=2048, timeout=90, examples=""):
+        """`examples`: added to the instructions for a local model, which needs showing."""
+        self._look_again()
         effort = effort or self.effort
-        if self.backend == "api":
-            return self._ask_api(system, prompt, schema, effort, max_tokens, timeout)
-        if self.backend == "claude-cli":
-            return self._ask_cli(system, prompt, schema, effort, timeout)
-        raise LLMError("no Claude backend available")
+        try:
+            if self.backend == "api":
+                return self._ask_api(system, prompt, schema, effort, max_tokens, timeout)
+            if self.backend == "claude-cli":
+                return self._ask_cli(system, prompt, schema, effort, timeout)
+            if self.backend == "ollama":
+                return self._ask_ollama(system + examples, prompt, schema, max_tokens, timeout)
+        except LLMError as e:
+            if e.hint != "llm_claude_stopped" or self.wanted != "auto" or not self._ollama_has_model():
+                raise
+            log.warning("Claude isn't available (%s), using %s for now", e, self.ollama_model)
+            self.backend = "ollama"
+            self.look_again_at = time.monotonic() + LOOK_AGAIN_LOCAL_S
+            return self._ask_ollama(system + examples, prompt, schema, max_tokens, timeout)
+        raise LLMError("no AI available", hint="llm_none")
+
+    def _ask_ollama(self, system, prompt, schema, max_tokens, timeout):
+        body = {
+            "model": self.ollama_model,
+            "stream": False,
+            "think": False,
+            "format": schema,
+            "keep_alive": OLLAMA_KEEP_ALIVE,
+            "options": {"temperature": 0, "num_ctx": OLLAMA_CONTEXT, "num_predict": max_tokens},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        }
+        request = urllib.request.Request(f"{self.ollama_url}/api/chat", data=json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                reply = json.load(response)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise LLMError(f"{self.ollama_model} isn't downloaded", hint="llm_ollama_model",
+                               model=self.ollama_model) from e
+            raise LLMError(f"Ollama error {e.code}") from e
+        except OSError as e:  # refused, or too slow to answer
+            raise LLMError(f"Ollama isn't answering: {e}", hint="llm_ollama_down") from e
+        return json.loads(reply["message"]["content"])
 
     def _ask_api(self, system, prompt, schema, effort, max_tokens, timeout):
         anthropic = self._anthropic
@@ -625,9 +779,9 @@ class Claude:
             else:
                 response = client.messages.create(**params)
         except anthropic.AuthenticationError as e:
-            raise LLMError("API key ditolak") from e
+            raise LLMError("API key rejected", hint="llm_claude_stopped") from e
         except anthropic.RateLimitError as e:
-            raise LLMError("rate limited") from e
+            raise LLMError("rate limited", hint="llm_claude_stopped") from e
         except anthropic.APIStatusError as e:
             raise LLMError(f"API error {e.status_code}: {e.message}") from e
         except anthropic.APIConnectionError as e:
@@ -663,9 +817,9 @@ class Claude:
         try:
             out = json.loads(proc.stdout)
         except json.JSONDecodeError as e:
-            raise LLMError(f"claude CLI failed: {(proc.stderr or proc.stdout).strip()[:300]}") from e
+            raise cli_error(f"claude CLI failed: {(proc.stderr or proc.stdout).strip()[:300]}") from e
         if out.get("is_error"):
-            raise LLMError(f"claude CLI error: {str(out.get('result'))[:300]}")
+            raise cli_error(f"claude CLI error: {str(out.get('result'))[:300]}")
         data = out.get("structured_output")
         if data is None:
             match = re.search(r"\{.*\}", out.get("result", ""), re.S)

@@ -68,7 +68,7 @@ def cmd_status(_args):
     print(f"Held   : {len(state['held'])} notifications")
     for held in state["held"]:
         print(f"         - {held['app']}: {held['title']}")
-    print(f"Brain  : {'online' if state['brain'] else 'offline'} · backend {brain.Claude(config.llm).backend}")
+    print(f"Brain  : {'online' if state['brain'] else 'offline'} · AI {brain.LLM(config.llm).describe()}")
     inbox = state.get("inbox", [])
     print(f"Inbox  : {len(inbox)} items")
     for item in inbox:
@@ -136,16 +136,16 @@ def cmd_stats(args):
 def cmd_agent(args):
     config = brain.Config()
     config.refresh()
-    claude = brain.Claude(config.llm)
-    if not claude.available:
-        sys.exit("No Claude backend. Set ANTHROPIC_API_KEY or install Claude Code (`claude`).")
+    llm = brain.LLM(config.llm)
+    if llm.backend not in ("api", "claude-cli"):
+        sys.exit("Changing modes needs Claude. Set ANTHROPIC_API_KEY or sign in to Claude Code (`claude`).")
     old_text = brain.MODES_FILE.read_text()
     prompt = (f"Current modes.json:\n```json\n{old_text}\n```\n\n"
               f"Installed apps (desktop id — name):\n{brain.installed_apps()}\n\n"
               f"Request: {args.instruction}")
-    print(f"Asking Claude ({claude.backend}, {claude.model})…", file=sys.stderr)
+    print(f"Asking Claude ({llm.describe()})…", file=sys.stderr)
     try:
-        result = claude.ask(brain.edit_system(config.language), prompt, brain.EDIT_SCHEMA,
+        result = llm.ask(brain.edit_system(config.language), prompt, brain.EDIT_SCHEMA,
                             effort="medium", max_tokens=16000, timeout=300)
         new_config = json.loads(result["config_json"])
     except (brain.LLMError, ValueError, KeyError) as e:
@@ -184,13 +184,13 @@ def cmd_classify(args):
     if ruled:
         print(json.dumps(ruled, ensure_ascii=False))
         return
-    claude = brain.Claude(config.llm)
-    if not claude.available:
+    llm = brain.LLM(config.llm)
+    if not llm.available:
         print(json.dumps(brain.verdict("neutral", source="default")))
         return
     prompt = brain.activity_prompt(key, mode, config.modes(), args.app_id, args.app, title)
-    result = claude.ask(brain.activity_system(config.language), prompt, brain.ACTIVITY_SCHEMA)
-    print(json.dumps({**result, "source": f"llm/{claude.backend}"}, ensure_ascii=False))
+    result = llm.ask(brain.activity_system(config.language), prompt, brain.ACTIVITY_SCHEMA)
+    print(json.dumps({**result, "source": f"llm/{llm.backend}"}, ensure_ascii=False))
 
 
 def send_inbox(event_json):
@@ -373,12 +373,14 @@ def cmd_doctor(_args):
     checks.append((f"modes.json valid ({brain.MODES_FILE})", bool(config.data["modes"]),
                    "see the errors in: journalctl --user -u deskaid" if brain.MODES_FILE.exists()
                    else "not there yet; the extension creates it when it first runs"))
-    backend = brain.Claude(config.llm).backend
+    llm = brain.LLM(config.llm)
     if config.llm["backend"] == "none":
         checks.append(("AI off (your choice): your allow and block lists decide", True, ""))
     else:
-        checks.append((f"Claude backend: {backend}", backend != "none",
-                       "set ANTHROPIC_API_KEY in ~/.config/deskai/env or install Claude Code"))
+        problem = llm.problem()
+        checks.append((f"AI: {llm.describe()}", not problem, problem))
+        if config.llm["backend"] == "auto" and llm.backend != "ollama" and llm._ollama_has_model():
+            checks.append((f"local backup ready: {llm.ollama_model}", True, ""))
     for label, ok, fix in checks:
         print(f"{'✓' if ok else '✗'} {label}")
         if not ok:

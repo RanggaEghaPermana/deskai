@@ -103,5 +103,57 @@ class Scan(unittest.TestCase):
         self.assertEqual(self.watch.match("nope"), [])
 
 
+class ClosingAProject(unittest.TestCase):
+    PHP = {"unit": "deskai-app-php.service", "cwd": "/work/app", "command": "php -S 127.0.0.1:8000", "port": 8000}
+    NODE = {"unit": "deskai-app-dev.service", "cwd": "/work/app/web", "command": "npm run dev", "port": 5173}
+    OTHER = {"unit": "deskai-shop-php.service", "cwd": "/work/shop", "command": "php -S 127.0.0.1:9000", "port": 9000}
+    DB = {"unit": "postgresql@18-main.service", "port": 5432}
+
+    def close(self, running, databases):
+        watch = servers.Watch()
+        self.stopped = []
+
+        def run(command, **_kwargs):
+            if "stop" in command:
+                self.stopped.append(command[-1])
+            return mock.Mock(returncode=0, stdout="")
+        with mock.patch.object(servers.session, "servers", return_value=running), \
+                mock.patch.object(servers.session, "databases", return_value=[]), \
+                mock.patch.object(servers.routine, "port_open", return_value=True), \
+                mock.patch.object(servers.routine, "database_service", side_effect=lambda folder: databases.get(folder)), \
+                mock.patch.object(servers.subprocess, "run", side_effect=run):
+            return servers.close_project(watch, "/work/app")
+
+    def test_its_servers_and_database_stop(self):
+        report = self.close([self.PHP, self.NODE], {"/work/app": self.DB})
+        self.assertEqual(sorted(self.stopped), sorted([self.PHP["unit"], self.NODE["unit"], self.DB["unit"]]))
+        self.assertEqual({state for _label, state, _other in report}, {"stopped"})
+
+    def test_another_projects_server_keeps_running(self):
+        self.close([self.PHP, self.OTHER], {"/work/app": self.DB})
+        self.assertNotIn(self.OTHER["unit"], self.stopped)
+
+    def test_a_database_another_project_uses_stays_on(self):
+        report = self.close([self.PHP, self.OTHER], {"/work/app": self.DB, "/work/shop": self.DB})
+        self.assertNotIn(self.DB["unit"], self.stopped)
+        self.assertIn(("postgresql@18-main", "kept", "shop"), report)
+
+    def test_nothing_running(self):
+        self.assertEqual(self.close([], {}), [])
+
+    def test_a_folder_with_a_similar_name_isnt_inside(self):
+        self.assertFalse(servers.session.inside("/work/app-old", "/work/app"))
+        self.assertTrue(servers.session.inside("/work/app/web", "/work/app"))
+
+
+class MatchingTypos(unittest.TestCase):
+    def test_a_slip_of_the_fingers(self):
+        watch = servers.Watch()
+        watch.items[VITE["unit"]] = {"unit": VITE["unit"], "kind": "server", "label": "vite :5173", "command": "npm run dev",
+                                     "cwd": "/work/gudang", "port": 5173, "state": "up"}
+        self.assertEqual(watch.match("gudnag"), [VITE["unit"]])
+        self.assertEqual(watch.match("nope"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

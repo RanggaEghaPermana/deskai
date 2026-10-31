@@ -72,9 +72,12 @@ STRINGS = {
         "ai_api_text": "You pay Anthropic for what you use",
         "ai_key": "API key",
         "ai_key_saved": "API key (saved; leave empty to keep it)",
+        "ai_ollama": "Ollama (on this computer)",
+        "ai_ollama_found": "Free, and nothing leaves your computer. Not as clever as Claude; uses about 2 GB of memory while it thinks",
+        "ai_ollama_missing": "Install Ollama from ollama.com first, then open this window again",
         "ai_none": "No AI",
         "ai_none_text": "Modes and your allow and block lists still work",
-        "ai_privacy": "With AI on, the titles of the windows you use and the notifications held back are sent to Claude, and so is what you type in the command bar, with the names of your modes, projects, servers and apps. Password managers are left out. Everything else stays on this computer.",
+        "ai_privacy": "With Claude, the titles of the windows you use and the notifications held back are sent to it, and so is what you type in the command bar, with the names of your modes, projects, servers and apps. Password managers are left out. With Ollama, none of it leaves this computer.",
         "extras_title": "Extras",
         "extras_text": "You can change these later by opening this window again.",
         "extra_agents": "AI agents report to the dock",
@@ -90,6 +93,7 @@ STRINGS = {
         "retry": "Try again",
         "step_app": "Copying files",
         "step_ai": "Preparing the AI connection",
+        "step_ollama": "Downloading the local AI model (about 1.4 GB)",
         "step_settings": "Saving your choices",
         "step_service": "Starting the background service",
         "step_hooks": "Connecting your AI agents",
@@ -159,9 +163,12 @@ STRINGS = {
         "ai_api_text": "Bayar ke Anthropic sesuai pemakaian",
         "ai_key": "API key",
         "ai_key_saved": "API key (udah tersimpan; kosongin kalau nggak diganti)",
+        "ai_ollama": "Ollama (di komputer ini)",
+        "ai_ollama_found": "Gratis, dan datanya nggak keluar dari komputer. Nggak sepinter Claude; makan RAM sekitar 2 GB pas lagi mikir",
+        "ai_ollama_missing": "Pasang Ollama dari ollama.com dulu, terus buka jendela ini lagi",
         "ai_none": "Tanpa AI",
         "ai_none_text": "Mode dan daftar izin/blokir kamu tetap jalan",
-        "ai_privacy": "Kalau AI nyala, judul jendela yang kamu pakai dan notifikasi yang ditahan dikirim ke Claude. Yang kamu ketik di kolom perintah juga, bareng nama mode, project, server, dan app kamu. Aplikasi password nggak ikut. Selain itu semuanya tetap di komputer ini.",
+        "ai_privacy": "Kalau pakai Claude, judul jendela yang kamu pakai dan notifikasi yang ditahan dikirim ke sana. Yang kamu ketik di kolom perintah juga, bareng nama mode, project, server, dan app kamu. Aplikasi password nggak ikut. Kalau pakai Ollama, semuanya tetap di komputer ini.",
         "extras_title": "Tambahan",
         "extras_text": "Bisa diganti nanti dengan buka jendela ini lagi.",
         "extra_agents": "AI agent ngabarin ke dock",
@@ -177,6 +184,7 @@ STRINGS = {
         "retry": "Coba lagi",
         "step_app": "Nyalin file",
         "step_ai": "Nyiapin koneksi AI",
+        "step_ollama": "Download model AI lokal (sekitar 1,4 GB)",
         "step_settings": "Nyimpen pilihan kamu",
         "step_service": "Nyalain layanan latar",
         "step_hooks": "Nyambungin AI agent kamu",
@@ -234,10 +242,11 @@ class SetupWindow(Adw.ApplicationWindow):
         self.installed = installer.is_installed()
         self.lang = choices["language"] if choices["language"] in STRINGS else system_language()
         self.claude = installer.find_claude()
+        self.ollama = installer.find_ollama()
         self.saved_key = installer.has_api_key()
         self.agents = installer.detected_agents()
         self.ai = choices["ai"] or ("claude" if self.claude else "none")
-        if self.ai == "claude" and not self.claude:
+        if (self.ai == "claude" and not self.claude) or (self.ai == "ollama" and not self.ollama):
             self.ai = "none"
         self.api_key = ""
         self.hooks = installer.hooks_installed() if self.installed else bool(self.agents)
@@ -379,6 +388,8 @@ class SetupWindow(Adw.ApplicationWindow):
                                             visible=self.ai == "api")
         self.key_row.connect("changed", self.on_key)
         group.add(self.key_row)
+        group.add(choice("ollama", self.t("ai_ollama"),
+                         self.t("ai_ollama_found") if self.ollama else self.t("ai_ollama_missing"), bool(self.ollama)))
         group.add(choice("none", self.t("ai_none"), self.t("ai_none_text")))
         return self.scrolled(self.heading(self.t("ai_title"), self.t("ai_text")), group)
 
@@ -523,6 +534,8 @@ class SetupWindow(Adw.ApplicationWindow):
             skipped.add("hooks")
         if options.ai != "api":
             skipped.add("ai")
+        if options.ai != "ollama":
+            skipped.add("ollama")
         steps = [step for step in installer.install_steps(options) if step[0] not in skipped]
         self.run_work(steps, self.t("work_install"), self.install_finished, self.start_install)
 

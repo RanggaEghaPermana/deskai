@@ -6,6 +6,7 @@ looks at them every few seconds; one that stops answering is reported once, and 
 offers to restart it or show its log.
 """
 
+import difflib
 import os
 import re
 import shlex
@@ -95,8 +96,14 @@ class Watch:
         if target in ("", "all", "semua", "server", "servers"):
             return [i["unit"] for i in items]
         words = [w for w in re.split(r"\s+", target) if w not in ("server", "the")] or [target]
-        return [i["unit"] for i in items
-                if all(w in f"{i['label']} {i['unit']} {i['command']} {i['port'] or ''}".lower() for w in words)]
+        about = {i["unit"]: f"{i['label']} {i['unit']} {i['command']} {i['port'] or ''} {os.path.basename(i['cwd'])}".lower()
+                 for i in items}
+        exact = [unit for unit, text in about.items() if all(w in text for w in words)]
+        if exact:
+            return exact
+        # A slip of the fingers: "restart gudnag".
+        return [unit for unit, text in about.items()
+                if all(difflib.get_close_matches(w, re.findall(r"[a-z0-9]+", text), cutoff=0.8) for w in words)]
 
     def forget(self, unit):
         with self.lock:
@@ -137,6 +144,31 @@ class Watch:
             if live and answered:
                 live.update(state="up", since=time.time())
         return answered
+
+
+def close_project(watch, folder):
+    """Stops a project's servers, and its database unless a project that's still running uses it too.
+    Returns what happened: [(label, "stopped" | "failed" | "kept", the project keeping it, or "")]."""
+    watch.scan()
+    running = session.servers()
+    mine = [s for s in running if session.inside(s["cwd"], folder)]
+    others = [s for s in running if not session.inside(s["cwd"], folder)]
+    report = []
+    for server in mine:
+        ok = watch.stop(server["unit"])
+        report.append((routine.label({"type": "server", **server}), "stopped" if ok else "failed", ""))
+    database = routine.database_service(folder)
+    if database and subprocess.run(["systemctl", "is-active", "--quiet", database["unit"]]).returncode == 0:
+        label = routine.label({"type": "service", **database})
+        sharing = next((os.path.basename(s["cwd"]) for s in others
+                        if (routine.database_service(s["cwd"]) or {}).get("unit") == database["unit"]), "")
+        if sharing:
+            report.append((label, "kept", sharing))
+        else:
+            ok = watch.stop(database["unit"]) if watch.get(database["unit"]) else \
+                subprocess.run(["systemctl", "stop", database["unit"]], capture_output=True, timeout=120).returncode == 0
+            report.append((label, "stopped" if ok else "failed", ""))
+    return report
 
 
 def log_command(item):

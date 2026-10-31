@@ -54,7 +54,7 @@ LAUNCHER = DATA / "applications" / f"{APP_ID}.Setup.desktop"
 ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
 
 # What the AI choices mean in modes.json's llm.backend.
-BACKENDS = {"claude": "claude-cli", "api": "api", "none": "none"}
+BACKENDS = {"claude": "claude-cli", "api": "api", "ollama": "ollama", "none": "none"}
 AGENT_DIRS = {"Claude Code": (".claude", "claude"), "Codex": (".codex", "codex"), "Gemini CLI": (".gemini", "gemini")}
 # Packages by package manager, for what the checks can offer to install.
 PACKAGES = {
@@ -116,6 +116,19 @@ def find_claude():
         if candidate and os.access(candidate, os.X_OK):
             return str(candidate)
     return ""
+
+
+def find_ollama():
+    for candidate in [shutil.which("ollama"), HOME / ".local/bin/ollama"]:
+        if candidate and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
+
+
+def ollama_model():
+    """The local model the default settings use."""
+    defaults = read_json(ROOT / "extension" / UUID / "modes.default.json") or {}
+    return (defaults.get("llm") or {}).get("ollama_model", "qwen3:1.7b")
 
 
 def detected_agents():
@@ -203,7 +216,7 @@ def current_choices():
     backend = (modes.get("llm") or {}).get("backend", "")
     ai = {v: k for k, v in BACKENDS.items()}.get(backend, "")
     if backend == "auto":
-        ai = "api" if has_api_key() else "claude" if find_claude() else "none"
+        ai = "api" if has_api_key() else "claude" if find_claude() else "ollama" if find_ollama() else "none"
     routine = read_json(ROUTINE_FILE) or {}
     return {"language": modes.get("language", ""), "ai": ai, "routine": routine.get("enabled", False)}
 
@@ -220,7 +233,7 @@ def has_api_key():
 @dataclass
 class Options:
     language: str = "en"
-    ai: str = "none"             # claude, api, none
+    ai: str = "none"             # claude, api, ollama, none
     api_key: str = ""            # only when ai is api; empty keeps the saved one
     hooks: bool = False
     routine: bool = False
@@ -277,7 +290,9 @@ def _write_config(app_dir, options):
     defaults = app_dir / "extension" / UUID / "modes.default.json"
     modes = read_json(MODES_FILE) or json.loads(defaults.read_text())
     modes["language"] = options.language
-    modes.setdefault("llm", {})["backend"] = BACKENDS[options.ai]
+    # Claude's login on "auto": if Claude ever stops working and Ollama is set up, it carries on with that.
+    backend = "auto" if options.ai == "claude" and not has_api_key() else BACKENDS[options.ai]
+    modes.setdefault("llm", {})["backend"] = backend
     temp = MODES_FILE.with_suffix(".json.new")
     temp.write_text(json.dumps(modes, indent=2, ensure_ascii=False) + "\n")
     temp.replace(MODES_FILE)
@@ -297,6 +312,16 @@ def _make_venv(python):
     result = run(str(VENV / "bin" / "pip"), "install", "--quiet", "--upgrade", "anthropic", timeout=300)
     if result.returncode != 0:
         raise SetupError("Couldn't download the anthropic package. Check your connection.\n" + result.stderr[-300:])
+
+
+def _pull_ollama_model(model):
+    """Downloads the local model, if it isn't here yet."""
+    ollama = find_ollama()
+    if not ollama:
+        raise SetupError("Ollama isn't installed. Get it from ollama.com and try again.")
+    result = run(ollama, "pull", model, timeout=3600)
+    if result.returncode != 0:
+        raise SetupError(f"Couldn't download {model}. Is Ollama running?\n" + (result.stderr or result.stdout)[-300:])
 
 
 def _service_path():
@@ -392,6 +417,10 @@ def install_steps(options):
         if options.ai == "api":
             _make_venv(python)
 
+    def local_model():
+        if options.ai == "ollama":
+            _pull_ollama_model(ollama_model())
+
     def settings():
         if not options.keep_config:
             _write_config(state["app_dir"], options)
@@ -417,7 +446,8 @@ def install_steps(options):
         INSTALLED.parent.mkdir(parents=True, exist_ok=True)
         INSTALLED.write_text(json.dumps({"version": version()}) + "\n")
 
-    return [("app", app), ("ai", ai), ("settings", settings), ("service", service), ("hooks", hooks), ("finish", finish)]
+    return [("app", app), ("ai", ai), ("ollama", local_model), ("settings", settings), ("service", service),
+            ("hooks", hooks), ("finish", finish)]
 
 
 def uninstall_steps(purge=False):

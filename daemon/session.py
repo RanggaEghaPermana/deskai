@@ -20,6 +20,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -368,6 +369,52 @@ def summary(snap):
 # ---- bringing it back -----------------------------------------------------------------
 
 claude_running = routine.claude_running
+
+
+def inside(path, folder):
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def project_terminals(folder):
+    """The terminal tabs with a Claude Code conversation open in this project: [(Claude's pid, the shell's pid, conversation)]."""
+    table = processes()
+    found = []
+    for info in CLAUDE_SESSIONS.glob("*.json"):
+        try:
+            pid, data = int(info.stem), json.loads(info.read_text())
+        except (OSError, ValueError):
+            continue
+        if pid not in table or not data.get("sessionId") or not inside(data.get("cwd", ""), folder):
+            continue
+        shell = pid
+        while shell in table and table.get(table[shell][0], (0, ""))[1] not in TERMINAL_AGENTS:
+            shell = table[shell][0]
+        if shell in table:
+            found.append((pid, shell, data["sessionId"]))
+    return found
+
+
+def close_terminal(claude_pid, shell_pid, conversation):
+    """Closes the tab: its conversation is on disk and can be resumed. False if it's no longer that tab."""
+    try:
+        if json.loads((CLAUDE_SESSIONS / f"{claude_pid}.json").read_text()).get("sessionId") != conversation:
+            return False
+    except (OSError, ValueError):
+        return False
+    try:
+        done = subprocess.run([sys.executable, "-I", str(TAB_READER), "--close", clean_title(ai_title(conversation)),
+                               str(claude_pid), str(shell_pid)], capture_output=True, timeout=10)
+        if done.returncode == 0:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # No way to reach the window from here: end its processes at least, and the tab says so.
+    try:
+        os.kill(shell_pid, signal.SIGHUP)
+        os.kill(claude_pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
 
 
 def running(comm):

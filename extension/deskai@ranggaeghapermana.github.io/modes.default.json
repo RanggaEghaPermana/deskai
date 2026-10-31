@@ -28,6 +28,7 @@
     "backend": "auto",
     "model": "claude-opus-5-5",
     "effort": "low",
+    "ollama_model": "qwen3:1.7b",
     "triage_notifications": true,
     "exclude_apps": [
       "org.keepassxc.KeePassXC.desktop",

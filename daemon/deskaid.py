@@ -27,9 +27,11 @@ from gi.repository import Gio, GLib, GLibUnix  # noqa: E402
 import brain  # noqa: E402
 import commands  # noqa: E402
 import guide  # noqa: E402
+import learned  # noqa: E402
 import routine  # noqa: E402
 import servers  # noqa: E402
 import session  # noqa: E402
+import sites  # noqa: E402
 from brain import BRAIN_NAME, BUS_NAME, OBJECT_PATH, log  # noqa: E402
 
 TICK_SECONDS = 5
@@ -141,9 +143,13 @@ class Brain:
         self.loop = loop
         self.config = brain.Config()
         self.config.refresh()
-        self.claude = brain.Claude(self.config.llm)
+        self.llm = brain.LLM(self.config.llm)
+        self.llm_warned = False
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="claude")
         self.cache = VerdictCache(brain.CACHE_DIR / "verdicts.json")
+        self.learned = learned.Learned()
+        if not self.learned.seeded:
+            log.info("learned %d verdicts from before", self.learned.seed_from_verdicts(self.cache.data, self.config))
         self.stats = Stats(brain.STATE_DIR / "stats")
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
 
@@ -167,11 +173,13 @@ class Brain:
         self.servers_sent = None
         self.last_server_check = 0.0
         self.pending_edit = None  # a change to modes.json waiting for your OK
+        self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
         self.guide_tries = 0
         self.whatsapp_checked = False
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
-        self.allow_undo = None    # (card id, mode key, the mode as it was)
+        self.allow_undo = None    # (card id, mode key, the mode as it was, the window's title)
+        self.mark_undo = None     # (card id, mode key, the window's title)
         self.last_tick = time.monotonic()
         self.last_save = time.monotonic()
 
@@ -185,7 +193,7 @@ class Brain:
         Gio.bus_watch_name_on_connection(
             self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE, self._on_dock_appeared, self._on_dock_vanished)
         GLib.timeout_add_seconds(TICK_SECONDS, self._tick)
-        log.info("deskaid up · Claude backend: %s · model: %s", self.claude.backend, self.claude.model)
+        log.info("deskaid up · AI: %s", self.llm.describe())
 
     def shutdown(self):
         self._account()
@@ -356,10 +364,18 @@ class Brain:
         mode = self.config.mode(self.mode)
         if not mode or mode["notifications"].get("policy") != "filter":
             return
-        if not self.config.llm["triage_notifications"] or not self._llm_ready():
+        plain = sites.notification_verdict(app, title, body)
+        if plain is not None:
+            log.info("notif %s | %s → %s [site]", app, title[:60], "surface" if plain else "hold")
+            if plain:
+                self._held_card(notification_id, app, title, body, {})
+            return
+        # A small local model lets nearly everything through (11 of 14 real ones Claude held), and
+        # whatever stays held is safe in the tray.
+        if self.llm.backend == "ollama" or not self.config.llm["triage_notifications"] or not self._llm_ready():
             return
         prompt = brain.notification_prompt(self.mode, mode, self.config.modes(), app, title, body)
-        future = self.pool.submit(self.claude.ask, brain.notify_system(self.config.language), prompt, brain.NOTIFY_SCHEMA)
+        future = self.pool.submit(self.llm.ask, brain.notify_system(self.config.language), prompt, brain.NOTIFY_SCHEMA)
         mode_at = self.mode
         future.add_done_callback(
             lambda f: GLib.idle_add(self._on_triaged, f, notification_id, app, title, body, mode_at))
@@ -384,6 +400,13 @@ class Brain:
         elif action.startswith("server:"):
             _, op, unit = action.split(":", 2)
             self._server_action(op, unit)
+        elif action == "project:close-terminals":
+            terminals, self.closing_terminals = self.closing_terminals, []
+            closed = [session.close_terminal(*terminal) for terminal in terminals]
+            log.info("closed %d of %d project terminals", sum(closed), len(closed))
+            self._command_card(self._say("project_terminals_closed"))
+        elif action == "project:keep-terminals":
+            self.closing_terminals = []
         elif action == "command:apply" and self.pending_edit:
             self._apply_edit()
         elif action == "command:cancel":
@@ -397,9 +420,18 @@ class Brain:
             self._open_whatsapp_setting()
         elif action == "allow" and self.card_act and card_id == f"act-{self.card_act.seq}":
             self._allow(self.card_act)
+        elif action == "undo-mark" and self.mark_undo and card_id == self.mark_undo[0]:
+            _, key, title = self.mark_undo
+            self.mark_undo = None
+            self.learned.forget(key, title)
+            self._reclassify()
+        elif action.startswith("go:") and self.card_act and card_id == f"act-{self.card_act.seq}":
+            # You agreed it doesn't belong in this mode.
+            self.learned.add(self.mode, self.card_act.app_id, self.card_act.title, "off_task")
         elif action == "undo-allow" and self.allow_undo and card_id == self.allow_undo[0]:
-            _, key, before = self.allow_undo
+            _, key, before, title = self.allow_undo
             self.allow_undo = None
+            self.learned.forget(key, title)
 
             def restore(mode):
                 mode.clear()
@@ -678,11 +710,11 @@ class Brain:
 
     def on_command(self, text):
         log.info("command: %s", text[:120])
-        quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch)
+        quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch, commands.projects())
         if quick:
             self._run_actions(quick)
             return
-        if not self.claude.available:
+        if not self.llm.available:
             self._command_card(self._say("command_needs_ai"))
             return
         language, mode = self.config.language, self.mode
@@ -691,69 +723,105 @@ class Brain:
             try:
                 can_restore = bool(session.to_restore(session.current_session(), again=True))
                 desk = commands.desk(self.config, mode, self.watch, can_restore)
-                result = commands.interpret(self.claude, language, text, desk)
+                result = commands.interpret(self.llm, language, text, desk)
+                if self.llm.backend == "ollama":
+                    result = commands.only_what_was_asked(result, text, commands.projects())
             except (brain.LLMError, ValueError, KeyError, OSError, TypeError) as e:
                 log.warning("command failed: %s", e)
-                GLib.idle_add(self._command_failed, str(e))
+                GLib.idle_add(self._command_failed, e)
                 return
             GLib.idle_add(self._run_actions, result)
 
         threading.Thread(target=work, name="command", daemon=True).start()
 
     def _command_failed(self, error):
-        self._command_card(self._say("command_failed", error=error[:160]))
+        hint = getattr(error, "hint", None)
+        self._command_card(self._say(hint, **error.params) if hint else self._say("command_failed", error=str(error)[:160]))
         return False
 
     def _run_actions(self, result):
         """Does what was asked, checking everything named against what's really here."""
         say = (result.get("say") or "").strip()
         answered_elsewhere = False  # the steps report on their own card
+        if self.llm.backend == "ollama" and result.get("actions"):
+            say = ""  # a small model's "done!" isn't worth much: say what really happened
+        elif result.get("dropped"):
+            say = say or self._say("command_nothing")
         for action in result.get("actions", [])[:5]:
             kind = action.get("type")
-            if kind == "mode" and self.config.mode(action.get("mode")):
-                self.call("RequestMode", "(s)", (action["mode"],))
-                say = say or self._say("command_mode", mode=self.config.mode(action["mode"])["label"])
-            elif kind == "server":
-                units = self.watch.match(action.get("target"))
-                op = action.get("op")
-                if not units or op not in ("restart", "stop", "log"):
-                    say = self._say("command_no_server")
-                for unit in units[:1] if op == "log" else units:
-                    self._server_action(op, unit)
-                    say = say or self._say("command_done")
-            elif kind == "setup_project":
-                self._setup_project(action.get("project"))
-                answered_elsewhere = True
-            elif kind == "restore_desk":
-                snap = session.to_restore(session.current_session(), again=True)
-                if snap:
-                    self.restore_snap = snap
-                    self._run_restore(snap)
-                    answered_elsewhere = True
-                else:
-                    say = self._say("command_no_desk")
-            elif kind == "open_app":
-                if commands.open_app(action.get("app")):
-                    say = say or self._say("command_done")
-            elif kind == "open_url" and commands.safe_url(action.get("url")):
-                commands.open_uri(action["url"])
-                say = say or self._say("command_done")
-            elif kind == "open_folder":
-                path = commands.folder_path(action.get("path"), commands.projects())
-                if path:
-                    commands.open_folder(path)
-                    say = say or self._say("command_done")
-                else:
-                    say = self._say("command_no_folder")
-            elif kind == "edit_modes" and action.get("request"):
-                self._edit_modes(action["request"])
-                answered_elsewhere = True
+            try:
+                say, reported = self._run_action(kind, action, say)
+            except (GLib.Error, OSError, subprocess.SubprocessError, ValueError) as e:
+                log.warning("command: %s failed: %s", kind, e)
+                say, reported = self._say("command_failed", error=str(e)[:160]), False
+            answered_elsewhere = answered_elsewhere or reported
         if not answered_elsewhere:
             self._command_card(say or self._say("command_nothing"))
         return False
 
+    def _run_action(self, kind, action, say):
+        """Does one action. Returns what to say, and whether its steps report on their own card."""
+        answered_elsewhere = False
+        if kind == "mode" and self.config.mode(action.get("mode")):
+            self.call("RequestMode", "(s)", (action["mode"],))
+            say = say or self._say("command_mode", mode=self.config.mode(action["mode"])["label"])
+        elif kind == "server":
+            units = self.watch.match(action.get("target"))
+            op = action.get("op")
+            if not units or op not in ("restart", "stop", "log"):
+                say = self._say("command_no_server")
+            for unit in units[:1] if op == "log" else units:
+                self._server_action(op, unit)
+                say = say or self._say("command_done")
+        elif kind == "setup_project":
+            self._setup_project(action.get("project"))
+            answered_elsewhere = True
+        elif kind == "close_project":
+            self._close_project(action.get("project"))
+            answered_elsewhere = True
+        elif kind == "restore_desk":
+            snap = session.to_restore(session.current_session(), again=True)
+            if snap:
+                self.restore_snap = snap
+                self._run_restore(snap)
+                answered_elsewhere = True
+            else:
+                say = self._say("command_no_desk")
+        elif kind == "open_app":
+            if commands.open_app(action.get("app")):
+                say = say or self._say("command_done")
+            else:
+                say = self._say("command_no_app")
+        elif kind == "open_url":
+            if commands.safe_url(action.get("url")):
+                commands.open_uri(action["url"])
+                say = say or self._say("command_done")
+            else:
+                say = self._say("command_nothing")
+        elif kind == "open_folder":
+            path = commands.folder_path(action.get("path"), commands.projects())
+            if path:
+                commands.open_folder(path)
+                say = say or self._say("command_done")
+            else:
+                say = self._say("command_no_folder")
+        elif kind == "edit_modes" and action.get("request"):
+            self._edit_modes(action["request"])
+            answered_elsewhere = True
+        elif kind == "label":
+            act = self.activity
+            mode = self.config.mode(self.mode)
+            if not act or not act.title:
+                say = self._say("command_no_window")
+            elif not mode or not mode.get("focus"):
+                say = self._say("command_free_mode")
+            else:
+                (self._allow if action.get("verdict") == "on_task" else self._mark_distraction)(act)
+                answered_elsewhere = True
+        return say, answered_elsewhere
+
     def _setup_project(self, name):
-        path = commands.projects().get(name or "")
+        path = commands.find_project(name, commands.projects())
         if not path:
             self._command_card(self._say("command_no_project"))
             return
@@ -767,6 +835,44 @@ class Brain:
             GLib.idle_add(self._project_planned, plan)
 
         threading.Thread(target=work, name="plan", daemon=True).start()
+
+    def _close_project(self, name):
+        path = commands.find_project(name, commands.projects())
+        if not path:
+            self._command_card(self._say("command_no_project"))
+            return
+        self._command_card(self._say("project_closing", name=os.path.basename(path)), timeout=120)
+
+        def work():
+            try:
+                report = servers.close_project(self.watch, path)
+                terminals = session.project_terminals(path)
+            except (OSError, subprocess.SubprocessError, ValueError) as e:
+                log.warning("command: can't close %s: %s", path, e)
+                GLib.idle_add(self._command_failed, e)
+                return
+            GLib.idle_add(self._project_closed, path, report, terminals)
+
+        threading.Thread(target=work, name="close-project", daemon=True).start()
+
+    def _project_closed(self, path, report, terminals):
+        name = os.path.basename(path)
+        log.info("closed %s: %s, %d terminals open", name, report, len(terminals))
+        self._send_servers()
+        marks = {"stopped": "✓", "failed": "✗"}
+        lines = [self._say("project_kept", label=label, other=other) if state == "kept" else f"{marks[state]} {label}"
+                 for label, state, other in report]
+        lines.append(self._say("project_tabs"))
+        self.closing_terminals = terminals
+        actions = []
+        if terminals:
+            lines.append(self._say("project_terminals"))
+            actions = [{"id": "project:keep-terminals", "label": self._say("project_keep_terminals")},
+                       {"id": "project:close-terminals", "label": self._say("project_close_terminals"), "primary": True}]
+        title = self._say("project_closed", name=name) if report else self._say("project_nothing", name=name)
+        self.card({"id": "close-project", "kind": "command", "title": title, "text": "\n".join(lines),
+                   "actions": actions, "timeout": 45 if terminals else 12})
+        return False
 
     def _project_planned(self, plan):
         if not plan:
@@ -784,10 +890,10 @@ class Brain:
 
         def work():
             try:
-                summary, config = commands.edit_modes(self.claude, language, request)
+                summary, config = commands.edit_modes(self.llm, language, request)
             except (brain.LLMError, ValueError, KeyError, OSError) as e:
                 log.warning("command: can't edit modes: %s", e)
-                GLib.idle_add(self._command_failed, str(e))
+                GLib.idle_add(self._command_failed, e)
                 return
             GLib.idle_add(self._edit_ready, summary, config)
 
@@ -809,7 +915,7 @@ class Brain:
             shutil.copy2(brain.MODES_FILE, brain.MODES_FILE.with_suffix(".json.bak"))
             brain.write_json_atomic(brain.MODES_FILE, config)
         except OSError as e:
-            self._command_failed(str(e))
+            self._command_failed(e)
             return
         self._command_card(self._say("command_applied"))
 
@@ -830,7 +936,7 @@ class Brain:
         self.guide_step = index
         step = guide.STEPS[index]
         last = index == len(guide.STEPS) - 1
-        text = f"guide_{step}_noai" if step == "command" and not self.claude.available else f"guide_{step}"
+        text = f"guide_{step}_noai" if step == "command" and not self.llm.available else f"guide_{step}"
         actions = [] if last else [{"id": "guide:skip", "label": self._say("guide_skip")}]
         actions.append({"id": "guide:next", "label": self._say("guide_done" if last else "guide_next"), "primary": True})
         self.card({
@@ -909,7 +1015,8 @@ class Brain:
         label = self.config.mode(key)["label"]
         log.info("%s | %s allowed as %r", key, act.label, keyword)
         card_id = f"allowed-{act.seq}"
-        self.allow_undo = (card_id, key, before)
+        self.allow_undo = (card_id, key, before, act.title)
+        self.learned.add(key, act.app_id, act.title, "on_task")
         self.card({
             "id": card_id,
             "kind": "fits",
@@ -923,6 +1030,30 @@ class Brain:
         })
         self._reclassify()
 
+    def _mark_distraction(self, act):
+        """"This isn't work": from now on this window counts as a distraction in this mode."""
+        key = self.mode
+        self.learned.add(key, act.app_id, act.title, "off_task")
+        label = self.config.mode(key)["label"]
+        log.info("%s | %s marked as a distraction", key, act.label)
+        act.verdict = "off_task"
+        act.carded = True
+        self.drift_since = self.drift_since or time.monotonic()
+        self.last_nudge = time.monotonic()
+        card_id = f"marked-{act.seq}"
+        self.mark_undo = (card_id, key, act.title)
+        self.card({
+            "id": card_id,
+            "kind": "fits",
+            "icon": {"app_id": act.app_id},
+            "title": act.site or act.app_name,
+            "subtitle": self._say("marked", mode=label),
+            "text": self._say("marked_text", mode=label),
+            "actions": [{"id": "undo-mark", "label": self._say("undo")}],
+            "anchor_mode": key,
+            "timeout": 8,
+        })
+
     def _reclassify(self):
         act = self.activity
         if act:
@@ -934,15 +1065,20 @@ class Brain:
 
     def _refresh_config(self):
         if self.config.refresh():
-            self.claude = brain.Claude(self.config.llm)
-            log.info("config reloaded · Claude backend: %s", self.claude.backend)
+            self.llm = brain.LLM(self.config.llm)
+            self.llm_warned = False
+            log.info("config reloaded · AI: %s", self.llm.describe())
 
     def _llm_ready(self):
-        return self.claude.available and time.monotonic() >= self.llm_paused_until
+        return self.llm.available and time.monotonic() >= self.llm_paused_until
 
     def _llm_failed(self, error):
-        log.warning("Claude call failed, pausing it for %ds: %s", LLM_BACKOFF, error)
+        log.warning("AI call failed, pausing it for %ds: %s", LLM_BACKOFF, error)
         self.llm_paused_until = time.monotonic() + LLM_BACKOFF
+        hint = getattr(error, "hint", None)
+        if hint and not self.llm_warned:  # once: it's working out without it, just with less
+            self.llm_warned = True
+            self._command_card(self._say(hint, **error.params), timeout=15)
 
     def _classify(self, seq):
         act = self.activity
@@ -956,25 +1092,43 @@ class Brain:
             self._apply(act, brain.verdict("neutral", source="free"))
             return False
 
+        # Your own word first, then what's written down or plain, and only then a guess or a model.
+        said = self.learned.correction(self.mode, act.title)
+        if said:
+            self._apply(act, {**brain.verdict(said, source="you", site=act.app_name), "belongs_to": self._rule_home(act)})
+            return False
         ruled = brain.rule_verdict(mode, act.app_id, act.app_name, act.title, self.config.language)
         if ruled:
             self._apply(act, {**ruled, "belongs_to": self._rule_home(act)})
             return False
+        plain = sites.window_verdict(mode, act.app_id, act.title)
+        if plain:
+            self._apply(act, {**brain.verdict(plain[0], source="site", site=plain[1] or act.app_name),
+                              "belongs_to": self._rule_home(act)})
+            return False
 
-        key = f"{self.config.fingerprint(self.mode)}|{act.app_id}|{act.title}"
+        key = f"{self.config.fingerprint(self.mode)}|{self.llm.backend}|{act.app_id}|{act.title}"
         cached = self.cache.get(key)
         if cached:
             self._apply(act, {**cached, "source": "cache"})
             return False
 
-        if act.app_id in self.config.llm["exclude_apps"] or not self._llm_ready():
+        guess = self.learned.predict(self.mode, act.app_id, act.title)
+        if guess:
+            self._apply(act, {**brain.verdict(guess[0], source="learned", site=act.app_name),
+                              "belongs_to": self._rule_home(act)})
+            return False
+
+        # A small local model calls nearly everything a distraction once titles get ambiguous (it agreed
+        # with Claude on 12 of 113 real windows, and flagged 98). It doesn't get to judge windows.
+        if self.llm.backend == "ollama" or act.app_id in self.config.llm["exclude_apps"] or not self._llm_ready():
             self._apply(act, brain.verdict("neutral", source="default"))
             return False
         if key in self.inflight:
             return False
         self.inflight.add(key)
         prompt = brain.activity_prompt(self.mode, mode, self.config.modes(), act.app_id, act.app_name, act.title)
-        future = self.pool.submit(self.claude.ask, brain.activity_system(self.config.language), prompt, brain.ACTIVITY_SCHEMA)
+        future = self.pool.submit(self.llm.ask, brain.activity_system(self.config.language), prompt, brain.ACTIVITY_SCHEMA)
         future.add_done_callback(lambda f: GLib.idle_add(self._on_classified, f, seq, key))
         return False
 
@@ -1007,6 +1161,8 @@ class Brain:
         }
         self.cache.put(key, result)
         if current:
+            if self.llm.backend != "ollama":  # Claude's word is worth learning from; a small model's isn't
+                self.learned.add(self.mode, current.app_id, current.title, result["verdict"], source="claude")
             self._apply(current, result, fresh=True)
         return False
 
