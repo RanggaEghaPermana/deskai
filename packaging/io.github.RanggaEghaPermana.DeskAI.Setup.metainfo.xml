@@ -26,6 +26,17 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-10-31">
+      <description>
+        <ul>
+          <li>Can run fully on your computer with Ollama, and carries on with it when Claude stops working</li>
+          <li>Most decisions no longer need a model: built-in lists and a small classifier trained on your corrections</li>
+          <li>Close a project from the command bar: its servers stop, and you choose what happens to its terminals</li>
+          <li>Say what the window in front of you is: "this is work" or "this is a distraction"</li>
+          <li>The command bar forgives typos in project and server names</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-30">
       <description>
         <ul>
