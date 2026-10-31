@@ -90,12 +90,16 @@ COMMAND_SCHEMA = {
 }
 
 MODE_WORDS = re.compile(r"^(?:(?:switch|go|change|pindah|ganti|balik|lanjut)(?: to| ke)?|mode|ke|mau|pengen|pingin|ingin|mulai|"
-                        r"want to|wanna|time to|saatnya|waktunya)\s+|\s+mode$", re.I)
+                        r"want to|wanna|time to|saatnya|waktunya)\s+|\s+(?:mode|dulu)$", re.I)
 # Everyday words for the default modes. A word only counts if you have a mode it can mean.
-MODE_MEANINGS = (("writing", "nulis", "menulis", "tulis", "ngetik"),
+MODE_MEANINGS = (("writing", "write", "nulis", "menulis", "tulis", "ngetik"),
                  ("building", "coding", "ngoding", "koding", "code", "programming"),
-                 ("studying", "study", "belajar", "kuliah"),
+                 ("studying", "study", "learn", "belajar", "kuliah"),
                  ("social", "sosmed", "santai", "istirahat", "free"))
+# "pengen nulis skripsi": wanting to do what a mode is for, whatever it's about.
+WANTS_TO = re.compile(r"^(?:lagi\s+)?(?:mau|pengen|pingin|ingin|kepengen|mulai|lanjut|want to|wanna|time to|saatnya|waktunya)\s+(\S+)", re.I)
+# "belajar react dari youtube" asks for more than a mode: that's the model's.
+AND_THEN = re.compile(r"\b(?:terus|lalu|habis itu|abis itu|sambil|dari|pake|pakai|lewat|then|and|from|using|via)\b|,", re.I)
 SERVER_OPS = {"restart": "restart", "ulang": "restart", "ulangin": "restart", "nyalain ulang": "restart", "nyalain": "restart",
               "hidupin": "restart", "idupin": "restart", "start": "restart",
               "stop": "stop", "matiin": "stop", "matikan": "stop",
@@ -103,20 +107,27 @@ SERVER_OPS = {"restart": "restart", "ulang": "restart", "ulangin": "restart", "n
 SERVER_OP = re.compile(r"^(%s)\b\s*(.*)$" % "|".join(sorted(SERVER_OPS, key=len, reverse=True)), re.I)
 SERVER_NAMED = re.compile(r"\bserver\s+(?!gua\b|gue\b|gw\b|aku\b|saya\b|my\b|the\b|nya\b)([\w.:-]+)", re.I)
 ASKS_WHY = re.compile(r"\b(kenapa|why|status|gimana|what's wrong|mati)\b", re.I)
-FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm|im|kita)\s+", re.I)
+# "vite-nya restart dong": a sentence that starts with the server's name.
+SERVER_FIRST = re.compile(r"^([\w.:]+?)(?:-?nya)?\b", re.I)
+SERVER_DOWN = re.compile(r"\bserver\w*\b.*\b(?:mati|down|crash\w*)\b|\b(?:mati|down|crash\w*)\b.*\bserver\w*\b", re.I)
+FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm|im|kita|kayaknya|sepertinya|let's|lets|ayo|gas|"
+                          r"(?:capek|cape|ok|oke),?)\s+", re.I)
 FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|aja|lagi|nih|tuh)$", re.I)
 # Telling it about the window in front of you, which is how it learns.
 CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|stop|shut down|"
-                           r"done with|finished with|finish)\s+(?:(?:kerja(?:an)?|ngoding|working)\s+)?(?:(?:di|on)\s+)?"
+                           r"done with|finished with|finish|udahan|cabut|berhenti|quit)\s+(?:dulu\s+)?"
+                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding|working)\s+)?(?:(?:di|on|sama|dari|with|from)\s+)?"
                            r"(?:project\s+|proyek\s+)?(.+)$", re.I)
-SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai)\s+(?:(?:kerja(?:an)?|ngoding)\s+)?(?:(?:di|on)\s+)?"
-                           r"(?:project\s+|proyek\s+)?(.+)"
-                           r"|(?:mau\s+)?(?:kerja|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
+CLOSED_PROJECT = re.compile(r"^(?:project\s+|proyek\s+)?(.+?)\s+(?:(?:udah|sudah|dah)\s+)?(?:kelar|selesai|beres|done)$", re.I)
+SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai|lanjut|lanjutin)\s+"
+                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding)\s+)?(?:(?:di|on)\s+)?(?:project\s+|proyek\s+)?(.+)"
+                           r"|(?:mau\s+)?(?:kerja|kerjain|ngerjain|garap|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)"
+                           r"(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
 OPEN_FOLDER = re.compile(r"^(?:buka|open)\s+folder\s+(?:project\s+|proyek\s+)?(.+)$", re.I)
-OPEN_THING = re.compile(r"^(?:buka|bukain|open|launch)\s+(.+)$", re.I)
+OPEN_THING = re.compile(r"^(?:buka|bukain|open|launch)\s+(?:the\s+)?(.+)$", re.I)
 RESTORE = re.compile(r"^(?:balikin|pulihin|kembaliin|restore|bring back)(?:\s+(?:sesi|session|desk|meja|semua|jendela|windows)\b.*)?$", re.I)
 ASKS_FOCUS = re.compile(r"\b(?:berapa lama|berapa jam|how long|how much)\b.*\b(?:fokus|focus\w*|kerja|work\w*|distraksi|distract\w*)\b|"
-                        r"^(?:waktu\s+)?fokus(?:\s+gua)?(?:\s+hari ini)?(?:\s+berapa(?:\s+lama)?)?\??$", re.I)
+                        r"^(?:waktu\s+)?fokus(?:\s+gua)?(?:\s+hari ini)?(?:\s+berapa(?:\s+(?:lama|jam|menit))?)?\??$", re.I)
 BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
 BREAKS_ON = re.compile(r"^(nyala|hidup|idup|turn on)", re.I)
 BLOCK_LIST = re.compile(r"^(?:blokir|block)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
@@ -163,17 +174,33 @@ def _mode_named(name, modes):
     return None
 
 
-def _named_server(words, watch):
+def _server_first(words, watch, known_projects):
+    """The server a short sentence starts with, by its own name or program. Not a word from further into its
+    command ("run", "dev"), which would turn "run tests, fix the login" into a restart, and not a project."""
+    first = SERVER_FIRST.match(words)
+    name = first.group(1).lower() if first and not SERVER_OP.match(words) and len(words.split()) <= 5 else ""
+    if not name or name == "server" or (known_projects and find_project(name, known_projects)):
+        return None
+    for item in watch.items.values():
+        program = os.path.basename(item["command"].split()[0]) if item["command"].split() else ""
+        if name in re.findall(r"[a-z0-9]+", item["label"].lower()) or name == re.sub(r"[^a-z].*$", "", program.lower()):
+            return name
+    return None
+
+
+def _named_server(words, watch, known_projects=()):
     """{"type": "server", ...} for a sentence that's about a server by name: "server php gua kenapa? nyalain lagi"."""
     named = SERVER_NAMED.search(words)
-    if not named or not watch.match(named.group(1)):
-        return None
+    target = named.group(1) if named and watch.match(named.group(1)) else _server_first(words, watch, known_projects)
+    if not target:
+        # "server mati tuh, idupin": no name, but only one thing it can mean.
+        return {"type": "server", "op": "restart", "target": "down"} if SERVER_DOWN.search(words) and ASKS_RESTART.search(words) else None
     if ASKS_RESTART.search(words):
-        return {"type": "server", "op": "restart", "target": named.group(1)}
+        return {"type": "server", "op": "restart", "target": target}
     if ASKS_STOP.search(re.sub(r"\bmati\b", "", words)):
-        return {"type": "server", "op": "stop", "target": named.group(1)}
+        return {"type": "server", "op": "stop", "target": target}
     if ASKS_WHY.search(words):
-        return {"type": "server", "op": "status", "target": named.group(1)}
+        return {"type": "server", "op": "status", "target": target}
     return None
 
 
@@ -208,10 +235,10 @@ def _quick_action(words, modes, watch, known_projects):
         return {"type": "breaks", "on": bool(BREAKS_ON.match(words))}
     if ASKS_FOCUS.search(words):
         return {"type": "focus_today"}
-    server = _named_server(words, watch)
+    server = _named_server(words, watch, known_projects)
     if server:
         return server
-    closing = CLOSE_PROJECT.match(words)
+    closing = CLOSE_PROJECT.match(words) or CLOSED_PROJECT.match(words)
     # "matiin gudang" is the project, "matiin vite" a server: a server's own name wins.
     if closing and known_projects and find_project(closing.group(1), known_projects):
         named = closing.group(1).lower()
@@ -241,6 +268,10 @@ def _quick_action(words, modes, watch, known_projects):
         name = setting_up.group(1) or setting_up.group(2)
         if find_project(name, known_projects):
             return {"type": "setup_project", "project": name}
+    wanted = WANTS_TO.match(words)
+    mode = _mode_named(wanted.group(1), modes) if wanted and not AND_THEN.search(words) else None
+    if mode:
+        return {"type": "mode", "mode": mode}
     folder = OPEN_FOLDER.match(words)
     if folder and known_projects and find_project(folder.group(1), known_projects):
         return {"type": "open_folder", "path": folder.group(1)}
@@ -265,7 +296,7 @@ def quick(text, modes, watch, known_projects=()):
 
 # What a request has to say before a small local model's action on it counts. It picks odd things now
 # and then: asked to run "rm -rf /", it refused and also chose to stop a server and switch modes.
-ASKS_STOP = re.compile(r"\b(matiin|mati|matikan|stop|stopin|tutup|close|shut|hentikan|berhenti|kill|selesai\w*|kelar|beres\w*)\b", re.I)
+ASKS_STOP = re.compile(r"\b(matiin|mati|matikan|stop|stopin|tutup|close|shut|hentikan|berhenti|kill|selesai\w*|kelar|beres\w*|udahan|cabut)\b", re.I)
 ASKS_RESTART = re.compile(r"\b(restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|jalanin|jalankan|start|benerin|perbaiki|fix)\b", re.I)
 ASKS_MODE = re.compile(r"\b(mode|pindah|ganti|switch)\b", re.I)
 ASKS_RESTORE = re.compile(r"\b(sesi|session|balik\w*|restore|lanjut\w*|kembali\w*)\b", re.I)
@@ -281,15 +312,19 @@ def asked_for(action, text, known_projects):
     if kind == "server" and action.get("op") == "restart":
         return bool(ASKS_RESTART.search(text))
     if kind == "close_project":
-        return bool(ASKS_STOP.search(text))
+        return bool(ASKS_STOP.search(text)) and _names_project(action, text, known_projects)
     if kind == "mode":
         return bool(ASKS_MODE.search(text))
     if kind == "restore_desk":
         return bool(ASKS_RESTORE.search(text))
     if kind == "setup_project":
-        wanted = find_project(action.get("project"), known_projects)
-        return bool(wanted) and any(find_project(word, known_projects) == wanted for word in re.findall(r"[\w-]{3,}", text))
+        return _names_project(action, text, known_projects)
     return True
+
+
+def _names_project(action, text, known_projects):
+    wanted = find_project(action.get("project"), known_projects)
+    return bool(wanted) and any(find_project(word, known_projects) == wanted for word in re.findall(r"[\w-]{3,}", text))
 
 
 def only_what_was_asked(result, text, known_projects):

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Commits here are credited to people only. Turn on with: git config core.hooksPath dev/hooks
+if grep -qiE '^[[:space:]]*co-authored-by:.*(claude|anthropic|copilot|codex|gemini|openai|chatgpt|\[bot\])|noreply@anthropic\.com|generated (with|by) .*(claude|copilot|codex|gemini|chatgpt)' "$1"; then
+  echo "commit-msg: this message credits an AI. Take that line out." >&2
+  exit 1
+fi

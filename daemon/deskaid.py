@@ -8,6 +8,7 @@ lets through held notifications that really can't wait.
 """
 
 import argparse
+import datetime
 import json
 import logging
 import os
@@ -103,9 +104,11 @@ class VerdictCache:
         brain.write_json_atomic(self.path, self.data)
         self.dirty = False
 
+STATS_KEEP_DAYS = 90
+
 
 class Stats:
-    """Seconds per mode and verdict, one file per day."""
+    """Seconds per mode and verdict, one file per day, for STATS_KEEP_DAYS: it names what distracted you."""
 
     def __init__(self, directory):
         self.dir = directory
@@ -118,11 +121,21 @@ class Stats:
         if day != self.day:
             self.save()
             self.day = day
+            self.prune()
             try:
                 self.data = json.loads((self.dir / f"{day}.json").read_text())
             except (OSError, ValueError):
                 self.data = {"modes": {}, "distractions": {}}
         return self.data
+
+    def prune(self):
+        oldest = datetime.date.today() - datetime.timedelta(days=STATS_KEEP_DAYS)
+        for path in self.dir.glob("*.json"):
+            try:
+                if datetime.date.fromisoformat(path.stem) < oldest:
+                    path.unlink()
+            except (ValueError, OSError):
+                continue  # not a day's file, or not ours to remove
 
     def add(self, mode, kind, seconds, label):
         data = self._today()

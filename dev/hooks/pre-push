@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# The last check before something public: the tests, no AI credit in what's being pushed, and no
+# private data in the files or the messages. Turn on with: git config core.hooksPath dev/hooks
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+hooks="$root/dev/hooks"
+zero=0000000000000000000000000000000000000000
+
+words="$(git rev-parse --git-path info/private-words)"
+patterns="$(mktemp)"
+message="$(mktemp)"
+trap 'rm -f "$patterns" "$message"' EXIT
+printf '%s\n' "$HOME" > "$patterns"
+[ -s "$words" ] && grep -v '^[[:space:]]*$' "$words" >> "$patterns"
+
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue  # deleting a ref sends nothing
+  if [ "$remote_sha" = "$zero" ]; then
+    commits="$(git rev-list "$local_sha" --not --remotes)"
+  else
+    commits="$(git rev-list "$remote_sha..$local_sha")"
+  fi
+  for commit in $commits; do
+    git log -1 --format=%B "$commit" > "$message"
+    if ! "$hooks/commit-msg" "$message"; then
+      echo "pre-push: $(git log -1 --format='%h %s' "$commit")" >&2
+      exit 1
+    fi
+    if grep -qiF -f "$patterns" "$message"; then
+      echo "pre-push: private data in the message of $(git log -1 --format=%h "$commit")" >&2
+      exit 1
+    fi
+  done
+  if git grep -q -I -i -F -f "$patterns" "$local_sha"; then
+    git grep -l -I -i -F -f "$patterns" "$local_sha" >&2
+    echo "pre-push: private data in the files above" >&2
+    exit 1
+  fi
+done
+
+cd "$root"
+if ! python3 -m unittest discover -s tests >/dev/null 2>&1; then
+  echo "pre-push: the tests fail. Run: python3 -m unittest discover -s tests" >&2
+  exit 1
+fi

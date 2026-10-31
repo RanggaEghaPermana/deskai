@@ -28,7 +28,9 @@ from gi.repository import Gio  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 UUID = "deskai@ranggaeghapermana.github.io"
 LOGIN_UUID = "deskai-login@ranggaeghapermana.github.io"
-SHELL_MAJOR = 50  # the GNOME version this release is written for
+LOGIN_SCREEN_SCHEMA = "com.ubuntu.login-screen"
+LOGIN_BACKGROUND = "#000000"
+SHELL_MAJORS = (50, 51)  # the GNOME versions this release is written for
 SERVICE = "deskaid.service"
 POLKIT_RULE = Path("/etc/polkit-1/rules.d/50-deskai-services.rules")
 PAYLOAD = ("daemon", "extension", "setup", "VERSION", "LICENSE")
@@ -155,7 +157,7 @@ def check_system():
     pm = package_manager()
     atspi = has_typelib("Atspi", "2.0")
     return [
-        Check("gnome", version == SHELL_MAJOR and "GNOME" in desktop.upper(), required=True,
+        Check("gnome", version in SHELL_MAJORS and "GNOME" in desktop.upper(), required=True,
               detail=f"GNOME {version}" if version else desktop or "?"),
         Check("systemd", user_systemd(), required=True),
         Check("atspi", atspi, package="" if atspi else PACKAGES["atspi"].get(pm, "")),
@@ -389,6 +391,12 @@ def _hooks(action):
         raise SetupError((result.stderr or result.stdout).strip()[-300:])
 
 
+def _login_screen():
+    """Ubuntu's own settings for the screen before the desktop appears. None elsewhere."""
+    source = Gio.SettingsSchemaSource.get_default()
+    return Gio.Settings.new(LOGIN_SCREEN_SCHEMA) if source and source.lookup(LOGIN_SCREEN_SCHEMA, True) else None
+
+
 def _enable_extension():
     """Turns the extensions on for the next login: GNOME only reads new extensions when it starts."""
     settings = Gio.Settings.new("org.gnome.shell")
@@ -397,6 +405,10 @@ def _enable_extension():
     settings.set_strv("enabled-extensions", [*enabled, *(u for u in ours if u not in enabled)])
     settings.set_strv("disabled-extensions", [u for u in settings.get_strv("disabled-extensions") if u not in ours])
     settings.set_boolean("disable-user-extensions", False)
+    # Ubuntu fills the screen with this before the desktop appears: gray by default, and a flash at login.
+    login_screen = _login_screen()
+    if login_screen and login_screen.get_user_value("background-color") is None:
+        login_screen.set_string("background-color", LOGIN_BACKGROUND)
     Gio.Settings.sync()
 
 
@@ -460,6 +472,9 @@ def uninstall_steps(purge=False):
         settings = Gio.Settings.new("org.gnome.shell")
         settings.set_strv("enabled-extensions",
                           [u for u in settings.get_strv("enabled-extensions") if u not in (UUID, LOGIN_UUID)])
+        login_screen = _login_screen()
+        if login_screen and login_screen.get_string("background-color") == LOGIN_BACKGROUND:
+            login_screen.reset("background-color")
         Gio.Settings.sync()
 
     def hooks():

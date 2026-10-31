@@ -3,6 +3,10 @@
 An AI-aware dock for GNOME. It helps you stay on what you're doing, tells you when something needs
 you, and puts your desk back the way it was after a logout. The AI part is optional.
 
+![The dock with the Writing mode on, and a card offering to show a file that was just downloaded](docs/dock.png)
+
+![The command bar above the dock, asking what you want done](docs/command-bar.png)
+
 - **Focus modes.** Writing, Building, Studying, Social: each with its own apps, allowed and blocked
   sites, and notification rules. A nudge when you drift, and a daily focus recap.
 - **Inbox on the dock.** WhatsApp messages and AI agents (Claude Code, Codex, Gemini CLI, and the
@@ -38,7 +42,7 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 
 | | |
 |---|---|
-| Desktop | **GNOME 50** on Wayland (Ubuntu 26.04, for example). Other GNOME versions and other desktops such as KDE aren't supported. |
+| Desktop | **GNOME 50 or 51** on Wayland (Ubuntu 26.04, for example). Other GNOME versions and other desktops such as KDE aren't supported. |
 | Needed | Python 3, PyGObject, GTK 4, libadwaita, systemd. The `.deb` and the setup window take care of these. |
 | Recommended | **Ptyxis** and **Google Chrome**: terminals and browser tabs come back after a logout with these. |
 | Optional | **Claude Code**, an Anthropic API key or **[Ollama](https://ollama.com)** for the smart features. Everything else works without AI. |
@@ -54,7 +58,7 @@ So far it has only been tested on Ubuntu 26.04.
 3. Open **DeskAI Setup** from the app grid and follow the steps.
 4. Log out and back in once. The dock is there from then on.
 
-### Other distributions with GNOME 50
+### Other distributions with GNOME 50 or 51
 
 ```sh
 git clone https://github.com/RanggaEghaPermana/deskai.git
@@ -108,6 +112,9 @@ day, at a pause, it also asks about a window you spent a while on that it couldn
 What you say about senders is in `~/.local/state/deskai/senders.json`: their names, never their messages.
 `deskai senders` lists them, and `deskai senders --forget NAME` takes your word back.
 
+Your focus time per day is in `~/.local/state/deskai/stats/`, with the titles of the windows that distracted you.
+Each day's file is deleted after 90 days.
+
 ## What it changes on your computer
 
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
@@ -121,7 +128,9 @@ What you say about senders is in `~/.local/state/deskai/senders.json`: their nam
   `deskai routine allow-db` prints a polkit rule for you to install.
 - **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
   loaded, so the desktop can appear a moment later. Turn it off in the Extensions app if you'd rather see
-  it sooner.
+  it sooner. On GNOME 51 it stays out of the way, since sessions start in the overview there.
+- **The color before the desktop**, on Ubuntu: `com.ubuntu.login-screen background-color` is set to black, unless
+  you already chose one, so there's no gray flash at login. Removing DeskAI puts it back.
 
 ## Using it
 

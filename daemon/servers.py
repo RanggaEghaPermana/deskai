@@ -113,6 +113,8 @@ class Watch:
             items = list(self.items.values())
         if target in ("", "all", "semua", "server", "servers"):
             return [i["unit"] for i in items]
+        if target == "down":
+            return [i["unit"] for i in items if i["state"] == "down"]
         words = [w for w in re.split(r"\s+", target) if w not in ("server", "the")] or [target]
         about = {i["unit"]: f"{i['label']} {i['unit']} {i['command']} {i['port'] or ''} {os.path.basename(i['cwd'])}".lower()
                  for i in items}

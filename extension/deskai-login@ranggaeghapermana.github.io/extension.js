@@ -25,7 +25,9 @@ export default class DeskAILoginExtension extends Extension {
     enable() {
         const layout = Main.layoutManager;
         const running = layout.uiGroup.get_transition('opacity');
-        if (!layout._startingUp || layout._startInOverview || Main.sessionMode.isGreeter ||
+        // GNOME 51 dropped the setting: with an overview, a session starts in it, with an animation of its own.
+        const startsInOverview = layout._startInOverview ?? Main.sessionMode.hasOverview;
+        if (!layout._startingUp || startsInOverview || Main.sessionMode.isGreeter ||
             running?.get_elapsed_time() > TOO_LATE_MS)
             return null;
 

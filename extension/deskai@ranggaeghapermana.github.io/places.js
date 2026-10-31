@@ -623,7 +623,7 @@ export class Places {
         }
         try {
             const bytes = new TextEncoder().encode(`${JSON.stringify(this._data)}\n`);
-            this._stateFile.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            this._stateFile.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
         } catch (e) {
             console.warn(`DeskAI: can't save places.json: ${e.message}`);
         }

@@ -193,7 +193,7 @@ function writeJson(file, data) {
             throw e;
     }
     const bytes = new TextEncoder().encode(`${JSON.stringify(data, null, 2)}\n`);
-    file.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+    file.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
 }
 
 function isValidConfig(cfg) {
@@ -241,7 +241,7 @@ export default class DeskAIExtension extends Extension {
             announce: item => this._announceInbox(item),
             hush: notification => this._quiet.add(notification),
         });
-        this._keyboard = Clutter.get_default_backend().get_default_seat()
+        this._keyboard = global.stage.get_context().get_backend().get_default_seat()
             .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
         this._loadConfig();
@@ -958,7 +958,7 @@ export default class DeskAIExtension extends Extension {
             this._appsBox.add_child(this._appButton(app, false));
 
         if (this._config.dock?.show_running ?? true) {
-            const others = appSystem.get_running().filter(app => !pinnedIds.has(app.get_id()));
+            const others = this._inOpeningOrder(appSystem.get_running().filter(app => !pinnedIds.has(app.get_id())));
             if (others.length) {
                 this._appsBox.add_child(separator());
                 for (const app of others)
@@ -1083,6 +1083,14 @@ export default class DeskAIExtension extends Extension {
 
     _appWindowsOn(app, workspace) {
         return app.get_windows().filter(win => isAppWindow(win) && win.located_on_workspace(workspace));
+    }
+
+    // GNOME lists running apps by last use, which would swap icons under the pointer when the dock rebuilds.
+    _inOpeningOrder(apps) {
+        const known = (this._openingOrder ?? []).filter(id => apps.some(app => app.get_id() === id));
+        const added = apps.map(app => app.get_id()).filter(id => !known.includes(id));
+        this._openingOrder = [...known, ...added];
+        return this._openingOrder.map(id => apps.find(app => app.get_id() === id));
     }
 
     // ---- rearranging by drag ------------------------------------------------
@@ -1414,7 +1422,7 @@ export default class DeskAIExtension extends Extension {
         this._lastWritten = text;
         try {
             this._modesFile.replace_contents(new TextEncoder().encode(text), null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+                Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
         } catch (e) {
             Main.notifyError('DeskAI', `Couldn't save modes.json: ${e.message}`);
         }

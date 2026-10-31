@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The system DeskAI is written for, with its Python and GObject versions.
+    container: ubuntu:26.04
+    steps:
+      - name: Install what the tests need
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git python3 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-atspi-2.0 nodejs appstream
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests
+      - name: The extensions' JavaScript parses
+        run: |
+          for file in extension/*/*.js; do
+            cp "$file" /tmp/check.mjs
+            node --check /tmp/check.mjs || { echo "in $file"; exit 1; }
+          done
+      - name: App metadata is valid
+        run: appstreamcli validate --no-net packaging/*.metainfo.xml
+      - name: No commit credits an AI
+        run: |
+          git config --global --add safe.directory "$PWD"
+          for commit in $(git log -100 --format=%H); do
+            git log -1 --format=%B "$commit" > /tmp/message
+            sh dev/hooks/commit-msg /tmp/message || { git log -1 --format='%h %s' "$commit"; exit 1; }
+          done

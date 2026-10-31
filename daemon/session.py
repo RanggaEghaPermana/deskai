@@ -430,9 +430,12 @@ def hand_started():
             words = _command_line(pid)
             if not root or "deskai-" in Path(f"/proc/{pid}/cgroup").read_text() or NOT_A_DEV_SERVER.search(" ".join(words)):
                 continue
-            leader = _command_line(os.getpgid(pid))
         except (OSError, ProcessLookupError):
             continue  # gone already, or not yours to look at
+        try:
+            leader = _command_line(os.getpgid(pid))
+        except (OSError, ProcessLookupError):
+            leader = []  # what started it has gone, and the server carries on
         typed = leader if leader and os.path.basename(leader[0]) not in SHELLS else words
         found.append({"unit": f"manual-{port}", "cwd": root, "command": shlex.join(typed)[:300], "port": port, "pid": pid})
     return found

@@ -289,6 +289,20 @@ class RealProcesses(unittest.TestCase):
         server = self.found()
         self.assertEqual((server["pid"], server["cwd"], server["unit"]), (process.pid, str(self.project), f"manual-{self.port}"))
 
+    def test_found_after_what_started_it_has_gone(self):
+        process = self.serve()
+        group, real = os.getpgid(process.pid), servers.session._command_line
+
+        def command_line(pid):
+            if pid == group:
+                raise FileNotFoundError(pid)
+            return real(pid)
+
+        with mock.patch.object(servers.session, "_command_line", side_effect=command_line):
+            server = self.found()
+        self.assertEqual(server["pid"], process.pid)
+        self.assertIn("http.server", server["command"])
+
     def test_stopping_it(self):
         process = self.serve(start_new_session=True)
         self.assertTrue(servers.session.stop_hand_started(self.found()))

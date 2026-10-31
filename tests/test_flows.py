@@ -1,5 +1,6 @@
 """The brain's flows from event to card, without a dock. Run with: python3 -m unittest discover tests"""
 
+import datetime
 import json
 import sys
 import tempfile
@@ -401,6 +402,33 @@ class Commands(Base):
     def test_turning_reminders_off_by_typing(self):
         self.brain._run_actions({"say": "", "actions": [{"type": "breaks", "on": False}]})
         self.assertFalse(self.brain.config.breaks["enabled"])
+
+
+class StatsKept(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+        self.stats = deskaid.Stats(self.dir)
+
+    def day(self, back):
+        when = datetime.date.today() - datetime.timedelta(days=back)
+        path = self.dir / f"{when.isoformat()}.json"
+        path.write_text('{"modes": {}, "distractions": {}}')
+        return path
+
+    def test_old_days_go_and_recent_ones_stay(self):
+        old, edge, recent = self.day(deskaid.STATS_KEEP_DAYS + 1), self.day(deskaid.STATS_KEEP_DAYS), self.day(1)
+        self.stats.add("building", "on_task", 5, "x")
+        self.assertFalse(old.exists())
+        self.assertTrue(edge.exists())
+        self.assertTrue(recent.exists())
+
+    def test_only_days_are_touched(self):
+        other = self.dir / "notes.json"
+        other.write_text("{}")
+        self.stats.prune()
+        self.assertTrue(other.exists())
 
 
 if __name__ == "__main__":

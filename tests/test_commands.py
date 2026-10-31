@@ -78,19 +78,68 @@ class Instant(unittest.TestCase):
 
     def test_more_than_a_mode_goes_to_the_model(self):
         self.assertIsNone(self.action("gua mau belajar react dari youtube"))
+        self.assertIsNone(self.action("mau nulis, terus buka youtube"))
+
+    def test_wanting_to_do_what_a_mode_is_for(self):
+        for text, mode in (("lagi pengen nulis skripsi", "writing"), ("lanjut nulis bab 3", "writing"), ("kayaknya gua mau belajar dulu", "studying"),
+                           ("mau santai dulu", "social"), ("i want to write my thesis", "writing"), ("time to study for the exam", "studying")):
+            self.assertEqual(self.action(text), {"type": "mode", "mode": mode}, text)
+
+    def test_a_project_comes_before_what_a_word_could_mean(self):
+        self.assertEqual(self.action("mulai ngoding gudang"), {"type": "setup_project", "project": "gudang"})
 
     def test_finishing_work_on_a_project(self):
         for text in ("gua udah kelar kerja di toko online", "kelar kerja di toko online", "selesai toko online",
-                     "udah beres toko online", "done with toko online", "tutup project toko online"):
+                     "udah beres toko online", "done with toko online", "tutup project toko online", "cabut dari toko online",
+                     "udahan dulu sama toko online", "tutup dulu toko online", "toko online udah kelar", "selesai ngerjain toko online",
+                     "capek, stop dulu kerja di toko online"):
             self.assertEqual(self.action(text), {"type": "close_project", "project": "toko online"}, text)
 
     def test_starting_work_on_a_project(self):
         for text, name in (("siapin project gudang", "gudang"), ("set up gudnag", "gudnag"), ("mulai kerja di gudang", "gudang"),
-                           ("gua mau kerja di toko online, siapin dong", "toko online"), ("kerja di gudang", "gudang")):
+                           ("gua mau kerja di toko online, siapin dong", "toko online"), ("kerja di gudang", "gudang"),
+                           ("gas kerjain gudang", "gudang"), ("lanjut kerja di gudang", "gudang"), ("mulai ngerjain gudang", "gudang")):
             self.assertEqual(self.action(text), {"type": "setup_project", "project": name}, text)
 
     def test_a_project_it_doesnt_know_goes_to_the_model(self):
         self.assertIsNone(self.action("siapin project entah"))
+        for text in ("cabut aja gua", "udahan dulu", "entah udah kelar"):
+            self.assertIsNone(self.action(text), text)
+
+    def test_a_sentence_that_starts_with_the_server(self):
+        vite = watch_with(("vite :5173", 5173))
+        for text, op in (("vite-nya restart dong", "restart"), ("vitenya restart", "restart"), ("vite down, nyalain lagi", "restart"),
+                         ("vite kenapa", "status"), ("vite-nya matiin", "stop")):
+            self.assertEqual(self.action(text, vite), {"type": "server", "op": op, "target": "vite"}, text)
+        self.assertEqual(self.action("php-nya kenapa ya", self.php()), {"type": "server", "op": "status", "target": "php"})
+
+    def test_only_the_servers_own_name_counts_as_the_start_of_a_sentence(self):
+        watch = watch_with(("vite :5173", 5173))
+        watch.items["unit0"]["command"] = "npm run dev"
+        for text in ("run tests, fix the login", "dev fix", "vite tolong dong benerin login page yang rusak ini"):
+            self.assertIsNone(self.action(text, watch), text)
+
+    def test_a_projects_name_is_the_project_not_its_server(self):
+        watch = watch_with(("vite :5173", 5173))
+        watch.items["unit0"]["cwd"] = "/w/sistem-gudang"
+        self.assertEqual(self.action("gudang udah kelar", watch), {"type": "close_project", "project": "gudang"})
+        self.assertIsNone(self.action("gudang udah kelar", watch_with(("gudang :5173", 5173))))  # never stopped by a guess
+
+    def test_stopping_for_now_isnt_stopping_everything(self):
+        for text in ("stop dulu", "matiin dulu"):
+            self.assertIsNone(self.action(text, self.php()), text)
+
+    def test_the_server_thats_down(self):
+        for text in ("server mati tuh, idupin", "restart server yang mati", "nyalain server yang down"):
+            self.assertEqual(self.action(text, self.php()), {"type": "server", "op": "restart", "target": "down"}, text)
+        self.assertEqual(self.action("server php mati", self.php())["op"], "status")  # saying so isn't asking for a restart
+
+    def test_down_means_only_the_ones_that_are(self):
+        watch = watch_with(("vite :5173", 5173), ("server :8000", 8000))
+        watch.items["unit1"]["state"] = "down"
+        self.assertEqual(watch.match("down"), ["unit1"])
+        watch.items["unit1"]["state"] = "up"
+        self.assertEqual(watch.match("down"), [])
 
     def test_a_server_by_name_in_a_sentence(self):
         self.assertEqual(self.action("server php gua kenapa? nyalain lagi dong", self.php()),
