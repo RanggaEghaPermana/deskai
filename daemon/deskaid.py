@@ -28,6 +28,7 @@ from gi.repository import Gio, GLib, GLibUnix  # noqa: E402
 import brain  # noqa: E402
 import commands  # noqa: E402
 import compose  # noqa: E402
+import ports  # noqa: E402
 import docks  # noqa: E402
 import guide  # noqa: E402
 import learned  # noqa: E402
@@ -1079,6 +1080,12 @@ class Brain:
             self._command_card(self._say("command_working"), timeout=30)
             self._in_background(lambda: commands.compose_report(self.config.language, commands.projects()),
                                 lambda text: self._command_card(text, timeout=20))
+            answered_elsewhere = True
+        elif kind == "ports":
+            self._command_card(self._say("command_working"), timeout=30)
+            self._in_background(lambda: commands.ports_report(self.config.language, commands.projects(),
+                                                              action.get("port"), action.get("about")),
+                                lambda text: self._command_card(text, timeout=25))
             answered_elsewhere = True
         elif kind == "image_alone":
             say = self._say("image_alone", image=action.get("image", ""))

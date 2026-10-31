@@ -27,6 +27,7 @@ import compose  # noqa: E402
 import routine  # noqa: E402
 import servers  # noqa: E402
 import system  # noqa: E402
+import ports  # noqa: E402
 
 COMMAND_SYSTEM = """\
 You are the assistant in DeskAI, a dock for the GNOME desktop. The owner typed a request into the dock. \
@@ -149,6 +150,10 @@ ASKS_GIT = re.compile(r"\b(git|uncommitted|unpushed)\b|\b(belum|not|blm)\s+(?:di
 ASKS_IMAGES = re.compile(r"\bdocker\s+images?\b|\bimages?\s+docker\b|^(?:cek|check|liat|lihat|list|daftar)\s+(?:semua\s+)?images?\b", re.I)
 ASKS_COMPOSE = re.compile(r"\b(?:bisa|dapat|can)\s+(?:be\s+)?(?:di)?(?:nyala|jalan|start|run|pake|pakai)\w*|"
                           r"\b(?:compose|(?:project|proyek|projek)\s+docker|docker\s+(?:project|proyek|projek))\w*\b", re.I)
+# "cek port", "port 8000 dipake siapa", "apache port berapa", "port bentrok gak".
+ASKS_PORTS = re.compile(r"\bports?\b|\bbentrok\b|\bclash\w*\b", re.I)
+PORT_NUMBER = re.compile(r"\b(\d{2,5})\b")
+PORT_ABOUT = re.compile(r"^(?:(?:cek|check|liat|lihat|status|berapa|apa|siapa)\s+)?(?:port\s+)?([a-zA-Z0-9_.-]+)(?:\s+(?:port(?:nya)?|port berapa|\?))?$", re.I)
 ACT = re.compile(r"^(nyalain ulang|restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|jalanin|jalankan|start|run|up|"
                  r"matiin|matikan|stop|stopin)\s+(.+)$", re.I)
 ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
@@ -358,6 +363,18 @@ def _quick_action(words, modes, watch, known_projects):
             return {"type": "system", "what": "memory"}
         if ASKS_STORAGE.search(words):
             return {"type": "system", "what": "storage"}
+        if ASKS_PORTS.search(words):
+            num = PORT_NUMBER.search(words)
+            about = PORT_ABOUT.match(words)
+            name = about.group(1).lower() if about and about.group(1).lower() not in (
+                "cek", "check", "liat", "lihat", "berapa", "apa", "siapa", "ada", "yang", "kepake", "dipake", "bentrok", "clash", "port", "ports"
+            ) else None
+            action = {"type": "ports"}
+            if num:
+                action["port"] = int(num.group(1))
+            if name:
+                action["about"] = name
+            return action
     if not topic and ASKS_IMAGES.search(words):
         return {"type": "docker_images"}
     if not topic and ASKS_COMPOSE.search(words) and not (ASKS_STOP.search(words) or ASKS_RESTART.search(words)):
@@ -710,3 +727,33 @@ def open_uri(uri):
 
 def open_folder(path):
     open_uri(GLib.filename_to_uri(path, None))
+
+
+def ports_report(language, known_projects, port=None, about=None):
+    """Who has which port, what's free, and what would clash: one line per owner."""
+    say = lambda key, **params: brain.card_text(language, key, **params)  # noqa: E731
+    found = compose.projects(known_projects.values()) if "compose" in globals() else {}
+    rows = ports.claims(found)
+    clash = ports.clashes(rows)
+    if port:
+        here = [row for row in rows if row["port"] == port]
+        if not here:
+            return say("port_free", port=port)
+        return "\n".join(f":{port} {row['who']} · {say('ports_running' if row['running'] else 'ports_stopped')}" for row in here) + \
+            (f"\n{say('ports_clash', port=port, names=say('and').join(clash[port]))}" if port in clash else "")
+    if about:
+        words = [w for w in re.findall(r"[a-z0-9]+", about.lower()) if len(w) >= 3]
+        mine = [row for row in rows if any(w in re.sub(r"[^a-z0-9]", "", row["who"].lower()) for w in words)]
+        rows = mine or rows
+    owners = {}
+    for row in rows:
+        if not row.get("other"):
+            owners.setdefault((row["who"], row["running"]), []).append(row["port"])
+    lines = [f"{', '.join(f':{p}' for p in found_ports)}  {who} · {say('ports_running' if running else 'ports_stopped')}"
+             for (who, running), found_ports in sorted(owners.items(), key=lambda item: item[1][0])]
+    others = [f":{row['port']} {row['who']}" for row in rows if row.get("other")]
+    if others:
+        lines.append(f"{say('ports_others')}: {', '.join(others)}")
+    lines += [say("ports_clash", port=p, names=say("and").join(who)) for p, who in sorted(clash.items())
+              if any(row["port"] == p for row in rows)]
+    return "\n".join(lines)
