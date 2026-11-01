@@ -14,6 +14,7 @@
       <li>Focus modes, each with its own apps, allowed sites and notification rules</li>
       <li>An inbox on the dock for WhatsApp messages and AI agents such as Claude Code</li>
       <li>A command bar: press Super+/ and type what you want, in plain words</li>
+      <li>Your own routines as presets, started by words you choose</li>
       <li>A status dot for your dev servers and database, with a restart and their log</li>
       <li>After a logout, your windows, terminals and dev servers come back as they were</li>
     </ul>
@@ -26,6 +27,22 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.0" date="2026-11-01">
+      <description>
+        <p>Teach DeskAI your own routines.</p>
+        <p xml:lang="id">Ajarin DeskAI kebiasaan kamu sendiri.</p>
+        <ul>
+          <li>My Presets: write a list of steps, pick the words that start it, and type those words in the command bar. It takes no AI.</li>
+          <li xml:lang="id">Preset Pribadi: tulis daftar langkah, pilih kata buat memulainya, lalu ketik kata itu di command bar. Nggak butuh AI.</li>
+          <li>A step can open an app or a website, switch mode, start a service, run a command of yours, or wait while you do something by hand.</li>
+          <li xml:lang="id">Satu langkah bisa buka app atau website, pindah mode, nyalain service, jalanin perintah kamu, atau nunggu kamu ngerjain sesuatu sendiri.</li>
+          <li>A command is shown to you whole and only runs once you've allowed it, and you're asked again if it changes. The AI can't write, change or start a preset.</li>
+          <li xml:lang="id">Perintah ditunjukin utuh dan baru jalan setelah kamu izinin, dan ditanya lagi kalau berubah. AI nggak bisa nulis, ngubah, atau menjalankan preset.</li>
+          <li>Fixed: a long word could run off the edge of a card.</li>
+          <li xml:lang="id">Diperbaiki: kata yang panjang bisa keluar dari pinggir kartu.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-11-01">
       <description>
         <p>Easier to set up and to keep up to date, and one dock only.</p>
