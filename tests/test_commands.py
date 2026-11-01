@@ -81,12 +81,123 @@ class Quick(unittest.TestCase):
         self.assertEqual(self.action("restart vite", watch), {"type": "server", "op": "restart", "target": "vite"})
         self.assertEqual(self.action("matiin vite", watch)["op"], "stop")
         self.assertEqual(self.action("liat log 5173", watch)["op"], "log")
-        self.assertEqual(self.action("restart", watch)["target"], "all")
+
+    def test_a_verb_on_its_own_asks_which(self):
+        watch = watch_with(("vite :5173", 5173), ("server :8000", 8000))
+        for text, op in (("stop", "stop"), ("matiin", "stop"), ("matiin aja", "stop"), ("matikan dong", "stop"), ("kill", "stop"),
+                         ("restart", "restart"), ("ulang", "restart"), ("start", "restart")):
+            self.assertEqual(self.action(text, watch), {"type": "server_ask", "op": op}, text)
+
+    def test_a_verb_on_its_own_asks_even_with_one_server(self):
+        self.assertEqual(self.action("matiin", watch_with(("vite :5173", 5173))), {"type": "server_ask", "op": "stop"})
+
+    def test_the_server_means_the_one_there_is(self):
+        watch = watch_with(("vite :5173", 5173))
+        for text in ("restart server", "restart servernya", "restart the server", "matiin server", "stop the server"):
+            self.assertEqual(self.action(text, watch)["target"], "all", text)
+
+    def test_the_server_with_several_asks_which(self):
+        watch = watch_with(("vite :5173", 5173), ("server :8000", 8000))
+        for text in ("restart server", "restart servernya", "restart the server"):
+            self.assertEqual(self.action(text, watch), {"type": "server_ask", "op": "restart"}, text)
+
+    def test_all_of_them_has_to_be_said(self):
+        watch = watch_with(("vite :5173", 5173), ("server :8000", 8000))
+        for text in ("matiin semua", "matiin semua server", "stop all", "stop all servers", "stop the servers"):
+            self.assertEqual(self.action(text, watch), {"type": "server", "op": "stop", "target": "all"}, text)
+
+    def test_a_word_in_place_of_a_name_isnt_part_of_one(self):
+        watch = watch_with(("vite :5173", 5173))
+        for text in ("stop it", "kill it", "matiin ini", "matiin itu", "stop this", "restart that"):
+            self.assertIsNone(self.action(text, watch), text)
+
+    def test_a_short_word_has_to_be_a_whole_one(self):
+        watch = watch_with(("db :5432", 5432), ("vite :8080", 8080))
+        self.assertEqual(watch.match("db"), ["unit0"])
+        self.assertEqual(watch.match("80"), [])
+        self.assertEqual(watch.match("8080"), ["unit1"])
+        self.assertEqual(watch.match("vit"), ["unit1"])
 
     def test_anything_else_goes_to_the_model(self):
         watch = watch_with(("vite :5173", 5173))
         for text in ("siapin project toko", "restart laptop gua", "write a poem", "logout", ""):
             self.assertIsNone(self.action(text, watch), text)
+
+
+class NotAskedFor(unittest.TestCase):
+    """Saying a verb isn't asking for it. With no AI between the words and the action, these would run it."""
+
+    PROJECTS = {"gudang": "/w/gudang", "kit-ui": "/w/kit-ui"}
+
+    def setUp(self):
+        self.watch = watch_with(("vite :5173", 5173))
+
+    def result(self, text):
+        return commands.quick(text, [("writing", "Writing"), ("social", "Social")], self.watch, self.PROJECTS)
+
+    def test_told_not_to(self):
+        for text in ("jangan matiin server vite dulu", "jangan matiin vite", "jangan matiin vite dulu", "jgn stop vite", "don't stop server vite",
+                     "dont stop vite", "do not restart vite", "never restart vite", "jangan restart server vite", "vite jangan di-matiin",
+                     "gak usah matiin vite", "ga usah restart vite", "nggak usah matiin server vite", "gausah matiin vite", "tolong jangan matiin vite",
+                     "gak jadi matiin vite", "gak perlu restart vite", "gak mau matiin vite", "jangan restart", "jangan matiin", "jangan matiin semua server",
+                     "jangan tutup gudang", "don't close gudang", "jangan pindah ke social", "gak usah pindah ke writing", "jangan buka youtube"):
+            self.assertEqual(self.result(text), {"say": "", "actions": [{"type": "left_alone"}]}, text)
+
+    def test_told_not_to_about_something_that_isnt_running(self):
+        self.watch = watch_with()
+        for text in ("jangan matiin server vite dulu", "don't restart vite", "gak usah tutup yang itu"):
+            self.assertEqual(self.result(text), {"say": "", "actions": [{"type": "left_alone"}]}, text)
+
+    def test_being_reminded_to_is_asking_for_it(self):
+        for text in ("jangan lupa matiin server vite", "jgn lupa matiin vite", "don't forget to stop vite", "tolong jangan lupa restart vite"):
+            self.assertEqual(self.result(text)["actions"][0]["type"], "server", text)
+
+    def test_with_more_to_it_the_model_decides(self):
+        for text in ("jangan matiin vite, matiin php aja", "jangan matiin vite tapi restart", "don't stop vite but restart it"):
+            self.assertIsNone(self.result(text), text)
+
+    def test_something_it_wouldnt_have_done_anyway_goes_to_the_model(self):
+        for text in ("jangan ganggu gua", "don't disturb me", "jangan"):
+            self.assertIsNone(self.result(text), text)
+
+    def test_asking_about_doing_it(self):
+        for text in ("gimana cara matiin server vite?", "gimana cara matiin vite", "gmn matiin server vite", "cara restart vite", "how do i stop server vite",
+                     "how to restart vite", "how can i stop vite", "kenapa lu matiin server vite?", "why did you stop server vite", "kalo gua matiin vite gimana",
+                     "perlu restart server vite gak?", "apakah gua harus restart server vite", "siapa yang matiin vite?", "should i stop vite", "gimana cara tutup gudang",
+                     "how do i close gudang", "gimana cara matiin semua server", "caranya matiin server vite", "tadi gua restart server vite",
+                     "barusan gua matiin server vite"):
+            self.assertIsNone(self.result(text), text)
+
+    def test_a_question_then_a_request_is_a_request(self):
+        for text, op in (("server vite gua kenapa? nyalain lagi", "restart"), ("vite kenapa, matiin aja", "stop"), ("server vite gimana? restart dong", "restart")):
+            action = self.result(text)["actions"][0]
+            self.assertEqual((action["type"], action["op"]), ("server", op), text)
+
+    def test_asking_politely_is_still_asking(self):
+        for text in ("tolong matiin vite", "matiin vite dong", "please stop vite"):
+            self.assertEqual(self.result(text)["actions"][0]["op"], "stop", text)
+
+    def test_a_short_word_isnt_a_project(self):
+        self.assertIsNone(self.result("stop it"))
+        self.assertIsNone(self.result("tutup it"))
+        self.assertEqual(self.result("tutup kit")["actions"][0]["type"], "close_project")
+
+    def test_a_small_model_doesnt_get_round_it(self):
+        stop = {"type": "server", "op": "stop", "target": "vite"}
+        kept = lambda text, action: commands.only_what_was_asked({"actions": [action]}, text, self.PROJECTS)["actions"]  # noqa: E731
+        for text in ("jangan matiin vite, matiin php aja", "gimana cara matiin vite", "kenapa lu matiin vite"):
+            self.assertEqual(kept(text, stop), [], text)
+        self.assertEqual(kept("jangan tutup gudang, tutup yang lain", {"type": "close_project", "project": "gudang"}), [])
+        self.assertEqual(kept("matiin vite", stop), [stop])
+
+    def test_a_small_model_has_to_be_told_which(self):
+        kept = lambda text, target: commands.only_what_was_asked(  # noqa: E731
+            {"actions": [{"type": "server", "op": "stop", "target": target}]}, text, self.PROJECTS)["actions"]
+        self.assertEqual(kept("stop it", "vite"), [])
+        self.assertEqual(kept("stop it", "all"), [])
+        self.assertEqual(kept("matiin servernya", "all"), [])
+        self.assertTrue(kept("matiin semua server", "all"))
+        self.assertTrue(kept("tolong stop vite", "vite :5173"))
 
 
 class Instant(unittest.TestCase):

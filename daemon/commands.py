@@ -119,7 +119,7 @@ ASKS_WHY = re.compile(r"\b(kenapa|why|status|gimana|what's wrong|mati)\b", re.I)
 SERVER_FIRST = re.compile(r"^([\w.:]+?)(?:-?nya)?\b", re.I)
 SERVER_DOWN = re.compile(r"\bserver\w*\b.*\b(?:mati|down|crash\w*)\b|\b(?:mati|down|crash\w*)\b.*\bserver\w*\b", re.I)
 FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm|im|kita|kayaknya|sepertinya|let's|lets|ayo|gas|"
-                          r"(?:capek|cape|ok|oke),?)\s+", re.I)
+                          r"jangan lupa|jgn lupa|don'?t forget(?: to)?|remember to|(?:capek|cape|ok|oke),?)\s+", re.I)
 FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|aja|lagi|nih|tuh)$", re.I)
 # Telling it about the window in front of you, which is how it learns.
 CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|matikan|stop|stopin|"
@@ -200,6 +200,20 @@ ABOUT_THE_TOPIC = re.compile(
     r"saran\w*|rekomendasi\w*|beli|harga|ideal|upgrade|nambah|leak|install\w*|pasang|"
     r"what is|what are|what's a|how to|how do|how does|explain\w*|difference|write|draft|recommend\w*|buy|should i)\b|"
     r"^(?!.*\b(?:gua|gue|gw|aku|saya|my|laptop|komputer)\b).*\b(?:gimana|bagaimana|cukup)\b", re.I)
+# Told not to: "jangan matiin vite", "gak usah restart", "don't stop it". "Jangan lupa matiin vite" asks for it.
+TOLD_NOT_TO = re.compile(r"(?<![\w-])(?:jangan(?!\s+lupa\b)|jgn(?!\s+lupa\b)|jngn|(?:gak|ga|gk|g|nggak|ngga|ngak|nggk|enggak|engga|tidak|tak)\s+"
+                         r"(?:usah|perlu|jadi)|gausah|gaperlu|don'?t(?!\s+forget\b)|do not|never|no need to)(?![\w-])|"
+                         r"^(?:gak|ga|gk|nggak|ngga|enggak|tidak)\s+mau(?![\w-])", re.I)
+# There's more to it than that: "jangan matiin vite, matiin php aja". That's the model's.
+BUT_DO = re.compile(r"[,;]|\b(?:tapi|tp|but|instead|melainkan|terus|lalu|then|and|dan)\b", re.I)
+# About doing something, not asking for it: "gimana cara matiin vite", "kenapa lu matiin vite", "perlu restart vite gak",
+# "tadi gua restart vite". Only within one clause: "server php gua kenapa? nyalain lagi" does ask.
+NOT_A_REQUEST = re.compile(r"\b(?:gimana|gmana|gmn|bagaimana|cara|caranya|kenapa|knp|mengapa|apakah|perlu|harus|kalau|kalo|klo|kapan|siapa|"
+                           r"tadi|barusan|kemarin|how|why|when|who|should|if)\b[^?,.;!]*\b(?:matiin|matikan|stop|stopin|kill|hentikan|tutup|close|shut|"
+                           r"restart|ulang\w*|nyalain|nyalakan|hidupin|hidupkan|idupin|jalanin|jalankan|start|run)\b", re.I)
+ALL_SERVERS = re.compile(r"(?:semua|all)(?:\s+(?:the\s+)?server\w*)?|(?:the\s+)?servers", re.I)
+A_SERVER = re.compile(r"(?:the\s+)?(?:server\w*)?", re.I)  # "restart the server", or no word at all: "restart"
+EVERYTHING = re.compile(r"\b(?:semua\w*|seluruh\w*|all|everything)\b", re.I)
 ROOM_WARNINGS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:peringatan|warnings?)"
                            r"(?:\s+(?:ram|memori|memory|disk|storage|penyimpanan))?$", re.I)
 BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
@@ -388,6 +402,8 @@ def _open_thing(name):
 
 
 def _quick_action(words, modes, watch, known_projects):
+    if NOT_A_REQUEST.search(words):
+        return None
     if BREAKS.match(words):
         return {"type": "breaks", "on": bool(BREAKS_ON.match(words))}
     if ROOM_WARNINGS.match(words):
@@ -448,11 +464,18 @@ def _quick_action(words, modes, watch, known_projects):
         return {"type": "mode", "mode": mode}
     match = SERVER_OP.match(words)
     if match:
-        everything = re.fullmatch(r"(?:semua\s*|all\s*)?(?:server\w*)?", match.group(2).strip(), re.I)
-        target = "all" if everything else match.group(2)
+        said = match.group(2).strip()
+        op = SERVER_OPS[match.group(1).lower()]
+        everything = ALL_SERVERS.fullmatch(said)
+        if op != "log" and not everything and A_SERVER.fullmatch(said):
+            # "Matiin" on its own could mean anything: it asks. "Restart the server" means the one there is, if there's one.
+            return {"type": "server", "op": op, "target": "all"} if said and len(watch.match("all")) == 1 else \
+                {"type": "server_ask", "op": op}
+        everything = everything or A_SERVER.fullmatch(said)
+        target = "all" if everything else said
         # "matiin semua server" with none running deserves "there are none", not a guess from the model.
-        if watch.match(target) or (everything and match.group(2).strip()):
-            return {"type": "server", "op": SERVER_OPS[match.group(1).lower()], "target": target}
+        if watch.match(target) or (everything and said):
+            return {"type": "server", "op": op, "target": target}
     if RESTORE.match(words):
         return {"type": "restore_desk"}
     setting_up = SETUP_PROJECT.match(words)
@@ -482,8 +505,22 @@ def quick(text, modes, watch, known_projects=()):
     if DANGEROUS.search(text):
         return None
     words = _trimmed(text)
+    if TOLD_NOT_TO.search(words):
+        return _told_not_to(words, modes, watch, known_projects)
     action = _quick_action(words, modes, watch, known_projects)
     return {"say": "", "actions": [action]} if action else None
+
+
+def _told_not_to(words, modes, watch, known_projects):
+    """"Jangan matiin vite": there's nothing to do, and it says so right away. If it wouldn't have been something to
+    do anyway ("jangan ganggu gua") or there's more to it, that's for the model."""
+    if BUT_DO.search(words):
+        return None
+    rest = _trimmed(re.sub(r"\s+dulu$", "", TOLD_NOT_TO.sub(" ", words).strip()))
+    # Asking about something that isn't running is still telling it not to.
+    if ASKS_STOP.search(rest) or ASKS_RESTART.search(rest) or _quick_action(rest, modes, watch, known_projects):
+        return {"say": "", "actions": [{"type": "left_alone"}]}
+    return None
 
 
 # What a request has to say before a small local model's action on it counts. It picks odd things now
@@ -499,10 +536,14 @@ IS_QUESTION = re.compile(r"\?|^(berapa|apa|apakah|kenapa|mengapa|gimana|bagaiman
 def asked_for(action, text, known_projects):
     """Whether the words of the request really call for this action."""
     kind = action.get("type")
+    changes_something = kind in ("close_project", "setup_project", "restore_desk", "mode") or \
+        (kind == "server" and action.get("op") in ("stop", "restart"))
+    if changes_something and (TOLD_NOT_TO.search(text) or NOT_A_REQUEST.search(text)):
+        return False
     if kind == "server" and action.get("op") == "stop":
-        return bool(ASKS_STOP.search(text))
+        return bool(ASKS_STOP.search(text)) and _names_server(action, text)
     if kind == "server" and action.get("op") == "restart":
-        return bool(ASKS_RESTART.search(text))
+        return bool(ASKS_RESTART.search(text)) and _names_server(action, text)
     if kind == "close_project":
         return bool(ASKS_STOP.search(text)) and _names_project(action, text, known_projects)
     if kind == "mode":
@@ -512,6 +553,16 @@ def asked_for(action, text, known_projects):
     if kind == "setup_project":
         return _names_project(action, text, known_projects)
     return True
+
+
+def _names_server(action, text):
+    """"Stop it" doesn't say which, and a small model will pick one anyway, or all of them."""
+    target = str(action.get("target", "")).lower()
+    if target == "all":
+        return bool(EVERYTHING.search(text))
+    if target == "down":
+        return bool(SERVER_DOWN.search(text))
+    return any(word in text.lower() for word in re.findall(r"[a-z0-9]{3,}", target))
 
 
 def _names_project(action, text, known_projects):
@@ -748,7 +799,9 @@ def _meant_as_project(name, known):
     path = find_project(name, known)
     if not path or any(_simple(project) == _simple(name) for project in known):
         return path
-    return None if _simple(name) in EVERYDAY or _is_an_app(name) else path
+    # Too short to be part of a name by anything but chance: "stop it" with a kit-ui folder around.
+    return None if _simple(name) in EVERYDAY or len(_simple(name)) < 3 or (name or "").strip().lower() in servers.NOT_A_NAME or \
+        _is_an_app(name) else path
 
 
 def find_app(name):

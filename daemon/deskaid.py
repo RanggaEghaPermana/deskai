@@ -529,6 +529,9 @@ class Brain:
         elif action.startswith("server:"):
             _, op, unit = action.split(":", 2)
             self._server_action(op, unit)
+        elif action in ("servers:stop", "servers:restart") and card_id == "servers-ask":
+            for unit in self.watch.match("all"):
+                self._server_action(action.split(":")[1], unit)
         elif action.startswith("service:start:"):
             self._docker_or_service("dev_service", {"op": "start", "unit": action.split(":", 2)[2]})
         elif action == "system:clear-offer":
@@ -845,6 +848,24 @@ class Brain:
             {"id": f"server:log:{item['unit']}", "label": self._say("server_log")},
             {"id": f"server:restart:{item['unit']}", "label": self._say("server_restart"), "primary": True}])
 
+    def _ask_which_servers(self, op):
+        """"Matiin", with nothing after it, could mean any of them: it asks instead of stopping them all."""
+        items = [item for item in map(self.watch.get, self.watch.match("all")) if item]
+        if not items:
+            self._command_card(self._say("command_nothing_running"))
+            return
+        answer = ({"id": f"servers:{op}", "label": self._say(f"servers_all_{op}", n=len(items))} if len(items) > 1 else
+                  {"id": f"server:{op}:{items[0]['unit']}", "label": self._say(f"server_one_{op}", name=items[0]["label"])})
+        self.card({
+            "id": "servers-ask",
+            "kind": "server",
+            "icon": {"name": "network-server-symbolic"},
+            "title": self._say(f"servers_which_{op}"),
+            "text": self._say("servers_running", names=", ".join(item["label"] for item in items)),
+            "actions": [{"id": "later", "label": self._say("not_now")}, {**answer, "primary": True}],
+            "timeout": 20,
+        })
+
     def _server_action(self, op, unit):
         item = self.watch.get(unit)
         if not item:
@@ -1105,6 +1126,11 @@ class Brain:
                 answered_elsewhere = op == "status" or (op == "log" and bool(item) and item["kind"] == servers.MANUAL)
                 self._server_action(op, unit)
                 say = say or self._say("command_done")
+        elif kind == "server_ask":
+            self._ask_which_servers(action.get("op"))
+            answered_elsewhere = True
+        elif kind == "left_alone":
+            say = self._say("command_left_alone")
         elif kind == "system" and action.get("what") == "clear":
             self._offer_clearing()
             answered_elsewhere = True

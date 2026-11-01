@@ -24,6 +24,8 @@ import routine
 import session
 from brain import log
 
+# Words you'd use in place of a server's name, which are still a part of some: "vite" has "it" in it, "mini" has "ini".
+NOT_A_NAME = {"it", "this", "that", "them", "these", "those", "ini", "itu", "aja", "saja", "dong", "deh", "dulu", "yang", "nya"}
 MANUAL = "manual"   # the kind of a server you started yourself
 CONTAINER = "container"  # a Docker container
 GRACE_S = 90        # a server just started gets this long to answer
@@ -131,14 +133,18 @@ class Watch:
         if target == "down":
             return [i["unit"] for i in items if i["state"] == "down"]
         words = [w for w in re.split(r"\s+", target) if w not in ("server", "the")] or [target]
+        if any(w in NOT_A_NAME for w in words):
+            return []
         about = {i["unit"]: f"{i['label']} {i['unit']} {i['command']} {i['port'] or ''} {os.path.basename(i['cwd'])}".lower()
                  for i in items}
-        exact = [unit for unit, text in about.items() if all(w in text for w in words)]
+        # A short word has to be a whole word: "stop it" isn't about vite, or "80" about :8080.
+        exact = [unit for unit, text in about.items()
+                 if all(w in text if len(w) > 2 else w in re.findall(r"[a-z0-9]+", text) for w in words)]
         if exact:
             return exact
         # A slip of the fingers: "restart gudnag".
         return [unit for unit, text in about.items()
-                if all(difflib.get_close_matches(w, re.findall(r"[a-z0-9]+", text), cutoff=0.8) for w in words)]
+                if all(len(w) > 2 and difflib.get_close_matches(w, re.findall(r"[a-z0-9]+", text), cutoff=0.8) for w in words)]
 
     def forget(self, unit):
         with self.lock:

@@ -862,6 +862,56 @@ class OldVerdicts(Base):
         self.assertEqual(self.brain.activity.verdict, "off_task")
 
 
+class AVerbOnItsOwn(Base):
+    def add_server(self, unit, label):
+        self.brain.watch.items[unit] = {"unit": unit, "kind": "server", "label": label, "command": "x", "cwd": "/w/app", "port": 1,
+                                        "state": "up", "misses": 0, "started": 0, "since": 0}
+
+    def ask(self, op="stop"):
+        self.brain._run_actions({"say": "", "actions": [{"type": "server_ask", "op": op}]})
+        return self.brain.cards[-1]
+
+    def test_with_several_it_offers_all_of_them(self):
+        self.add_server("a", "vite :5173")
+        self.add_server("b", "server :8000")
+        card = self.ask()
+        self.assertEqual(card["title"], "Matiin yang mana?")
+        self.assertIn("vite :5173, server :8000", card["text"])
+        self.assertEqual([(a["id"], a["label"]) for a in card["actions"]], [("later", "Nanti aja"), ("servers:stop", "Matiin semua (2)")])
+
+    def test_with_one_it_offers_that_one(self):
+        self.add_server("a", "vite :5173")
+        self.assertEqual([(a["id"], a["label"]) for a in self.ask("restart")["actions"]],
+                         [("later", "Nanti aja"), ("server:restart:a", "Restart vite :5173")])
+
+    def test_nothing_happens_until_you_answer(self):
+        self.add_server("a", "vite :5173")
+        self.add_server("b", "server :8000")
+        with mock.patch.object(self.brain, "_server_action") as acted:
+            self.ask()
+            acted.assert_not_called()
+            self.brain.on_card_action("servers-ask", "later")
+            acted.assert_not_called()
+            self.brain.on_card_action("servers-ask", "servers:stop")
+        self.assertEqual([call.args for call in acted.call_args_list], [("stop", "a"), ("stop", "b")])
+
+    def test_only_its_own_card_can_answer(self):
+        self.add_server("a", "vite :5173")
+        with mock.patch.object(self.brain, "_server_action") as acted:
+            self.brain.on_card_action("something-else", "servers:stop")
+        acted.assert_not_called()
+
+    def test_with_none_running_it_says_so(self):
+        self.assertEqual(self.ask()["title"], "Nggak ada yang jalan.")
+
+    def test_told_not_to_it_says_it_left_it_alone(self):
+        self.add_server("a", "vite :5173")
+        with mock.patch.object(self.brain, "_server_action") as acted:
+            self.brain._run_actions(deskaid.commands.quick("jangan matiin server vite", [], self.brain.watch, {}))
+        acted.assert_not_called()
+        self.assertEqual(self.brain.cards[-1]["title"], "Oke, gua biarin.")
+
+
 class Commands(Base):
     def test_the_answer_isnt_buried_under_done(self):
         watch = servers.Watch()
