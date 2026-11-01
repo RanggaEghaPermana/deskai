@@ -499,5 +499,42 @@ class EverydayWords(unittest.TestCase):
             self.assertFalse(commands._is_an_app("toko"))
 
 
+class SlipsOfTheFingers(unittest.TestCase):
+    """Names as they really get typed, in a hurry, over and over. With a small local model, what the lists miss takes half a minute."""
+
+    KNOWN = {name: f"/w/{name}" for name in ("pabrik-inventory", "sistem-gudang", "string-utils", "main-app")}
+
+    def act(self, text):
+        with mock.patch.object(commands, "dev_service_unit", return_value=None), \
+                mock.patch.object(commands.compose, "projects", return_value={}), \
+                mock.patch.object(commands, "_is_an_app", return_value=False):
+            result = commands.quick(text, [], servers.Watch(), self.KNOWN)
+        return result["actions"][0] if result else None
+
+    def test_more_than_one_letter_missing(self):
+        for text, kind, name in (("setup invntry", "setup_project", "invntry"), ("set up invntry", "setup_project", "invntry"),
+                                 ("siapin invntry", "setup_project", "invntry"), ("siapin project invntry", "setup_project", "invntry"),
+                                 ("matiin invntry", "close_project", "invntry"), ("matikan invntry", "close_project", "invntry"),
+                                 ("matikan invntr", "close_project", "invntr"), ("matiin project invntry", "close_project", "invntry"),
+                                 ("tutup inventry", "close_project", "inventry")):
+            self.assertEqual(self.act(text), {"type": kind, "project": name}, text)
+            self.assertEqual(commands.find_project(name, self.KNOWN), "/w/pabrik-inventory", text)
+
+    def test_a_little_word_before_the_name(self):
+        for text, kind, name in (("setup in invntry", "setup_project", "invntry"), ("setup in gudang", "setup_project", "gudang"),
+                                 ("setup on gudang", "setup_project", "gudang"), ("setup for gudang", "setup_project", "gudang"),
+                                 ("setup ke gudang", "setup_project", "gudang"), ("siapin buat gudang", "setup_project", "gudang"),
+                                 ("siapin untuk gudang", "setup_project", "gudang"), ("tutup in gudang", "close_project", "gudang")):
+            self.assertEqual(self.act(text), {"type": kind, "project": name}, text)
+
+    def test_the_same_goes_for_what_a_model_answers(self):
+        action = {"type": "setup_project", "project": "pabrik-inventory"}
+        self.assertTrue(commands._names_project(action, "setup pin invntry", self.KNOWN))
+
+    def test_still_not_letters_it_only_shares(self):
+        for text in ("tutup ring", "tutup mainan", "tutup tabgudang", "matiin inventorynyanya"):
+            self.assertIsNone(self.act(text), text)
+
+
 if __name__ == "__main__":
     unittest.main()

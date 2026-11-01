@@ -67,7 +67,8 @@ NOTIFICATIONS = [  # (app, title, body, let through?)
 ]
 PROJECTS = {"toko-online": "/projects/toko-online", "sistem-gudang": "/projects/sistem-gudang",
             "blog-saya": "/projects/blog-saya", "aplikasi-kasir": "/projects/aplikasi-kasir",
-            "youtube-clone": "/projects/youtube-clone", "database-tugas": "/projects/database-tugas", "shopping-cart": "/projects/shopping-cart"}
+            "youtube-clone": "/projects/youtube-clone", "database-tugas": "/projects/database-tugas", "shopping-cart": "/projects/shopping-cart",
+            "inventory-manager": "/projects/inventory-manager"}
 FOCUS = "245 minutes focused (Building 245 minutes). Distracted for 12 more minutes, 15 minutes in other modes. Away from the keyboard for 30 minutes, not counted"
 APPS = """firefox.desktop — Firefox
 google-chrome.desktop — Google Chrome
@@ -180,4 +181,14 @@ COMMANDS = [  # (what's typed, what a right answer does: the action's type and w
     ("matiin gudangnya", ("close_project", {"project": "/projects/sistem-gudang"})),
     ("tutup tokonya", ("close_project", {"project": "/projects/toko-online"})),
     ("tutup youtubenya", ("nothing", {})),
+    # Names as they really get typed. These took the model half a minute, then got turned down.
+    ("setup invntry", ("setup_project", {"project": "/projects/inventory-manager"})),
+    ("set up invntry", ("setup_project", {"project": "/projects/inventory-manager"})),
+    ("setup in invntry", ("setup_project", {"project": "/projects/inventory-manager"})),
+    ("siapin project invntry", ("setup_project", {"project": "/projects/inventory-manager"})),
+    ("matiin invntry", ("close_project", {"project": "/projects/inventory-manager"})),
+    ("matikan invntr", ("close_project", {"project": "/projects/inventory-manager"})),
+    ("buka youtube di chrome", ("open_url", {"url": "youtube"})),
+    ("buka folder download", ("open_folder", {})),
+    ("setup blabla", ("nothing", {})),
 ]

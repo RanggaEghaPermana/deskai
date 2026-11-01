@@ -231,6 +231,27 @@ class Services(unittest.TestCase):
             self.assertIsNone(commands.dev_service_unit("redis"))  # not installed
             self.assertIsNone(commands.dev_service_unit("spotify"))
 
+    def test_a_slip_of_the_fingers(self):
+        with mock.patch.object(commands.subprocess, "run", return_value=mock.Mock(stdout="postgresql.service enabled enabled\nnginx.service enabled enabled\n")):
+            for word, unit in (("posgre", "postgresql.service"), ("postgress", "postgresql.service"), ("ngix", "nginx.service")):
+                self.assertEqual(commands.dev_service_unit(word), unit, word)
+            for word in ("post", "spotify", "ng", "gudang"):
+                self.assertIsNone(commands.dev_service_unit(word), word)
+
+    def test_it_only_asks_about_that_service(self):
+        with mock.patch.object(commands.subprocess, "run", return_value=mock.Mock(stdout="")) as run:
+            commands.dev_service_unit("mysql")
+            self.assertEqual(run.call_args.args[0][-1], "mysql.service")
+            commands.dev_service_unit("php")
+            self.assertEqual(run.call_args.args[0][-1], "php*-fpm.service")
+
+    def test_words_around_a_service(self):
+        with mock.patch.object(commands, "dev_service_unit", side_effect=lambda name: "postgresql.service" if name == "posgre" else None), \
+                mock.patch.object(commands.compose, "projects", return_value={}):
+            for text in ("matiin posgre nya juga", "matiin posgre aja", "stop posgre dong"):
+                self.assertEqual(commands.quick(text, [], commands.servers.Watch(), {})["actions"][0],
+                                 {"type": "dev_service", "op": "stop", "unit": "postgresql.service"}, text)
+
     def test_services_left_off_until_wanted(self):
         units = ("cloudflared.service enabled enabled\nstrongswan-starter.service disabled enabled\n"
                  "me.proton.vpn.split_tunneling.service disabled enabled\ngnome-remote-desktop.service disabled enabled\n"

@@ -93,16 +93,18 @@ def command_cases(config, llm, rows):
     for unit, label, command, port, state in cases.SERVERS:
         watch.items[unit] = {"unit": unit, "kind": "server", "label": label, "command": command, "cwd": "/projects/x", "port": port,
                              "state": state, "misses": 0, "started": 0, "since": 0}
-    desk = commands.desk(config, "building", watch, True, known_projects=cases.PROJECTS, focus=cases.FOCUS, apps=cases.APPS) if llm else ""
+    desk = commands.desk(config, "building", watch, True, known_projects=cases.PROJECTS, focus=cases.FOCUS, apps=cases.APPS, small_model=llm.backend == "ollama") if llm else ""
     labels = [(key, mode["label"]) for key, mode in config.modes()]
     for text, (kind, fields) in cases.COMMANDS:
-        if not llm and not commands.quick(text, labels, watch, cases.PROJECTS):
+        if not llm and not commands.quick(text, labels, watch, cases.PROJECTS) and not commands.for_the_lists_alone(text):
             continue  # for the model to decide
 
         def decide():
             quick = commands.quick(text, labels, watch, cases.PROJECTS)
             if quick:
                 return {**quick, "by": "list"}
+            if (not llm or llm.backend == "ollama") and commands.for_the_lists_alone(text):
+                return {"actions": [], "by": "list"}
             answer = commands.interpret(llm, config.language, text, desk)
             return {**commands.only_what_was_asked(answer, text, cases.PROJECTS), "by": "model"}
         scored("command", text, decide, lambda r, kind=kind, fields=fields: (command_right(r, kind, fields), r.get("by", "-"), str(r)), rows)
@@ -113,6 +115,10 @@ def same_on_any_computer():
     commands.dev_service_unit = lambda _name: None
     commands._is_an_app = lambda _name: False
     commands.compose.projects = lambda _folders=(): {}
+    apps = [line.split(" — ") for line in cases.APPS.splitlines()]
+    commands.find_app = lambda name: next((app for app, title in apps if name.lower() in (app.lower(), title.lower())), None)
+    commands._is_default_browser = lambda _word: True
+    commands._user_folder = lambda name: "/home/you/Downloads" if name == "download" else None
 
 
 def main():

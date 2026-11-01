@@ -1077,13 +1077,18 @@ class Brain:
         if not self.llm.available:
             self._command_card(self._say("command_needs_ai"))
             return
+        if self.llm.backend == "ollama" and commands.for_the_lists_alone(text):
+            self._command_card(self._say("command_unsure"))
+            return
         language, mode = self.config.language, self.mode
 
         def work():
             try:
                 can_restore = bool(session.to_restore(session.current_session(), again=True))
-                desk = commands.desk(self.config, mode, self.watch, can_restore)
+                desk = commands.desk(self.config, mode, self.watch, can_restore, small_model=self.llm.backend == "ollama")
+                asked_at = time.monotonic()
                 result = commands.interpret(self.llm, language, text, desk)
+                log.info("command: %s answered in %.1f s", self.llm.backend, time.monotonic() - asked_at)
                 if self.llm.backend == "ollama":
                     result = commands.only_what_was_asked(result, text, commands.all_projects())
             except (brain.LLMError, ValueError, KeyError, OSError, TypeError) as e:

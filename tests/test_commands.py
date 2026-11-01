@@ -338,7 +338,64 @@ class Instant(unittest.TestCase):
 
     def test_opening_a_project_folder(self):
         self.assertEqual(self.action("buka folder project gudang"), {"type": "open_folder", "path": "gudang"})
-        self.assertIsNone(self.action("buka folder ~/Downloads"))  # the model knows paths
+
+    def test_opening_a_path(self):
+        for path in ("~/Downloads", "/home/me/x"):
+            self.assertEqual(self.action(f"buka folder {path}"), {"type": "open_folder", "path": path})
+
+    def test_opening_your_own_folders(self):
+        with mock.patch.object(commands, "GLib") as glib, mock.patch.object(commands, "find_app", return_value=None):
+            glib.get_user_special_dir.return_value = "/home/me/Downloads"
+            for text in ("buka folder download", "buka folder downloads", "buka folder unduhan", "buka download", "buka folder download dong"):
+                self.assertEqual(self.action(text), {"type": "open_folder", "path": "/home/me/Downloads"}, text)
+            glib.get_user_special_dir.return_value = None
+            self.assertIsNone(self.action("buka download"))
+        with mock.patch.object(commands, "find_app", return_value="org.gnome.Music.desktop"):
+            self.assertEqual(self.action("buka musik"), {"type": "open_app", "app": "org.gnome.Music.desktop"})
+
+    def test_a_site_in_your_browser(self):
+        with mock.patch.object(commands, "_is_default_browser", return_value=True):
+            for text in ("buka youtube di chrome", "buka youtube pake browser", "open github in firefox"):
+                self.assertEqual(self.action(text)["type"], "open_url", text)
+        with mock.patch.object(commands, "_is_default_browser", return_value=False):
+            self.assertIsNone(self.action("buka youtube di firefox"))  # it can't do that, so it doesn't pretend to
+        with mock.patch.object(commands, "_is_default_browser", return_value=True), mock.patch.object(commands, "find_app", return_value="spotify.desktop"):
+            self.assertIsNone(self.action("buka spotify di chrome"))  # an app isn't a site
+
+    def test_which_browser_is_the_default(self):
+        with mock.patch.object(commands, "Gio") as gio:
+            gio.AppInfo.get_default_for_uri_scheme.return_value = mock.Mock(get_id=lambda: "google-chrome.desktop", get_name=lambda: "Google Chrome")
+            self.assertTrue(commands._is_default_browser("chrome"))
+            self.assertTrue(commands._is_default_browser("browser"))
+            self.assertFalse(commands._is_default_browser("firefox"))
+            gio.AppInfo.get_default_for_uri_scheme.return_value = None
+            self.assertFalse(commands._is_default_browser("chrome"))
+
+    def test_politeness_after_what_to_open(self):
+        with mock.patch.object(commands, "find_app", side_effect=lambda name: "spotify.desktop" if name == "spotify" else None):
+            self.assertEqual(self.action("bukain spotify dong"), {"type": "open_app", "app": "spotify.desktop"})
+
+    def test_a_small_model_reads_less_about_your_apps(self):
+        config = mock.Mock(modes=lambda: [("building", {"label": "Building"})])
+        apps = "org.gnome.Nautilus.desktop — Files\nspotify.desktop — Spotify"
+        watch = commands.servers.Watch()
+        whole = commands.desk(config, "building", watch, False, known_projects={}, focus="none", apps=apps)
+        short = commands.desk(config, "building", watch, False, known_projects={}, focus="none", apps=apps, small_model=True)
+        self.assertIn("org.gnome.Nautilus.desktop", whole)
+        self.assertNotIn("org.gnome.Nautilus.desktop", short)
+        self.assertIn("Installed apps: Files, Spotify", short)
+        with mock.patch.object(commands.Gio.AppInfo, "get_all", return_value=[mock.Mock(get_id=lambda: "spotify.desktop", get_name=lambda: "Spotify", should_show=lambda: True)]):
+            self.assertEqual(commands.find_app("Spotify"), "spotify.desktop")
+
+    def test_a_small_model_isnt_asked_what_has_a_shape_the_lists_know(self):
+        for text in ("setup blabla", "set up blabla", "setup pin blabla", "siapin yang itu", "matiin blabla", "tutup youtube", "stop it", "nyalain bluetooth",
+                     "restart blabla", "buka entah apa", "buka folder entah", "blabla kelar", "run tests, fix the login", "jalanin rm -rf / di terminal"):
+            self.assertTrue(commands.for_the_lists_alone(text), text)
+
+    def test_but_it_can_try_the_rest(self):
+        for text in ("gimana cara matiin server vite?", "kenapa lu matiin server vite", "hari ini gua produktif gak?", "tes koneksi aman?",
+                     "gua mau dengerin musik", "what is a port", "matiin yang mana?", "setup apa dulu?", "buka yang mana?"):
+            self.assertFalse(commands.for_the_lists_alone(text), text)
 
     def test_bringing_the_desk_back(self):
         for text in ("balikin sesi sebelumnya", "balikin sesi", "restore", "restore session"):
@@ -555,6 +612,17 @@ class Checks(unittest.TestCase):
                 self.assertIsNone(commands.folder_path("/etc", {}))
                 self.assertIsNone(commands.folder_path("~/../..", {}))
                 self.assertIsNone(commands.folder_path("~/nope", {}))
+
+    def test_a_folder_you_name_comes_before_a_project_with_a_like_name(self):
+        with tempfile.TemporaryDirectory() as home:
+            real = os.path.realpath(home)
+            os.makedirs(f"{real}/Downloads")
+            os.makedirs(f"{real}/downloads-app")
+            with mock.patch.dict(os.environ, {"HOME": real}):
+                known = {"downloads-app": f"{real}/downloads-app"}
+                self.assertEqual(commands.folder_path("~/Downloads", known), f"{real}/Downloads")
+                self.assertEqual(commands.folder_path(f"{real}/Downloads", known), f"{real}/Downloads")
+                self.assertEqual(commands.folder_path("downloads", known), f"{real}/downloads-app")
 
     def test_a_project_by_a_rough_name(self):
         known = {"toko-besar": "/w/toko-besar", "toko-online": "/w/toko-online", "toko-offline": "/w/toko-offline"}

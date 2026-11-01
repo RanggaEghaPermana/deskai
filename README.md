@@ -107,8 +107,10 @@ couple of minutes later: small local models judge real windows and notifications
 with Ollama those are decided by the lists and what DeskAI has learned from you, and for notifications that aren't
 plainly urgent, your answer about the sender. It also can't rewrite your modes, though allowing or blocking something
 works without it. The default model, `qwen3:1.7b`, downloads 1.4 GB
-and needs about 2 GB of free memory while thinking. On a laptop CPU it answers in about 4 seconds, or 10 to 25 when
-it has to load first. Pick another with `llm.ollama_model` in `~/.config/deskai/modes.json`.
+and needs about 2 GB of free memory while thinking. On a laptop CPU it answers in about 5 seconds, or 25 when it has
+to load first, so it only gets what the lists have no shape for, like a question. A request to set up, close or open
+something that the lists can't place gets told so right away. Pick another with `llm.ollama_model` in
+`~/.config/deskai/modes.json`.
 
 Everything else stays on your computer in `~/.config/deskai` and `~/.local/state/deskai`.
 

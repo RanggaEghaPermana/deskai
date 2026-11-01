@@ -776,6 +776,38 @@ class ConfigReload(unittest.TestCase):
             self.assertFalse(config.refresh())
 
 
+class ASmallLocalModel(Base):
+    def typed(self, text, backend="ollama"):
+        self.brain.llm.backend = backend
+        with mock.patch.object(deskaid.commands, "quick", return_value=None), mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
+                mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain.on_command(text)
+        return thread.called
+
+    def test_what_the_lists_couldnt_place_is_said_right_away(self):
+        self.assertFalse(self.typed("setup blabla"))
+        self.assertIn("belum nangkep", self.brain.cards[-1]["text"])
+
+    def test_a_question_still_goes_to_it(self):
+        self.assertTrue(self.typed("kenapa servernya mati?"))
+
+    def test_claude_gets_everything_the_lists_dont(self):
+        self.assertTrue(self.typed("setup yang kemarin", backend="claude-cli"))
+
+    def test_it_reads_a_shorter_desk_than_claude(self):
+        for backend, small in (("ollama", True), ("claude-cli", False)):
+            self.brain.llm.backend = backend
+            with mock.patch.object(deskaid.commands, "quick", return_value=None), mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
+                    mock.patch.object(deskaid.threading, "Thread") as thread:
+                self.brain.on_command("kenapa servernya mati?")
+            with mock.patch.object(deskaid.session, "to_restore", return_value=None), mock.patch.object(deskaid.session, "current_session", return_value="s"), \
+                    mock.patch.object(deskaid.commands, "desk", return_value="") as desk, \
+                    mock.patch.object(deskaid.commands, "interpret", return_value={"actions": []}), \
+                    mock.patch.object(deskaid.commands, "all_projects", return_value={}), mock.patch.object(deskaid.GLib, "idle_add"):
+                thread.call_args.kwargs["target"]()
+            self.assertEqual(desk.call_args.kwargs["small_model"], small, backend)
+
+
 class ABrokenConfig(Base):
     def setUp(self):
         super().setUp()

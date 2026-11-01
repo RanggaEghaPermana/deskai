@@ -45,7 +45,7 @@ Actions (each has `type`, plus only the fields listed):
 conversation. `project` is one of the project names below.
 - restore_desk: bring back the windows, terminals and servers from before the last logout.
 - server {{op, target}}: op is restart, stop or log. target is a server's name below, or "all".
-- open_app {{app}}: open an installed app, by its desktop id below.
+- open_app {{app}}: open an installed app, by its desktop id or its name below.
 - open_url {{url}}: open an http or https address.
 - open_folder {{path}}: open a folder in Files: a project's name, or a path starting with ~/ the owner mentioned.
 - close_project {{project}}: stop working on a project: stop its servers and database and offer to close its Claude \
@@ -124,12 +124,12 @@ FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|a
 # Telling it about the window in front of you, which is how it learns.
 CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|matikan|stop|stopin|"
                            r"shut down|turn off|kill|hentikan|nonaktifkan|akhiri|done with|finished with|finish|udahan|cabut|berhenti|quit)\s+"
-                           r"(?:dulu\s+)?(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding|working)\s+)?(?:(?:di|on|sama|dari|with|from)\s+)?"
+                           r"(?:dulu\s+)?(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding|working)\s+)?(?:(?:di|on|in|sama|dari|with|from)\s+)?"
                            r"(?:server(?:nya)?\s+)?(?:project\s+|proyek\s+)?(.+)$", re.I)
 CLOSED_PROJECT = re.compile(r"^(?:project\s+|proyek\s+)?(.+?)\s+(?:(?:udah|sudah|dah)\s+)?(?:kelar|selesai|beres|done)$", re.I)
 SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mulai|lanjut|lanjutin|nyalain|nyalakan|hidupin|hidupkan|"
                            r"idupin|jalanin|jalankan|aktifkan|run)\s+"
-                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding)\s+)?(?:(?:di|on)\s+)?"
+                           r"(?:(?:kerja(?:an)?|ngerjain|kerjain|ngoding)\s+)?(?:(?:di|on|in|ke|for|buat|untuk)\s+)?"
                            r"(?:server(?:nya)?\s+)?(?:project\s+|proyek\s+)?(.+)"
                            r"|(?:mau\s+)?(?:kerja|kerjain|ngerjain|garap|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)"
                            r"(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
@@ -166,7 +166,7 @@ ACT = re.compile(r"^(nyalain ulang|restart|ulang\w*|nyalain|nyalakan|hidupin|idu
 EVERYDAY = {"wifi", "bluetooth", "internet", "laptop", "komputer", "computer", "pc", "hp", "layar", "screen", "suara", "sound",
             "volume", "musik", "music", "lagu", "song", "video", "notifikasi", "notification", "notifications", "notif", "mic",
             "mikrofon", "microphone", "kamera", "camera", "browser", "tab", "window", "jendela"}  # not a part of a project's name
-ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
+ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya|juga|aja|saja|deh)\b", re.I)
 # What goes wrong, in the words of Docker, systemctl, Python and GLib, and the card string that says it plainly. The first
 # that matches wins: "permission denied while trying to connect to the Docker daemon socket" is about permission.
 TROUBLES = (
@@ -231,6 +231,15 @@ SITES = {"youtube": "https://www.youtube.com", "yt": "https://www.youtube.com", 
          "whatsapp": "https://web.whatsapp.com", "wa": "https://web.whatsapp.com", "instagram": "https://www.instagram.com",
          "chatgpt": "https://chatgpt.com", "drive": "https://drive.google.com", "google drive": "https://drive.google.com",
          "kalender": "https://calendar.google.com", "calendar": "https://calendar.google.com"}
+# In the words for your own folders, for "buka folder download".
+USER_FOLDERS = {"download": GLib.UserDirectory.DIRECTORY_DOWNLOAD, "downloads": GLib.UserDirectory.DIRECTORY_DOWNLOAD,
+                "unduhan": GLib.UserDirectory.DIRECTORY_DOWNLOAD, "documents": GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+                "document": GLib.UserDirectory.DIRECTORY_DOCUMENTS, "dokumen": GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+                "pictures": GLib.UserDirectory.DIRECTORY_PICTURES, "gambar": GLib.UserDirectory.DIRECTORY_PICTURES,
+                "foto": GLib.UserDirectory.DIRECTORY_PICTURES, "music": GLib.UserDirectory.DIRECTORY_MUSIC,
+                "musik": GLib.UserDirectory.DIRECTORY_MUSIC, "videos": GLib.UserDirectory.DIRECTORY_VIDEOS,
+                "video": GLib.UserDirectory.DIRECTORY_VIDEOS, "desktop": GLib.UserDirectory.DIRECTORY_DESKTOP}
+IN_A_BROWSER = re.compile(r"\s+(?:di|in|pake|pakai|with|on)\s+(?:google\s+)?(chrome|chromium|firefox|brave|edge|browser)$", re.I)
 DOMAIN = re.compile(r"^(?:https?://)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/\S*)?$", re.I)
 # Words for apps whose name doesn't say it. Tried in order; the first one that's installed wins.
 APP_WORDS = {"terminal": ("org.gnome.Ptyxis.desktop", "org.gnome.Terminal.desktop", "org.gnome.Console.desktop"),
@@ -361,12 +370,15 @@ def service_active(unit):
 
 
 def dev_service_unit(name):
-    """The installed system service a word like "mysql" or "php" means, or None."""
-    wanted = DEV_SERVICES.get(name.lower())
+    """The installed system service a word like "mysql" or "php" means, or a slip of the fingers for one ("posgre"), or None."""
+    close = difflib.get_close_matches(name.lower(), DEV_SERVICES, n=1, cutoff=0.8) if len(name) > 3 else []
+    wanted = DEV_SERVICES.get(name.lower()) or (DEV_SERVICES[close[0]] if close else None)
     if not wanted:
         return None
     try:
-        out = subprocess.run(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--plain"],
+        # Just this one: listing them all takes a second, and this runs on the way to answering you.
+        out = subprocess.run(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--plain",
+                              "php*-fpm.service" if wanted == "php-fpm" else f"{wanted}.service"],
                              capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return None
@@ -387,9 +399,26 @@ def _list_edit(words, modes):
     return None
 
 
+def _is_default_browser(word):
+    """A site opens in your default browser, so that has to be the one you named."""
+    browser = Gio.AppInfo.get_default_for_uri_scheme("https")
+    return word.lower() == "browser" or bool(browser and word.lower() in f"{browser.get_id()} {browser.get_name()}".lower())
+
+
+def _user_folder(name):
+    """Your Downloads or the like, by a word for it, if you have one."""
+    which = USER_FOLDERS.get(name.strip().lower())
+    return GLib.get_user_special_dir(which) if which is not None else None
+
+
 def _open_thing(name):
-    """{"type": "open_url" | "open_app", ...} for something by name. None if it isn't plain what that is."""
+    """{"type": "open_url" | "open_app" | "open_folder", ...} for something by name. None if it isn't plain what that is."""
     wanted = name.strip().lower()
+    browser = IN_A_BROWSER.search(wanted)
+    if browser:
+        wanted = wanted[:browser.start()]
+        if not (wanted in SITES or DOMAIN.match(wanted)) or not _is_default_browser(browser.group(1)):
+            return None
     if wanted in SITES:
         return {"type": "open_url", "url": SITES[wanted]}
     if DOMAIN.match(wanted):
@@ -398,7 +427,10 @@ def _open_thing(name):
         if find_app(app):
             return {"type": "open_app", "app": app}
     found = find_app(wanted) if wanted not in APP_WORDS else None
-    return {"type": "open_app", "app": found} if found else None
+    if found:
+        return {"type": "open_app", "app": found}
+    folder = _user_folder(wanted)
+    return {"type": "open_folder", "path": folder} if folder else None
 
 
 def _quick_action(words, modes, watch, known_projects):
@@ -488,6 +520,10 @@ def _quick_action(words, modes, watch, known_projects):
     if mode:
         return {"type": "mode", "mode": mode}
     folder = OPEN_FOLDER.match(words)
+    if folder and _user_folder(folder.group(1)):
+        return {"type": "open_folder", "path": _user_folder(folder.group(1))}
+    if folder and folder.group(1).startswith(("~/", "/")):
+        return {"type": "open_folder", "path": folder.group(1)}
     if folder and known_projects and find_project(folder.group(1), known_projects):
         return {"type": "open_folder", "path": folder.group(1)}
     opening = OPEN_THING.match(words)
@@ -568,6 +604,14 @@ def _names_server(action, text):
 def _names_project(action, text, known_projects):
     wanted = find_project(action.get("project"), known_projects)
     return bool(wanted) and any(_meant_as_project(word, known_projects) == wanted for word in re.findall(r"[\w-]{3,}", text))
+
+
+def for_the_lists_alone(text):
+    """Whether a small local model has nothing to add: a request shaped like what the lists know, that they couldn't place. Its
+    answer would have to name the same thing to count, after half a minute of loading and thinking. A question it can try."""
+    words = _trimmed(text)
+    return not IS_QUESTION.search(words) and bool(DANGEROUS.search(text) or any(
+        pattern.match(words) for pattern in (SETUP_PROJECT, CLOSE_PROJECT, CLOSED_PROJECT, OPEN_THING, OPEN_FOLDER, ACT, SERVER_OP)))
 
 
 def only_what_was_asked(result, text, known_projects):
@@ -736,14 +780,18 @@ def running_list(watch, show, language):
     return "\n".join(f"{kind}: {', '.join(lines[kind])}" for kind in ("Docker", "Database", "Server") if kind in lines)
 
 
-def desk(config, mode, watch, can_restore, known_projects=None, focus=None, apps=None):
-    """The desk as the model reads it. (The evaluation passes made-up projects, focus time and apps.)"""
+def desk(config, mode, watch, can_restore, known_projects=None, focus=None, apps=None, small_model=False):
+    """The desk as the model reads it. (The evaluation passes made-up projects, focus time and apps.) A small local model gets
+    the apps by name only: every word is time it spends reading on a laptop's CPU, and an app can be opened by its name."""
     servers = "; ".join(f"{s['label']} ({KIND_WORDS.get(s['kind'], 'server')}, {s['state']})" for s in watch.summary()) or "none"
     modes = "; ".join(f"{key} = {m['label']}{' (current)' if key == mode else ''}" for key, m in config.modes())
     names = projects() if known_projects is None else known_projects
+    installed = apps or brain.installed_apps()
+    listing = f"Installed apps: {', '.join(line.split(' — ')[-1] for line in installed.splitlines())}" if small_model else \
+        f"Installed apps (desktop id — name):\n{installed}"
     return (f"Modes: {modes}\nServers: {servers}\nProjects, newest first: {', '.join(names) or 'none'}\n"
             f"Focus time today: {focus or focus_today(config)}\nA previous session can be restored: {'yes' if can_restore else 'no'}\n"
-            f"Installed apps (desktop id — name):\n{apps or brain.installed_apps()}")
+            f"{listing}")
 
 
 def interpret(llm, language, text, desk_text):
@@ -811,11 +859,15 @@ NOT_A_PROJECT = EVERYDAY | {"database", "databases", "db", "server", "servers", 
 
 def _reads_as(word, project):
     """Whether these letters read as this project's name: from the start of one of its words ("besar" of toko-besar, not
-    "art" of shopping-cart), or a slip of the fingers about as long as what it misses ("gudnag", not "mainan" for main-app)."""
+    "art" of shopping-cart), or a slip of the fingers."""
     parts = [part.lower() for part in re.split(r"[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", project) if part]
     return any("".join(parts[i:]).startswith(word) for i in range(len(parts))) or \
-        len(word) > 3 and any(abs(len(word) - len(part)) <= 1 and difflib.SequenceMatcher(None, word, part).ratio() >= 0.8
-                              for part in (_simple(project), *parts))
+        len(word) > 3 and any(_a_slip(word, part) for part in (_simple(project), *parts))
+
+
+def _a_slip(word, part):
+    """Close to a name, and not just letters it shares: "gudnag" and "shopflor", not "mainan" for main or "ring" for string."""
+    return difflib.SequenceMatcher(None, word, part).ratio() >= 0.8 and (abs(len(word) - len(part)) <= 1 or not (word in part or part in word))
 
 
 def _meant_as_project(name, known):
@@ -865,7 +917,8 @@ def folder_path(path, known_projects):
     path = (path or "").strip()
     if not path:
         return None
-    found = find_project(path, known_projects) or os.path.expanduser(path)
+    written = os.path.expanduser(path)
+    found = written if os.path.isabs(written) and os.path.isdir(written) else find_project(path, known_projects) or written
     real = os.path.realpath(found)
     home = os.path.realpath(os.path.expanduser("~"))
     return real if os.path.isdir(real) and (real == home or real.startswith(home + os.sep)) else None
