@@ -9,7 +9,7 @@
     <name>Rangga Egha Permana</name>
   </developer>
   <description>
-    <p>DeskAI is a dock for GNOME 50 that helps you stay on what you're doing, and brings your desk back after a logout.</p>
+    <p>DeskAI is a dock for GNOME that helps you stay on what you're doing, and brings your desk back after a logout.</p>
     <ul>
       <li>Focus modes, each with its own apps, allowed sites and notification rules</li>
       <li>An inbox on the dock for WhatsApp messages and AI agents such as Claude Code</li>
@@ -26,6 +26,20 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-11-01">
+      <description>
+        <p>Steadier, and it keeps out of what it wasn't asked to touch.</p>
+        <ul>
+          <li>Apps DeskAI opened keep running when its background service restarts or crashes.</li>
+          <li>Locking the screen no longer empties the inbox, and what AI agents say meanwhile waits for you.</li>
+          <li>The command bar understands being told not to, asks before stopping everything, and reads a mistyped project name right away.</li>
+          <li>Closing a project asks before stopping a database DeskAI didn't start, and everyday words no longer close a project that has them in its name.</li>
+          <li>Fewer false alarms about distractions, and a guess takes more than a site's name.</li>
+          <li>A mistake in modes.json gets a card saying where it is, the last version that worked stays in use, and a file that can't be read is copied before anything saves over it.</li>
+          <li>Hooks in AI agents are off unless you turn them on, and removing DeskAI puts their settings and what else it changed back as they were.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-10-31">
       <description>
         <ul>

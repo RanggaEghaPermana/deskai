@@ -11,10 +11,16 @@ trap 'rm -rf "$STAGE"' EXIT
 PKG="$STAGE/deskai"
 APP="$PKG/usr/share/deskai"
 
+# What's committed, so what's in a package can be looked up. Changes that aren't would be left out without a word.
+if [ -n "$(git -C "$ROOT" status --porcelain -- daemon extension setup packaging VERSION)" ]; then
+  echo "These aren't committed, so they wouldn't be in the package. Commit them first:" >&2
+  git -C "$ROOT" status --short -- daemon extension setup packaging VERSION >&2
+  exit 1
+fi
+
 mkdir -p "$APP" "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications" "$PKG/usr/share/metainfo" \
          "$PKG/usr/share/icons/hicolor/scalable/apps" "$PKG/usr/share/doc/deskai"
-cp -r "$ROOT/daemon" "$ROOT/extension" "$ROOT/setup" "$ROOT/VERSION" "$APP/"
-find "$APP" -type d -name __pycache__ -prune -exec rm -rf {} +
+git -C "$ROOT" archive HEAD daemon extension setup VERSION | tar -x -C "$APP"
 cp "$ROOT/setup/$APP_ID.svg" "$PKG/usr/share/icons/hicolor/scalable/apps/"
 cp "$ROOT/packaging/$APP_ID.Setup.desktop" "$PKG/usr/share/applications/"
 cp "$ROOT/packaging/$APP_ID.Setup.metainfo.xml" "$PKG/usr/share/metainfo/"
@@ -44,7 +50,7 @@ Priority: optional
 Architecture: all
 Maintainer: Rangga Egha Permana <RanggaEghaPermana@users.noreply.github.com>
 Homepage: https://github.com/RanggaEghaPermana/deskai
-Depends: gnome-shell (>= 46~), gnome-shell (<< 52~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd
+Depends: gnome-shell (>= 46~), gnome-shell (<< 52~), gnome-shell (<< 47~) | gnome-shell (>= 50~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd
 Recommends: ptyxis
 Installed-Size: $(du -sk "$PKG/usr" | cut -f1)
 Description: Dock for GNOME with focus modes, an inbox and desk restore
@@ -58,4 +64,7 @@ CONTROL
 mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/deskai_${VERSION}_all.deb"
 fakeroot dpkg-deb --build --root-owner-group "$PKG" "$OUT" >/dev/null
+# The same file under a name that stays the same, for a link that always gets the latest release.
+cp "$OUT" "$ROOT/dist/deskai_all.deb"
+(cd "$ROOT/dist" && sha256sum "deskai_${VERSION}_all.deb" deskai_all.deb > SHA256SUMS)
 echo "$OUT"

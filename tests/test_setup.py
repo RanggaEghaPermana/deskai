@@ -152,6 +152,141 @@ class Versions(unittest.TestCase):
             self.assertFalse(self.gnome_check(version).ok, version)
 
 
+class HooksAreYourCall(unittest.TestCase):
+    def test_off_unless_theyre_there_already(self):
+        source = (ROOT / "setup" / "deskai_setup.py").read_text()
+        self.assertIn("self.hooks = installer.hooks_installed()", source)
+
+
+class PuttingItBack(unittest.TestCase):
+    """What setup found changed goes back when DeskAI is removed, with GNOME's settings faked."""
+
+    class Settings:
+        def __init__(self, values, unset=()):
+            self.values = dict(values)
+            self.unset = set(unset)
+
+        def get_strv(self, key):
+            return list(self.values.get(key, []))
+
+        def set_strv(self, key, value):
+            self.values[key] = list(value)
+
+        def get_boolean(self, key):
+            return self.values.get(key, False)
+
+        def set_boolean(self, key, value):
+            self.values[key] = value
+
+        def get_string(self, key):
+            return self.values.get(key, "")
+
+        def set_string(self, key, value):
+            self.values[key] = value
+            self.unset.discard(key)
+
+        def get_user_value(self, key):
+            return None if key in self.unset else self.values.get(key)
+
+        def reset(self, key):
+            self.values.pop(key, None)
+            self.unset.add(key)
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.shell = self.Settings({"enabled-extensions": ["other@x"], "disabled-extensions": [installer.LOGIN_UUID], "disable-user-extensions": True})
+        self.login = self.Settings({}, unset={"background-color"})
+        for owner, name, value in ((installer, "INSTALLED", self.root / "installed.json"), (installer, "_login_screen", lambda: self.login),
+                                   (installer.Gio.Settings, "new", lambda _schema: self.shell), (installer.Gio.Settings, "sync", lambda: None),
+                                   (installer.docks, "restore", lambda _settings: None), (installer, "CONFIG", self.root / "config"),
+                                   (installer, "version", lambda: "9.9"),
+                                   (installer, "linked_here", lambda: True), (installer, "is_system_payload", lambda: False)):
+            patcher = mock.patch.object(owner, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def install(self):
+        dict(installer.install_steps(installer.Options()))["finish"]()
+
+    def remove(self):
+        dict(installer.uninstall_steps())["extension"]()
+
+    def test_extensions_that_were_off_go_off_again(self):
+        self.install()
+        self.assertIs(self.shell.values["disable-user-extensions"], False)
+        self.remove()
+        self.assertIs(self.shell.values["disable-user-extensions"], True)
+
+    def test_extensions_that_were_on_stay_on(self):
+        self.shell.values["disable-user-extensions"] = False
+        self.install()
+        self.remove()
+        self.assertIs(self.shell.values["disable-user-extensions"], False)
+
+    def test_an_update_doesnt_think_it_found_them_on(self):
+        self.install()
+        self.install()
+        self.remove()
+        self.assertIs(self.shell.values["disable-user-extensions"], True)
+
+    def test_a_login_color_you_chose_stays(self):
+        self.login = self.Settings({"background-color": installer.LOGIN_BACKGROUND})
+        self.install()
+        self.remove()
+        self.assertEqual(self.login.get_string("background-color"), installer.LOGIN_BACKGROUND)
+
+    def test_one_it_set_goes(self):
+        self.install()
+        self.assertEqual(self.login.get_string("background-color"), installer.LOGIN_BACKGROUND)
+        self.remove()
+        self.assertIsNone(self.login.get_user_value("background-color"))
+
+    def test_an_install_from_before_this_was_noted(self):
+        installer.INSTALLED.write_text('{"version": "0.4.1"}')
+        self.login = self.Settings({"background-color": installer.LOGIN_BACKGROUND})
+        self.remove()
+        self.assertIsNone(self.login.get_user_value("background-color"))
+
+    def test_deskai_login_goes_on_the_first_time_only(self):
+        self.install()
+        self.assertIn(installer.LOGIN_UUID, self.shell.values["enabled-extensions"])
+        self.shell.values["enabled-extensions"].remove(installer.LOGIN_UUID)
+        self.install()
+        self.assertNotIn(installer.LOGIN_UUID, self.shell.values["enabled-extensions"])
+        self.assertIn(installer.UUID, self.shell.values["enabled-extensions"])
+
+    def test_a_record_that_isnt_one(self):
+        installer.INSTALLED.write_text("[1]")
+        self.assertEqual(installer.install_record(), {})
+        self.assertEqual(installer.installed_version(), "")
+
+    def files(self):
+        for name in ("COMMAND", "LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+            patcher = mock.patch.object(installer, name, self.root / "gone" / name)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        dict(installer.uninstall_steps())["files"]()
+
+    def test_a_terminal_session_set_aside_comes_back(self):
+        session = self.root / "config" / "org.gnome.Ptyxis" / "session.gvariant"
+        session.parent.mkdir(parents=True)
+        session.with_name("session.gvariant.deskai-bak").write_text("old tabs")
+        self.files()
+        self.assertEqual(session.read_text(), "old tabs")
+        self.assertFalse(session.with_name("session.gvariant.deskai-bak").exists())
+
+    def test_but_not_over_one_it_has_now(self):
+        session = self.root / "config" / "org.gnome.Ptyxis" / "session.gvariant"
+        session.parent.mkdir(parents=True)
+        session.write_text("new tabs")
+        session.with_name("session.gvariant.deskai-bak").write_text("old tabs")
+        self.files()
+        self.assertEqual(session.read_text(), "new tabs")
+        self.assertFalse(session.with_name("session.gvariant.deskai-bak").exists())
+
+
 class DatabasePermission(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
@@ -165,7 +300,7 @@ class DatabasePermission(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def removal(self):
-        with mock.patch.object(installer, "run") as run:
+        with mock.patch.object(installer, "run", return_value=mock.Mock(returncode=0)) as run:
             dict(installer.uninstall_steps())["polkit"]()
         return run
 
@@ -186,9 +321,26 @@ class DatabasePermission(unittest.TestCase):
     def test_it_was_made_here_though_the_folder_cant_be_read(self):
         self.generated.write_text("rule")
         self.assertTrue(installer.has_polkit_rule())
-        run = self.removal()
+        with mock.patch.object(installer, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
+            dict(installer.uninstall_steps())["polkit"]()
         self.assertEqual(run.call_args.args[:3], ("pkexec", "rm", "-f"))
         self.assertFalse(self.generated.exists())
+
+    def test_closing_the_password_window_leaves_the_note_for_trying_again(self):
+        self.generated.write_text("rule")
+        dismissed = mock.Mock(returncode=126, stdout="", stderr="Error executing command as another user: Request dismissed\n")
+        with mock.patch.object(installer, "run", return_value=dismissed), self.assertRaises(installer.SetupError) as error:
+            dict(installer.uninstall_steps())["polkit"]()
+        self.assertEqual(error.exception.key, "trouble_dismissed")
+        self.assertTrue(self.generated.exists())
+        self.assertTrue(installer.has_polkit_rule())
+
+    def test_when_it_fails_for_another_reason_it_says_so(self):
+        self.generated.write_text("rule")
+        with mock.patch.object(installer, "run", return_value=mock.Mock(returncode=1, stdout="", stderr="rm: something odd\n")), \
+                self.assertRaises(installer.SetupError) as error:
+            dict(installer.uninstall_steps())["polkit"]()
+        self.assertEqual(error.exception.key, "trouble_polkit_left")
 
 
 class PlainFailures(unittest.TestCase):
@@ -342,8 +494,23 @@ class PlainFailures(unittest.TestCase):
         self.patch(installer, "HOME", self.root)
         self.assertFalse(installer.hooks_installed())
 
+    def test_hooks_are_only_there_if_a_command_runs_them(self):
+        self.patch(installer, "HOME", self.root)
+        settings = self.root / ".claude" / "settings.json"
+        settings.parent.mkdir()
+        codex = self.root / ".codex" / "config.toml"
+        codex.parent.mkdir()
+        for text in ('{"note": "deskai and a hook"}', '{"hooks": {"Stop": [{"command": "/home/you/deskai-tools/hook.sh"}]}}'):
+            settings.write_text(text)
+            self.assertFalse(installer.hooks_installed(), text)
+        settings.write_text('{"hooks": {"Stop": [{"hooks": [{"command": "/home/you/.local/bin/deskai hook claude"}]}]}}')
+        self.assertTrue(installer.hooks_installed())
+        settings.unlink()
+        codex.write_text('notify = ["/home/you/.local/bin/deskai", "hook", "codex"]  # DeskAI\n')
+        self.assertTrue(installer.hooks_installed())
+
     def test_only_the_extras_can_fail_without_stopping_the_rest(self):
-        self.assertEqual(installer.CAN_FAIL, {"hooks"})
+        self.assertEqual(installer.CAN_FAIL, {"hooks", "ollama"})
 
     def test_what_python_says(self):
         for said, key in ((PermissionError(13, "Permission denied", "/home/you/.config"), "trouble_no_permission"),
@@ -371,6 +538,55 @@ class PlainFailures(unittest.TestCase):
             raise KeyError("a bug")
         self.check(step, "trouble_unknown", "a bug")
         self.assertIn("Traceback", self.log.read_text())
+
+    def test_removing_gets_as_far_as_it_can(self):
+        ran, failed_steps = [], []
+
+        def broken():
+            raise OSError(13, "Permission denied", "/home/you/x")
+        steps = [("extension", broken), ("hooks", lambda: ran.append("hooks")), ("service", broken), ("files", lambda: ran.append("files"))]
+        self.assertFalse(installer.run_steps(steps, lambda step_id, state, _error: failed_steps.append(step_id) if state == "failed" else None, keep_going=True))
+        self.assertEqual(ran, ["hooks", "files"])
+        self.assertEqual(failed_steps, ["extension", "service"])
+
+    def test_it_says_when_all_of_it_worked(self):
+        self.assertTrue(installer.run_steps([("a", lambda: None), ("b", lambda: None)], lambda *_: None, keep_going=True))
+
+    def test_the_terminal_removes_as_much_too(self):
+        def step():
+            raise OSError(13, "Permission denied", "/home/you/x")
+        ran = []
+        with mock.patch.object(installer, "uninstall_steps", return_value=[("extension", step), ("files", lambda: ran.append("files"))]), \
+                mock.patch.object(sys, "argv", ["installer.py", "--uninstall"]), redirect_stdout(io.StringIO()), \
+                self.assertRaises(SystemExit) as exit_code:
+            installer.main()
+        self.assertEqual(exit_code.exception.code, 1)
+        self.assertEqual(ran, ["files"])
+
+    def test_an_update_with_no_connection_keeps_the_sdk_it_has(self):
+        venv = self.root / "venv"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "bin" / "python").touch()
+        self.patch(installer, "VENV", venv)
+
+        def offline(*args, **_kwargs):
+            return failed(1, stderr="Could not resolve host") if "install" in args else failed(0)
+        with mock.patch.object(installer, "run", side_effect=offline):
+            installer._make_venv("python3")
+
+        def no_sdk(*args, **_kwargs):
+            return failed(1, stderr="Could not resolve host") if "install" in args else failed(1)
+        with mock.patch.object(installer, "run", side_effect=no_sdk), self.assertRaises(installer.SetupError):
+            installer._make_venv("python3")
+
+    def test_a_model_thats_here_isnt_downloaded_again(self):
+        self.patch(installer, "find_ollama", lambda: "ollama")
+        with mock.patch.object(installer, "run", return_value=mock.Mock(returncode=0, stdout="NAME\nsmall:1b  abc  1 GB\n", stderr="")) as run:
+            installer._pull_ollama_model("small:1b")
+        self.assertEqual([call.args[1] for call in run.call_args_list], ["list"])
+
+    def test_ollama_being_off_doesnt_stop_an_install(self):
+        self.assertIn("ollama", installer.CAN_FAIL)
 
     def test_it_stops_at_the_first_failure(self):
         ran = []

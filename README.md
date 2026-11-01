@@ -3,6 +3,8 @@
 An AI-aware dock for GNOME. It helps you stay on what you're doing, tells you when something needs
 you, and puts your desk back the way it was after a logout. The AI part is optional.
 
+**[Download for Ubuntu and Debian](https://github.com/RanggaEghaPermana/deskai/releases/latest/download/deskai_all.deb)**, or see [other ways to install](#install).
+
 ![The dock with the Writing mode on, and a card offering to show a file that was just downloaded](docs/dock.png)
 
 ![The command bar above the dock, asking what you want done](docs/command-bar.png)
@@ -68,18 +70,18 @@ terminals don't come back after a logout there.
 
 ### Ubuntu and Debian
 
-1. Download `deskai_<version>_all.deb` from [Releases](https://github.com/RanggaEghaPermana/deskai/releases).
-2. Double-click it and choose Install, or run `sudo apt install ./deskai_*_all.deb`.
+1. **[Download DeskAI](https://github.com/RanggaEghaPermana/deskai/releases/latest/download/deskai_all.deb)** (a `.deb`, under 200 KB).
+2. Double-click it and choose Install, or run `sudo apt install ./deskai_all.deb`.
 3. Open **DeskAI Setup** from the app grid and follow the steps.
 4. Log out and back in once. The dock is there from then on.
 
+To update, install the newer `.deb` the same way, open DeskAI Setup, choose Update, and log out and back in. It doesn't
+look for updates by itself.
+
 ### Other distributions with GNOME 46, 50 or 51
 
-```sh
-git clone https://github.com/RanggaEghaPermana/deskai.git
-cd deskai
-./setup.sh
-```
+1. Download **Source code (zip)** from the [latest release](https://github.com/RanggaEghaPermana/deskai/releases/latest) and unpack it.
+2. In that folder, run `bash setup.sh`.
 
 The setup window copies what it needs, so you can delete the download afterwards.
 
@@ -140,14 +142,19 @@ bug reports, and removing DeskAI deletes it.
 
 ## What it changes on your computer
 
+- **A background service and a command**: `deskaid.service` for your user, `~/.local/bin/deskai`, and, unless you
+  installed the `.deb`, a copy of the app in `~/.local/share/deskai` and a DeskAI Setup launcher. Removing DeskAI takes
+  them away.
+- **GNOME's switch for user extensions**, if you had it off, since the dock can't run without it. Removing DeskAI turns
+  it off again.
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
-  `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. Backups are kept
-  as `*.deskai-bak`, and removing DeskAI takes the entries out again. A file DeskAI can't change is left as it is, and
-  setup says so.
+  `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. A backup is kept as `*.deskai-bak`
+  until you take them out. Removing DeskAI then puts each file back exactly as it was, or if you changed something else
+  in it meanwhile, just takes the entries out. A file DeskAI can't change is left as it is, and setup says so.
 - **Resuming Claude Code.** Restoring your desk and the workday routine resume conversations with the
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs
-  don't come back twice.
+  don't come back twice. Removing DeskAI puts it back if Ptyxis hasn't made a new one.
 - **Clearing caches** only happens when you press the button on the card. It empties the caches of npm, pip, yarn
   and Composer and your thumbnails, and prunes Docker's build cache: all things their tools fill again.
 - **Starting and stopping system services** from the command bar goes through GNOME's password prompt.
@@ -198,7 +205,7 @@ step leaves your other docks off: `gnome-extensions enable ubuntu-dock@ubuntu.co
 dev/check.sh            # everything a change has to pass
 dev/nested.sh           # a throwaway GNOME Shell with its own HOME, for testing
 dev/smoke.sh            # tries the dock in that shell, on its own
-packaging/build-deb.sh  # builds dist/deskai_<version>_all.deb
+packaging/build-deb.sh  # builds dist/deskai_<version>_all.deb from what's committed
 python3 -m unittest discover tests
 python3 evals/run.py    # scores the AI pipeline on set cases (needs Ollama, or add --no-model)
 ```

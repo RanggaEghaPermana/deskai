@@ -210,6 +210,76 @@ class AgentFiles(unittest.TestCase):
         self.assertEqual(self.command("remove")[0], 0)
         self.assertNotIn("deskai", self.claude.read_text())
 
+    def install_and_remove(self):
+        self.assertEqual(self.command("install")[0], 0)
+        self.assertEqual(self.command("remove")[0], 0)
+
+    def backups(self):
+        return list(self.root.rglob(f"*{hooks.BACKUP_SUFFIX}"))
+
+    def test_removing_puts_a_file_back_as_it_was(self):
+        original = '{"theme":   "dark",\n    "list": [1, 2, 3], "name": "caf\\u00e9"}\n\n'
+        self.claude.write_text(original)
+        self.claude.chmod(0o644)
+        self.install_and_remove()
+        self.assertEqual(self.claude.read_text(), original)
+        self.assertEqual(self.claude.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.backups(), [])
+
+    def test_your_other_changes_stay(self):
+        self.claude.write_text('{"theme": "dark"}')
+        self.assertEqual(self.command("install")[0], 0)
+        settings = json.loads(self.claude.read_text())
+        settings["theme"] = "light"
+        self.claude.write_text(json.dumps(settings))
+        self.assertEqual(self.command("remove")[0], 0)
+        self.assertEqual(json.loads(self.claude.read_text()), {"theme": "light"})
+        self.assertEqual(self.backups(), [])
+
+    def test_a_file_that_wasnt_there_goes_again(self):
+        self.install_and_remove()
+        self.assertFalse(self.claude.exists())
+
+    def test_a_link_stays_a_link(self):
+        real = self.root / "dotfiles.json"
+        real.write_text('{"theme":   "dark"}')
+        real.chmod(0o640)
+        self.claude.symlink_to(real)
+        self.assertEqual(self.command("install")[0], 0)
+        self.assertTrue(self.claude.is_symlink())
+        self.assertIn("deskai", real.read_text())
+        self.assertEqual(real.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.command("remove")[0], 0)
+        self.assertTrue(self.claude.is_symlink())
+        self.assertEqual(real.read_text(), '{"theme":   "dark"}')
+        self.assertEqual(real.stat().st_mode & 0o777, 0o640)
+
+    def test_codex_without_a_newline_at_the_end(self):
+        self.codex.write_text('model = "o3"')
+        self.assertEqual(self.command("install")[0], 0)
+        lines = self.codex.read_text().splitlines()
+        self.assertEqual(lines[0], 'model = "o3"')
+        self.assertTrue(lines[1].startswith("notify = "), lines)
+        self.assertEqual(self.command("remove")[0], 0)
+        self.assertEqual(self.codex.read_text(), 'model = "o3"')
+
+    def test_codex_comes_back_as_it_was(self):
+        for original in ('model = "o3"\n\n[tools]\nx = 1\n', "[tools]\nx = 1\n", ""):
+            with self.subTest(original):
+                self.codex.write_text(original)
+                self.install_and_remove()
+                self.assertEqual(self.codex.read_text(), original)
+                self.assertEqual(self.backups(), [])
+
+    def test_a_notify_of_your_own_with_the_word_in_it(self):
+        self.codex.write_text('notify = ["/home/you/deskai-tools/notify"]\n')
+        self.assertFalse(hooks._codex_installed())
+        code, said = self.command("install")
+        self.assertEqual(code, 1)
+        self.assertIn("already has its own `notify`", said)
+        self.assertEqual(self.command("remove")[0], 0)
+        self.assertIn("deskai-tools", self.codex.read_text())
+
     def test_an_empty_file_is_as_good_as_none(self):
         self.claude.write_text("")
         self.assertEqual(self.command("status")[0], 0)

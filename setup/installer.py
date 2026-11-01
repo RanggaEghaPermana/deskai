@@ -70,6 +70,8 @@ ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
 # What the AI choices mean in modes.json's llm.backend.
 BACKENDS = {"claude": "claude-cli", "api": "api", "ollama": "ollama", "none": "none"}
 AGENT_DIRS = {"Claude Code": (".claude", "claude"), "Codex": (".codex", "codex"), "Gemini CLI": (".gemini", "gemini")}
+# How DeskAI's hook reads in an agent's settings: deskai hook claude, or ["…/deskai", "hook", "codex"].
+HOOK_COMMAND = re.compile(r"""deskai["']?[\s,]+["']?hook["']?[\s,]+["']?(?:claude|gemini|codex)\b""")
 # Packages by package manager, for what the checks can offer to install.
 PACKAGES = {
     "atspi": {"apt-get": "gir1.2-atspi-2.0", "dnf": "at-spi2-core", "pacman": "at-spi2-core", "zypper": "typelib-1_0-Atspi-2_0"},
@@ -97,8 +99,9 @@ TROUBLES = (
     (re.compile(r"\[Errno 2\]", re.I), "trouble_not_there"),
 )
 # Extras: what goes wrong with these is said, but doesn't cost the rest. Codex having its own `notify` shouldn't keep the dock
-# from turning on, and a settings file that can't be read shouldn't leave DeskAI half removed, since trying again won't help.
-CAN_FAIL = {"hooks"}
+# from turning on, a settings file that can't be read shouldn't leave DeskAI half removed, since trying again won't help, and
+# DeskAI works without AI, so Ollama being off or out of reach shouldn't stop an install or leave an update half done.
+CAN_FAIL = {"hooks", "ollama"}
 PROGRESS_BAR = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")  # how Ollama draws one, in what it says on stderr
 SAID_KEEPS = 4000     # characters of what a tool said: Ollama's bar repeats for a whole download, and the error comes last
 LOG_KEEPS = 64 * 1024
@@ -237,10 +240,10 @@ def detected_agents():
 
 
 def hooks_installed():
-    """Whether any AI agent already has DeskAI's hooks in its settings."""
+    """Whether any AI agent already has DeskAI's hooks in its settings: a command running `deskai hook`, not just those words."""
     for name in (".claude/settings.json", ".gemini/settings.json", ".codex/config.toml"):
         try:
-            if "deskai" in (HOME / name).read_text() and "hook" in (HOME / name).read_text():
+            if HOOK_COMMAND.search((HOME / name).read_text()):
                 return True
         except (OSError, ValueError):  # not text: the agent's own file can hold anything
             continue
@@ -296,18 +299,21 @@ def version():
         return "0"
 
 
-def installed_version():
-    try:
-        return json.loads(INSTALLED.read_text()).get("version", "")
-    except (OSError, ValueError):
-        return ""
-
-
 def read_json(path):
     try:
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+
+
+def install_record():
+    """What the first install found, for removing DeskAI to put back, and the version that's there."""
+    record = read_json(INSTALLED)
+    return record if isinstance(record, dict) else {}
+
+
+def installed_version():
+    return install_record().get("version", "")
 
 
 def read_modes():
@@ -439,7 +445,8 @@ def _make_venv(python):
         if result.returncode != 0:
             raise _tool_failed("trouble_venv", result)
     result = run(str(VENV / "bin" / "pip"), "install", "--quiet", "--upgrade", "anthropic", timeout=300)
-    if result.returncode != 0:
+    # With no connection, the one already there will do.
+    if result.returncode != 0 and run(str(VENV / "bin" / "python"), "-c", "import anthropic").returncode != 0:
         raise _tool_failed("trouble_anthropic", result)
 
 
@@ -448,6 +455,8 @@ def _pull_ollama_model(model):
     ollama = find_ollama()
     if not ollama:
         raise SetupError("trouble_no_ollama", "no ollama on PATH or in ~/.local/bin")
+    if model in run(ollama, "list").stdout:
+        return
     result = run(ollama, "pull", model, timeout=3600)
     if result.returncode != 0:
         raise _tool_failed("trouble_model", result, model=model)
@@ -548,18 +557,22 @@ def has_polkit_rule():
 
 
 def _enable_extension():
-    """Turns the extensions on for the next login: GNOME only reads new extensions when it starts."""
+    """Turns the extensions on for the next login: GNOME only reads new extensions when it starts. Returns what it found
+    changed, for removing DeskAI to put back. An update leaves DeskAI Login as you left it, since you can turn that off."""
     settings = Gio.Settings.new("org.gnome.shell")
-    ours = (UUID, LOGIN_UUID)
+    ours = (UUID,) if installed_version() else (UUID, LOGIN_UUID)
     enabled = settings.get_strv("enabled-extensions")
     settings.set_strv("enabled-extensions", [*enabled, *(u for u in ours if u not in enabled)])
     settings.set_strv("disabled-extensions", [u for u in settings.get_strv("disabled-extensions") if u not in ours])
+    found = {"extensions_were_off": settings.get_boolean("disable-user-extensions")}
     settings.set_boolean("disable-user-extensions", False)
     # Ubuntu fills the screen with this before the desktop appears: gray by default, and a flash at login.
     login_screen = _login_screen()
-    if login_screen and login_screen.get_user_value("background-color") is None:
+    found["login_color_was_unset"] = bool(login_screen and login_screen.get_user_value("background-color") is None)
+    if found["login_color_was_unset"]:
         login_screen.set_string("background-color", LOGIN_BACKGROUND)
     Gio.Settings.sync()
+    return found
 
 
 def install_steps(options):
@@ -605,11 +618,13 @@ def install_steps(options):
             _hooks("remove")
 
     def finish():
-        _enable_extension()
+        record = install_record()
+        found = _enable_extension()
         if not (options.dev or is_system_payload() or linked_here()):
             _write_launcher(state["app_dir"], python)
         INSTALLED.parent.mkdir(parents=True, exist_ok=True)
-        INSTALLED.write_text(json.dumps({"version": version()}) + "\n")
+        # What it found goes by the first install: by an update, those are DeskAI's own settings.
+        INSTALLED.write_text(json.dumps({**record, **({} if record else found), "version": version()}) + "\n")
 
     return [("app", app), ("ai", ai), ("ollama", local_model), ("settings", settings), ("service", service),
             ("hooks", hooks), ("finish", finish)]
@@ -619,12 +634,16 @@ def uninstall_steps(purge=False):
     """[(id, function)]: what removing DeskAI does. Keeps your modes and stats unless purge."""
 
     def extension():
+        record = install_record()
         settings = Gio.Settings.new("org.gnome.shell")
         settings.set_strv("enabled-extensions",
                           [u for u in settings.get_strv("enabled-extensions") if u not in (UUID, LOGIN_UUID)])
+        if record.get("extensions_were_off"):
+            settings.set_boolean("disable-user-extensions", True)
         docks.restore(settings)
         login_screen = _login_screen()
-        if login_screen and login_screen.get_string("background-color") == LOGIN_BACKGROUND:
+        # An install from before this was noted set it if it was black, and black you chose is yours from now on.
+        if login_screen and record.get("login_color_was_unset", True) and login_screen.get_string("background-color") == LOGIN_BACKGROUND:
             login_screen.reset("background-color")
         Gio.Settings.sync()
 
@@ -648,11 +667,22 @@ def uninstall_steps(purge=False):
             elif link.exists():
                 shutil.rmtree(link)
         shutil.rmtree(SHARE, ignore_errors=True)
+        # What a restore set aside. Ptyxis keeps its session up to date, so if it has one again, that's the one that counts.
+        session = CONFIG / "org.gnome.Ptyxis" / "session.gvariant"
+        set_aside = session.with_name(f"{session.name}.deskai-bak")
+        if set_aside.exists():
+            if session.exists():
+                set_aside.unlink()
+            else:
+                set_aside.replace(session)
 
     def polkit():
-        # The workday routine's permission to start your database, if you ever gave it.
+        # The workday routine's permission to start your database, if you ever gave it. If you close the password
+        # window it stays, and so does the note that it's there, for trying again.
         if has_polkit_rule():
-            run("pkexec", "rm", "-f", str(POLKIT_RULE), timeout=120)
+            result = run("pkexec", "rm", "-f", str(POLKIT_RULE), timeout=120)
+            if result.returncode != 0:
+                raise _tool_failed("trouble_polkit_left", result)
             POLKIT_GENERATED.unlink(missing_ok=True)
 
     def settings():
@@ -664,20 +694,25 @@ def uninstall_steps(purge=False):
             ("polkit", polkit), ("settings", settings)]
 
 
-def run_steps(steps, progress):
-    """progress(step id, running|done|failed, the SetupError or ""). Stops at the first failure, except of what's in
-    CAN_FAIL; returns whether it got to the end."""
+def run_steps(steps, progress, keep_going=False):
+    """progress(step id, running|done|failed, the SetupError or ""). Stops at the first failure, except of what's in CAN_FAIL,
+    or with keep_going of anything: removing DeskAI gets as far as it can, whatever failed. Returns whether all that
+    had to work did."""
+    ok = True
     for step_id, fn in steps:
         progress(step_id, "running", "")
         try:
             fn()
         except Exception as e:  # anything: the window can't say why it's stuck on a step that never ends
             progress(step_id, "failed", report(e, step_id))
-            if step_id not in CAN_FAIL:
+            if step_id in CAN_FAIL:
+                continue
+            ok = False
+            if not keep_going:
                 return False
             continue
         progress(step_id, "done", "")
-    return True
+    return ok
 
 
 def main():
@@ -703,7 +738,7 @@ def main():
             print(f"{'✓' if check.ok else '✗' if check.required else '-'} {check.id}  {check.detail}")
         return
     if args.uninstall:
-        run_steps(uninstall_steps(args.purge), show)
+        run_steps(uninstall_steps(args.purge), show, keep_going=True)
         sys.exit(1 if failed else 0)
     if not args.dev:
         parser.error("use the setup window for a normal install (./setup.sh), or --dev for a developer one")

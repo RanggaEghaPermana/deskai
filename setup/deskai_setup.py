@@ -142,6 +142,7 @@ STRINGS = {
         "trouble_no_session": "Couldn't reach your desktop session's services. Log out and back in, then try again.",
         "trouble_hooks": "Some AI agents may not report to the dock, since their settings couldn't be changed.",
         "trouble_hooks_left": "DeskAI's hooks may still be in some AI agents' settings, since those couldn't be changed.",
+        "trouble_polkit_left": "The permission to start your database without a password is still there, since it couldn't be removed.",
         "trouble_no_connection": "Couldn't reach the internet. Check your connection and try again.",
         "trouble_no_room": "There isn't enough room on the disk. Free some up and try again.",
         "trouble_no_permission": "DeskAI wasn't allowed to change a file it needs.",
@@ -258,6 +259,7 @@ STRINGS = {
         "trouble_no_session": "Nggak bisa nyambung ke layanan sesi desktop kamu. Logout terus login lagi, baru coba lagi.",
         "trouble_hooks": "Sebagian AI agent mungkin nggak ngabarin ke dock, karena pengaturannya nggak bisa diubah.",
         "trouble_hooks_left": "Hook DeskAI mungkin masih ada di pengaturan sebagian AI agent, karena pengaturannya nggak bisa diubah.",
+        "trouble_polkit_left": "Izin buat nyalain database tanpa password masih ada, karena nggak bisa dihapus.",
         "trouble_no_connection": "Nggak bisa nyambung ke internet. Cek koneksi kamu, terus coba lagi.",
         "trouble_no_room": "Ruang disknya nggak cukup. Kosongin dulu, terus coba lagi.",
         "trouble_no_permission": "DeskAI nggak diizinin ngubah file yang dia butuhin.",
@@ -309,7 +311,7 @@ class SetupWindow(Adw.ApplicationWindow):
         if (self.ai == "claude" and not self.claude) or (self.ai == "ollama" and not self.ollama):
             self.ai = "none"
         self.api_key = ""
-        self.hooks = installer.hooks_installed() if self.installed else bool(self.agents)
+        self.hooks = installer.hooks_installed()  # it changes another program's settings, so it's off until you turn it on
         self.routine = bool(choices["routine"])
         self.checks = None
         self.page = "welcome"
@@ -659,7 +661,7 @@ class SetupWindow(Adw.ApplicationWindow):
             steps = [step for step in steps if step[0] != "polkit"]
         if not purge:
             steps = [step for step in steps if step[0] != "settings"]
-        self.run_work(steps, self.t("work_remove"), self.remove_finished, lambda: self.start_remove(purge))
+        self.run_work(steps, self.t("work_remove"), self.remove_finished, lambda: self.start_remove(purge), keep_going=True)
 
     def remove_finished(self):
         self.installed = False
@@ -669,7 +671,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self.show_page("done")
         self.set_primary(self.t("close"), self.close)
 
-    def run_work(self, steps, title, finished, retry):
+    def run_work(self, steps, title, finished, retry, keep_going=False):
         self.work_title.set_label(title)
         self.work_text.set_label(self.t("work_wait"))
         self.work_error.set_visible(False)
@@ -710,7 +712,7 @@ class SetupWindow(Adw.ApplicationWindow):
             return False
 
         def work():
-            return installer.run_steps(steps, lambda *args: GLib.idle_add(mark, *args))
+            return installer.run_steps(steps, lambda *args: GLib.idle_add(mark, *args), keep_going=keep_going)
 
         def done(ok, error):
             if ok:

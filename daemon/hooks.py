@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ import brain
 
 MARK = "deskai hook"
 BACKUP_SUFFIX = ".deskai-bak"
+CODEX_MARK = "# DeskAI"
 
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 GEMINI_SETTINGS = Path.home() / ".gemini" / "settings.json"
@@ -237,15 +239,41 @@ def _json_has_hooks(path):
     return _checked(path, _has_hooks, _read_settings(path))
 
 
-def _edit_json(path, edit):
+def _write_settings(path, data):
+    """Through a link, for settings kept with your dotfiles, and readable by whoever could before."""
+    real = path.resolve()
+    mode = stat.S_IMODE(real.stat().st_mode) if real.exists() else None
+    brain.write_json_atomic(real, data)
+    if mode is not None:
+        real.chmod(mode)
+
+
+def _edit_json(path, edit, keep_a_copy=True):
     data = _read_settings(path)
     before = json.dumps(data, sort_keys=True)
     _checked(path, edit, data)
     if json.dumps(data, sort_keys=True) == before:
         return False
-    _backup(path)
-    brain.write_json_atomic(path, data)
+    if keep_a_copy:
+        _backup(path)
+    _write_settings(path, data)
     return True
+
+
+def _put_back(path, meaning):
+    """DeskAI's part is out again. If nothing else in the file changed meanwhile it goes back to exactly what it was, down to
+    its spaces, and if it wasn't there before, it goes. meaning(text) is what a file's text comes down to."""
+    backup = path.with_name(path.name + BACKUP_SUFFIX)
+    if not backup.exists():
+        if not meaning(_read(path)):
+            path.unlink()
+        return
+    try:
+        if meaning(_read(backup)) == meaning(_read(path)):
+            shutil.copy2(backup, path)
+    except ValueError:  # the copy isn't something it can compare: the file stays as it is now
+        pass
+    backup.unlink()
 
 
 def install_claude():
@@ -288,18 +316,26 @@ def _codex_notify(lines):
     return None
 
 
+def _our_notify(line):
+    """DeskAI's own line says so. Yours may have the word in it too: ~/deskai-tools/notify."""
+    return line.rstrip().endswith(CODEX_MARK)
+
+
 def install_codex():
     lines = _codex_lines()
     at = _codex_notify(lines)
-    line = f"notify = {json.dumps(hook_command('codex'))}  # DeskAI\n"
+    line = f"notify = {json.dumps(hook_command('codex'))}  {CODEX_MARK}\n"
     if at is not None:
-        if "deskai" not in lines[at]:
+        if not _our_notify(lines[at]):
             raise ValueError(f"{CODEX_CONFIG} already has its own `notify`; DeskAI won't overwrite it")
         if lines[at] == line:
             return False
         lines[at] = line
     else:
         first_table = next((i for i, l in enumerate(lines) if l.startswith("[")), len(lines))
+        # The line before it may be the last of a file with no newline at its end.
+        if first_table and not lines[first_table - 1].endswith("\n"):
+            lines[first_table - 1] += "\n"
         lines.insert(first_table, line)
     _backup(CODEX_CONFIG)
     CODEX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -310,7 +346,7 @@ def install_codex():
 def _codex_installed():
     lines = _codex_lines()
     at = _codex_notify(lines)
-    return at is not None and "deskai" in lines[at]
+    return at is not None and _our_notify(lines[at])
 
 
 def remove_codex():
@@ -320,11 +356,15 @@ def remove_codex():
     at = _codex_notify(lines)
     del lines[at]
     CODEX_CONFIG.write_text("".join(lines))
+    _put_back(CODEX_CONFIG, str.strip)
     return True
 
 
 def _remove_json(path):
-    return path.exists() and _edit_json(path, _strip_hooks)
+    if not path.exists() or not _edit_json(path, _strip_hooks, keep_a_copy=False):
+        return False
+    _put_back(path, lambda text: json.loads(text or "{}"))
+    return True
 
 
 AGENTS = {
