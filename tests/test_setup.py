@@ -1,5 +1,6 @@
 """What setup has to get right on each GNOME and Ubuntu it supports. Run with: python3 -m unittest discover tests"""
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,56 @@ class PrivateFiles(unittest.TestCase):
             path.chmod(0o664)
             installer._write_private_json(path, {"language": "id"})
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+
+class TheCommand(unittest.TestCase):
+    """AI agents run it as a hook. Claude Code blocks your prompt on exit code 2, which is what Python exits
+    with when its script is gone, as when the clone is moved or the package removed."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name) / "it's a folder"
+        (self.folder / "app" / "daemon").mkdir(parents=True)
+        self.command = self.folder / "deskai"
+        patcher = mock.patch.object(installer, "COMMAND", self.command)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        installer._write_command(self.folder / "app", sys.executable)
+
+    def script(self, text):
+        (self.folder / "app" / "daemon" / "deskai.py").write_text(text)
+
+    def run_it(self, *args, given=""):
+        return subprocess.run(["sh", str(self.command), *args], input=given, capture_output=True, text=True, timeout=30)
+
+    def test_a_hook_with_the_files_gone_gets_in_nobodys_way(self):
+        done = self.run_it("hook", "claude", given="{}")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+
+    def test_a_hook_with_python_gone_gets_in_nobodys_way(self):
+        installer._write_command(self.folder / "app", "/nonexistent/python3")
+        done = self.run_it("hook", "claude", given="{}")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+
+    def test_a_hook_that_fails_gets_in_nobodys_way(self):
+        self.script("import sys\nsys.exit(2)\n")
+        self.assertEqual(self.run_it("hook", "claude").returncode, 0)
+
+    def test_a_hook_gets_what_it_was_given(self):
+        self.script("import sys\nprint(sys.argv[1:], sys.stdin.read())\n")
+        self.assertEqual(self.run_it("hook", "claude", given="payload").stdout, "['hook', 'claude'] payload\n")
+
+    def test_anything_else_says_what_happened_in_plain_words(self):
+        done = self.run_it("status")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(str(self.folder / "app"), done.stderr)
+        self.assertNotIn("Errno", done.stderr)
+
+    def test_anything_else_keeps_its_own_exit_code(self):
+        self.script("import sys\nprint(sys.argv[1:])\nsys.exit(3)\n")
+        done = self.run_it("status", "--all")
+        self.assertEqual((done.returncode, done.stdout), (3, "['status', '--all']\n"))
 
 
 class Versions(unittest.TestCase):

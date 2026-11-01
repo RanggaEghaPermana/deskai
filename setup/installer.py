@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -379,7 +380,20 @@ WantedBy=graphical-session.target
 
 def _write_command(app_dir, python):
     COMMAND.parent.mkdir(parents=True, exist_ok=True)
-    COMMAND.write_text(f'#!/bin/sh\nexec "{python}" "{app_dir}/daemon/deskai.py" "$@"\n')
+    python, script, folder = shlex.quote(python), shlex.quote(f"{app_dir}/daemon/deskai.py"), shlex.quote(str(app_dir))
+    COMMAND.write_text(f"""#!/bin/sh
+# AI agents run this as a hook, and some take exit code 2 to mean "stop what you're doing". That's what Python
+# exits with when it can't find its script, so a hook always exits 0: DeskAI going away can't block them.
+if [ "$1" = hook ]; then
+  {python} {script} "$@" 2>/dev/null
+  exit 0
+fi
+if [ ! -f {script} ]; then
+  echo "DeskAI's files aren't in "{folder}" anymore. Move them back, or run DeskAI Setup again." >&2
+  exit 1
+fi
+exec {python} {script} "$@"
+""")
     COMMAND.chmod(0o755)
 
 
