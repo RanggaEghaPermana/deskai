@@ -52,7 +52,7 @@ function windowApp(win) {
     return win ? Shell.WindowTracker.get_default().get_window_app(win) : null;
 }
 
-function sourceAppId(source) {
+export function sourceAppId(source) {
     return source.app?.get_id?.() ?? (source._appId ? `${source._appId}.desktop` : '');
 }
 

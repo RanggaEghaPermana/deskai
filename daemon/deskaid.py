@@ -376,9 +376,9 @@ class Brain:
         })
 
     def _held_card(self, notification_id, app, title, body, result):
-        home = result.get("mode") if self.config.mode(result.get("mode")) else self._escape_mode()
-        if not home or home == self.mode:
-            # It belongs to what you're doing anyway: just let the banner through.
+        home = result.get("mode")
+        if not self.config.mode(home) or home == self.mode:
+            # Nothing says it belongs to another mode, so there's nowhere to send you: just let the banner through.
             self.call("SurfaceNotification", "(u)", (notification_id,))
             return
         self.card({

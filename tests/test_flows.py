@@ -132,8 +132,29 @@ class Notifications(Base):
 
     def test_urgent_needs_no_question(self):
         self.brain.on_notification(1, "Sentry", "Error spike", "500 errors naik tajam di production")
-        self.assertEqual(self.brain.cards[0]["kind"], "held")
-        self.assertNotIn("sender:always", [a["id"] for a in self.brain.cards[0]["actions"]])
+        self.assertEqual((self.brain.cards, self.brain.surfaced()), ([], [1]))
+
+    def test_urgent_isnt_sent_to_a_mode_nobody_named(self):
+        self.brain.on_notification(1, "Claude", "Bikin error di jendela Setup", "Butuh izin kamu")
+        self.assertEqual(self.brain.cards, [])  # it used to say "held for Social"
+        self.assertEqual(self.brain.surfaced(), [1])
+
+    def triaged(self, **result):
+        future = mock.Mock(result=lambda: {"surface": True, "reason": "", "label": "", "detail": "", **result})
+        self.brain._on_triaged(future, 1, "Slack", "Dimas", "satu", "building")
+
+    def test_the_model_naming_no_mode_shows_the_banner(self):
+        self.triaged(mode="none")
+        self.assertEqual((self.brain.cards, self.brain.surfaced()), ([], [1]))
+
+    def test_the_model_naming_this_mode_shows_the_banner(self):
+        self.triaged(mode="building")
+        self.assertEqual((self.brain.cards, self.brain.surfaced()), ([], [1]))
+
+    def test_the_model_naming_another_mode_offers_to_go_there(self):
+        self.triaged(mode="writing")
+        self.assertEqual(self.brain.surfaced(), [])
+        self.assertEqual([a["id"] for a in self.brain.cards[0]["actions"]], ["later", "go:writing"])
 
     def test_your_hold_beats_the_word_urgent(self):
         self.brain.senders.remember("Sentry", "Error spike", senders.HOLD)

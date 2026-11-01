@@ -28,7 +28,7 @@ import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
 import {ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
-import {INBOX_DEFAULTS, Inbox, RANK} from './inbox.js';
+import {INBOX_DEFAULTS, Inbox, RANK, sourceAppId} from './inbox.js';
 import {MOTION, Motion} from './motion.js';
 import {Music, describe} from './music.js';
 import {FILES_APP, Places, baseName, displayPath} from './places.js';
@@ -2668,6 +2668,10 @@ export default class DeskAIExtension extends Extension {
         if (!notification.forFeedback && notification.urgency !== Urgency.CRITICAL) {
             const settings = this._inboxSettings();
             if (settings.enabled && this._inbox.takeNotification(source, notification, settings))
+                return;
+            // You're in that AI app, so the inbox has nothing to add, but the session asking
+            // may not be the one on screen. A focus mode doesn't get to hold that back.
+            if (settings.enabled && settings.agent_apps.includes(sourceAppId(source)))
                 return;
         }
         const policy = this._modes[this._mode]?.notifications?.policy ?? 'all';

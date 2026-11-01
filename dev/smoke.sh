@@ -101,6 +101,24 @@ if command -v gnome-text-editor >/dev/null; then
 fi
 [ "$windows" = "2" ] || skipped "Alt+Tab and maximizing: no two windows to try them on (is gnome-text-editor installed?)"
 
+# How many notifications Building holds back, from an app whose window you're in.
+held_while_in() {
+  val "(() => {
+    const ext = _T.ext, mode = ext._mode, looking = ext._inbox._looking, before = ext._held.size;
+    ext._mode = 'building';
+    ext._inbox._looking = () => true;
+    ext._onNotificationAdded({title: '$2', app: {get_id: () => '$1'}},
+      {title: 'A session', body: 'Needs your permission', urgency: 1, connectObject() {}, disconnectObject() {}});
+    const held = ext._held.size - before;
+    ext._releaseHeld();
+    ext._mode = mode;
+    ext._inbox._looking = looking;
+    return held;
+  })()"
+}
+expect "a focus mode holds back another app's notification" "$(held_while_in org.example.Chat Chat)" 1
+expect "but not one from the AI app you're in" "$(held_while_in com.anthropic.Claude.desktop Claude)" 0
+
 try_everything() {
   local how="$1" animated="$2" first second
 
