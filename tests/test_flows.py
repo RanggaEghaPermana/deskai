@@ -416,7 +416,7 @@ class ClosingWhileSettingUp(Base):
 
     def close(self, path="/w/app"):
         with mock.patch.object(deskaid.commands, "find_project", return_value=path), \
-                mock.patch.object(deskaid.commands, "projects", return_value={}), \
+                mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
                 mock.patch.object(deskaid.threading, "Thread") as thread:
             self.brain._close_project("x")
         return thread.call_args.kwargs["target"]
@@ -518,10 +518,43 @@ class ConfigReload(unittest.TestCase):
             self.assertFalse(config.refresh())
 
 
+class WhyASetupFailed(Base):
+    SERVER = {"type": "server", "cwd": "/w/app", "command": "npm run dev", "port": 5173}
+
+    def said(self, line):
+        with mock.patch.object(deskaid.servers, "last_log_line", return_value=line):
+            return self.brain._why_it_failed(self.SERVER)
+
+    def test_a_tool_that_isnt_there(self):
+        for line in ("/usr/bin/bash: line 1: npm: command not found", "bash: line 1: npm: command not found", "sh: 1: npm: not found"):
+            self.assertEqual(self.said(line), brain.card_text("id", "routine_no_tool", tool="npm"))
+
+    def test_anything_else_in_its_own_words(self):
+        self.assertEqual(self.said("Error: port 5173 is already in use"), "Error: port 5173 is already in use")
+
+    def test_docker_that_isnt_there(self):
+        with mock.patch.object(deskaid.shutil, "which", return_value=None):
+            self.assertEqual(self.brain._why_it_failed({"type": "compose", "cwd": "/w/app"}), brain.card_text("id", "compose_no_docker"))
+
+    def test_it_goes_on_the_card(self):
+        self.brain.routine_marks = {id(self.SERVER): "failed"}
+        self.brain._routine_finished({"project": "/w/app", "steps": [self.SERVER]}, ["npm nggak ketemu", ""])
+        self.assertEqual(self.brain.cards[-1]["text"], "✗ vite :5173\nnpm nggak ketemu")
+
+
+class NoDocker(Base):
+    def test_a_container_by_name_says_so_instead_of_an_errno(self):
+        with mock.patch.object(deskaid.shutil, "which", return_value=None), \
+                mock.patch.object(deskaid.compose, "act") as act:
+            self.brain._docker_or_service("compose", {"type": "compose", "op": "stop", "project": "shop"})
+        act.assert_not_called()
+        self.assertEqual(self.brain.cards[-1]["title"], brain.card_text("id", "compose_no_docker"))
+
+
 class SettingUpAProject(Base):
     def test_it_remembers_the_project_for_the_morning(self):
         with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
-                mock.patch.object(deskaid.commands, "projects", return_value={}), \
+                mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
                 mock.patch.object(deskaid.threading, "Thread") as thread:
             self.brain._setup_project("app")
         with mock.patch.object(deskaid.routine, "learn", return_value=None), \

@@ -720,10 +720,23 @@ class Brain:
     def _routine_mode(self, plan):
         return next((s["mode"] for s in plan["steps"] if s["type"] == "mode" and self.config.mode(s["mode"])), None)
 
+    def _why_it_failed(self, step):
+        """What to say about a step of a setup that failed, or "" if there's nothing more than that it did."""
+        if step["type"] == "compose":
+            return "" if shutil.which("docker") else self._say("compose_no_docker")
+        if step["type"] != "server":
+            return ""
+        said = servers.last_log_line({"kind": "server", "unit": routine.unit_name(step["cwd"], step["command"])})
+        tool = servers.missing_tool(said)
+        return self._say("routine_no_tool", tool=tool) if tool else said
+
     def _run_routine(self, plan):
         cancel = threading.Event()
+        failed = []
 
         def progress(step, state):
+            if state == "failed":
+                failed.append(step)
             if not cancel.is_set():
                 GLib.idle_add(self._routine_progress, plan, step, state)
 
@@ -736,17 +749,18 @@ class Brain:
             except Exception as e:  # never take the daemon down with it
                 log.exception("routine failed: %s", e)
             if not cancel.is_set():
-                GLib.idle_add(self._routine_finished, plan)
+                GLib.idle_add(self._routine_finished, plan, [self._why_it_failed(step) for step in failed])
 
         log.info("routine: setting up %s", plan.get("project"))
         thread = threading.Thread(target=work, name="routine", daemon=True)
         self.routine_running = {"project": plan.get("project"), "cancel": cancel, "thread": thread}
         thread.start()
 
-    def _routine_card(self, plan, title, timeout):
+    def _routine_card(self, plan, title, timeout, why=()):
         marks = {"running": "…", "done": "✓", "skipped": "✓", "failed": "✗"}
         lines = [f"{marks.get(self.routine_marks.get(id(step)), '·')} {routine.label(step)}"
                  for step in plan["steps"] if step["type"] != "mode"]
+        lines += [line for line in why if line]
         self.card({
             "id": "routine",
             "kind": "suggest",
@@ -765,10 +779,10 @@ class Brain:
             self._routine_card(plan, self._say("routine_running"), 120)
         return False
 
-    def _routine_finished(self, plan):
+    def _routine_finished(self, plan, why=()):
         failed = sum(1 for state in self.routine_marks.values() if state == "failed")
         title = self._say("routine_partly", n=failed) if failed else self._say("routine_ready")
-        self._routine_card(plan, title, 12)
+        self._routine_card(plan, title, 20 if any(why) else 12, why)
         self.routine_plan = None
         self.routine_running = None
         return False
@@ -959,12 +973,15 @@ class Brain:
         start can pull images, and a system service asks for your password."""
         op = action.get("op")
         if kind == "compose":
+            if not shutil.which("docker"):
+                self._command_card(self._say("compose_no_docker"))
+                return
             name = action.get("project", "")
-            folder = compose.projects(commands.projects().values()).get(name)
+            folder = compose.projects(commands.all_projects().values()).get(name)
             if not folder or op not in ("up", "stop", "restart"):
                 self._command_card(self._say("compose_none"))
                 return
-            found = compose.projects(commands.projects().values())
+            found = compose.projects(commands.all_projects().values())
             if op == "stop":
                 # Stopping what others need: say so on the card, they lose their database.
                 running = compose.states(found)
@@ -1000,7 +1017,7 @@ class Brain:
 
     def on_command(self, text):
         log.info("command: %s", text[:120])
-        quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch, commands.projects())
+        quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch, commands.all_projects())
         if quick:
             self._run_actions(quick)
             return
@@ -1015,7 +1032,7 @@ class Brain:
                 desk = commands.desk(self.config, mode, self.watch, can_restore)
                 result = commands.interpret(self.llm, language, text, desk)
                 if self.llm.backend == "ollama":
-                    result = commands.only_what_was_asked(result, text, commands.projects())
+                    result = commands.only_what_was_asked(result, text, commands.all_projects())
             except (brain.LLMError, ValueError, KeyError, OSError, TypeError) as e:
                 log.warning("command failed: %s", e)
                 GLib.idle_add(self._command_failed, e)
@@ -1130,7 +1147,7 @@ class Brain:
             else:
                 say = self._say("command_nothing")
         elif kind == "open_folder":
-            path = commands.folder_path(action.get("path"), commands.projects())
+            path = commands.folder_path(action.get("path"), commands.all_projects())
             if path:
                 commands.open_folder(path)
                 say = say or self._say("command_done")
@@ -1163,7 +1180,7 @@ class Brain:
         return say, answered_elsewhere
 
     def _setup_project(self, name):
-        path = commands.find_project(name, commands.projects())
+        path = commands.find_project(name, commands.all_projects())
         if not path:
             self._command_card(self._say("command_no_project"))
             return
@@ -1180,7 +1197,7 @@ class Brain:
         threading.Thread(target=work, name="plan", daemon=True).start()
 
     def _close_project(self, name):
-        path = commands.find_project(name, commands.projects())
+        path = commands.find_project(name, commands.all_projects())
         if not path:
             self._command_card(self._say("command_no_project"))
             return

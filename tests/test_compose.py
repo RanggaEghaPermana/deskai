@@ -55,6 +55,49 @@ class Projects(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["cwd"], "/w/infra")
 
 
+class AProjectThatAlsoHasAComposeFile(unittest.TestCase):
+    """Your own project, usually run with its servers, that happens to have a Compose file too."""
+
+    def setUp(self):
+        self.folder = str(Path(tempfile.mkdtemp()) / "shop-dev")
+        Path(self.folder).mkdir()
+        (Path(self.folder) / "docker-compose.yaml").write_text("services:\n  db:\n    container_name: shop-db\n")
+        self.known = {"shop-dev": self.folder}
+        for patcher in (mock.patch.object(compose, "ROOTS", []), mock.patch.object(compose, "_docker_ls", return_value=[]),
+                        mock.patch.object(commands, "dev_service_unit", return_value=None)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def act(self, text, docker):
+        with mock.patch.object(commands.shutil, "which", return_value="/usr/bin/docker" if docker else None), \
+                mock.patch.object(compose.shutil, "which", return_value="/usr/bin/docker" if docker else None), \
+                mock.patch.object(compose.session, "docker_running", return_value=docker):
+            return commands.quick(text, [], servers.Watch(), self.known)["actions"][0]
+
+    def test_with_no_docker_stopping_means_its_servers(self):
+        self.assertEqual(self.act("matiin shop", docker=False), {"type": "close_project", "project": "shop"})
+
+    def test_with_no_docker_starting_means_setting_it_up(self):
+        self.assertEqual(self.act("nyalain shop", docker=False), {"type": "setup_project", "project": "shop"})
+
+    def test_with_docker_but_none_of_it_up_stopping_means_its_servers(self):
+        self.assertEqual(self.act("matiin shop", docker=True), {"type": "close_project", "project": "shop"})
+
+    def test_with_its_containers_up_stopping_goes_through_docker(self):
+        up = [{"Name": "shop", "Status": "running(1)", "ConfigFiles": str(Path(self.folder) / "docker-compose.yaml")}]
+        with mock.patch.object(compose, "_docker_ls", return_value=up):
+            self.assertEqual(self.act("matiin shop", docker=True), {"type": "compose", "op": "stop", "project": "shop-dev"})
+
+    def test_docker_of_your_own_counts_as_running(self):
+        for user_side, up in ((0, True), (3, False)):
+            with mock.patch.object(compose.session.subprocess, "run",
+                                   side_effect=lambda args, **_: mock.Mock(returncode=user_side if "--user" in args else 3)):
+                self.assertEqual(compose.session.docker_running(), up)
+
+    def test_with_docker_starting_still_goes_through_it(self):
+        self.assertEqual(self.act("nyalain shop", docker=True), {"type": "compose", "op": "up", "project": "shop-dev"})
+
+
 class Needs(unittest.TestCase):
     """shop and BLOG reach their database in infra by its container's name: starting them starts infra first."""
 

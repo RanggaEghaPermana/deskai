@@ -1,4 +1,4 @@
-"""Your projects with no AI and no Claude Code history: found in the usual folders by what a project
+"""Your projects with no AI and no Claude Code history: found in your home folder by what a project
 has in it, and what each one runs read from its own files. Only names and paths are looked at here,
 never what's in your code.
 """
@@ -12,9 +12,12 @@ from pathlib import Path
 
 ROOTS = ("Documents", "Dokumen", "Projects", "projects", "Project", "project", "Code", "code", "Dev", "dev", "Developer",
          "workspace", "Workspace", "repos", "src", "git", "www", "Desktop")
+WEB_ROOTS = ("/var/www", "/srv/www", "/opt/lampp/htdocs")  # where a web server serves from
+NOT_WORK = {"Downloads", "Unduhan", "Pictures", "Gambar", "Music", "Musik", "Videos", "Video", "Public", "Publik", "Templates",
+            "Templat", "snap", "bin", "go", "Android", "flutter", "anaconda3", "miniconda3"}  # not where you'd keep a project
+COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 MARKERS = (".git", "package.json", "composer.json", "artisan", "manage.py", "pyproject.toml", "requirements.txt",
-           "go.mod", "Cargo.toml", "pubspec.yaml", "pom.xml", "build.gradle", "Gemfile",
-           "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+           "go.mod", "Cargo.toml", "pubspec.yaml", "pom.xml", "build.gradle", "Gemfile", *COMPOSE_FILES)
 SKIPPED = {"node_modules", "vendor", "venv", "__pycache__", "dist", "build", "target"}
 MAX_DEPTH = 3
 MAX_FOLDERS = 3000  # a home folder full of files can't hold up the command bar
@@ -38,14 +41,29 @@ def _changed(folder):
     return 0
 
 
+def has_compose(folder):
+    return any((Path(folder) / name).is_file() for name in COMPOSE_FILES)
+
+
+def _other_folders(home):
+    """Whatever else is in your home folder, which may be a project itself: ~/skripsi, ~/kerja/toko."""
+    try:
+        return [Path(entry.path) for entry in os.scandir(home) if entry.is_dir(follow_symlinks=False)
+                and entry.name[0] != "." and entry.name not in {*ROOTS, *NOT_WORK, *SKIPPED}]
+    except OSError:
+        return []
+
+
 def find():
-    """The projects under the usual folders, the most recently touched first."""
+    """The projects in your home folder and where web servers serve from, the most recently touched first.
+    The usual folders are looked through first, in case there's more than can be looked through."""
     global _found
     if time.monotonic() - _found[0] < FRESH_S and _found[0]:
         return _found[1]
     home = Path.home()
     found = []
-    queue = deque((home / root, 0) for root in ROOTS)
+    queue = deque((home / root, 0) for root in (*ROOTS, *WEB_ROOTS))
+    queue.extend((folder, 1) for folder in _other_folders(home))
     looked = 0
     while queue and looked < MAX_FOLDERS:
         folder, depth = queue.popleft()

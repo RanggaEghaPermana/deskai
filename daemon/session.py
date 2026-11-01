@@ -295,9 +295,12 @@ DOCKER_PORT = re.compile(r"(?:[\d.]+|\[::\]):(\d+)->")
 
 
 def docker_running():
-    """Whether Docker's daemon is up. Asking docker itself would start it when it's left to start on first use."""
+    """Whether Docker's daemon is up: the system's, or your own (rootless, Docker Desktop). Asking docker
+    itself would start it when it's left to start on first use."""
     try:
-        return subprocess.run(["systemctl", "is-active", "--quiet", "docker.service"], timeout=5).returncode == 0
+        return (subprocess.run(["systemctl", "is-active", "--quiet", "docker.service"], timeout=5).returncode == 0 or
+                subprocess.run(["systemctl", "--user", "is-active", "--quiet", "docker.service", "docker-desktop.service"],
+                               timeout=5).returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False
 

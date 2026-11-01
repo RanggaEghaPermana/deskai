@@ -13,6 +13,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -161,6 +162,9 @@ PORT_WORDS = re.compile(r"\b(cek|check|liat|lihat|port|ports|apa|aja|saja|yang|y
                          r"ada|nggak|gak|bentrok|clash\w*|milik|siapanya|berapaan|nya)\b", re.I)
 ACT = re.compile(r"^(nyalain ulang|restart|ulang\w*|nyalain|nyalakan|hidupin|idupin|jalanin|jalankan|start|run|up|"
                  r"matiin|matikan|stop|stopin)\s+(.+)$", re.I)
+EVERYDAY = {"wifi", "bluetooth", "internet", "laptop", "komputer", "computer", "pc", "hp", "layar", "screen", "suara", "sound",
+            "volume", "musik", "music", "lagu", "song", "video", "notifikasi", "notification", "notifications", "notif", "mic",
+            "mikrofon", "microphone", "kamera", "camera", "browser", "tab", "window", "jendela"}  # not a part of a project's name
 ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
 # A system service you'd start for coding, by the word you'd use for it. php-fpm is whichever version is installed.
 DEV_SERVICES = {"mysql": "mysql", "mariadb": "mariadb", "postgres": "postgresql", "postgresql": "postgresql",
@@ -261,6 +265,16 @@ def _named_server(words, watch, known_projects=()):
     return None
 
 
+def _not_through_docker(op, name, folder, known_projects):
+    """A project can have a Compose file and not be run with it. With no Docker, or to stop it with none
+    of its containers up, it's the project's own servers that are meant."""
+    if not known_projects or folder not in known_projects.values():
+        return False
+    if not shutil.which("docker"):
+        return True
+    return op == "stop" and compose.states({name: folder})[name] != "running"
+
+
 def _act_on_docker_or_service(words, known_projects):
     """{"type": "compose" | "dev_service", ...} for starting, stopping or restarting a Compose project or a
     system service by name: "nyalain shop", "matiin infra", "nyalain mysql". None for anything else."""
@@ -276,9 +290,11 @@ def _act_on_docker_or_service(words, known_projects):
     if unit:
         return {"type": "dev_service", "op": "start" if op == "up" else op, "unit": unit}
     found = compose.projects(known_projects.values() if known_projects else ())
-    folder = find_project(name, found)
+    folder = _meant_as_project(name, found)
     if folder:
-        return {"type": "compose", "op": op, "project": next(key for key, path in found.items() if path == folder)}
+        project = next(key for key, path in found.items() if path == folder)
+        return None if _not_through_docker(op, project, folder, known_projects) else \
+            {"type": "compose", "op": op, "project": project}
     # By a container or an image of the project: "nyalain shop-app", "nyalain shared-db_mysql".
     word = name.replace(" ", "")
     owner = compose.project_for(word, found)
@@ -396,7 +412,7 @@ def _quick_action(words, modes, watch, known_projects):
         return server
     closing = CLOSE_PROJECT.match(words) or CLOSED_PROJECT.match(words)
     # "matiin gudang" is the project, "matiin vite" a server: a server's own name wins.
-    if closing and known_projects and find_project(closing.group(1), known_projects):
+    if closing and known_projects and _meant_as_project(closing.group(1), known_projects):
         named = closing.group(1).lower()
         if not any(named in item["label"].lower() or named in item["command"].lower() for item in watch.items.values()):
             return {"type": "close_project", "project": closing.group(1)}
@@ -422,7 +438,7 @@ def _quick_action(words, modes, watch, known_projects):
     setting_up = SETUP_PROJECT.match(words)
     if setting_up and known_projects:
         name = setting_up.group(1) or setting_up.group(2)
-        if find_project(name, known_projects):
+        if _meant_as_project(name, known_projects):
             return {"type": "setup_project", "project": name}
     wanted = WANTS_TO.match(words)
     mode = _mode_named(wanted.group(1), modes) if wanted and not AND_THEN.search(words) else None
@@ -480,7 +496,7 @@ def asked_for(action, text, known_projects):
 
 def _names_project(action, text, known_projects):
     wanted = find_project(action.get("project"), known_projects)
-    return bool(wanted) and any(find_project(word, known_projects) == wanted for word in re.findall(r"[\w-]{3,}", text))
+    return bool(wanted) and any(_meant_as_project(word, known_projects) == wanted for word in re.findall(r"[\w-]{3,}", text))
 
 
 def only_what_was_asked(result, text, known_projects):
@@ -498,15 +514,23 @@ def only_what_was_asked(result, text, known_projects):
 MAX_PROJECTS = 30
 
 
-def projects():
-    """Your projects by name, newest first (not the scratch folders tools leave under hidden ones)."""
+def all_projects():
+    """Your projects by name, newest first (not the scratch folders tools leave under hidden ones or outside
+    your home folder), for finding one by name."""
     home = Path.home()
     named = {}
-    for path in [*routine.project_folders(), *found_projects.find()]:
+    for path in routine.project_folders():
         relative = Path(path).relative_to(home) if Path(path).is_relative_to(home) else None
         if relative and not any(part.startswith(".") for part in relative.parts):
             named.setdefault(Path(path).name, path)
-    return dict(list(named.items())[:MAX_PROJECTS])
+    for path in found_projects.find():
+        named.setdefault(Path(path).name, path)
+    return named
+
+
+def projects():
+    """The newest of them, for what goes through each one, and for the model to read."""
+    return dict(list(all_projects().items())[:MAX_PROJECTS])
 
 
 def time_today(config):
@@ -673,20 +697,38 @@ def edit_modes(llm, language, request):
     return result["summary"], None if json.loads(old_text) == new_config else new_config
 
 
+def _simple(text):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def find_project(name, known):
     """The project a name means, for a model (or fingers) only roughly right: the name itself, the last
     part of a path it made up, the one project that contains it, or the one it's a close misspelling of."""
-    simple = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())  # noqa: E731
-    word = simple(re.sub(r"\b(project|proyek|projek|folder|the)\b", "", os.path.basename((name or "").rstrip("/")), flags=re.I))
+    word = _simple(re.sub(r"\b(project|proyek|projek|folder|the)\b", "", os.path.basename((name or "").rstrip("/")), flags=re.I))
     if not word:
         return None
-    exact = [path for project, path in known.items() if simple(project) == word]
-    partial = [path for project, path in known.items() if word in simple(project)]
+    exact = [path for project, path in known.items() if _simple(project) == word]
+    partial = [path for project, path in known.items() if word in _simple(project)]
     if exact or partial:
         return exact[0] if exact else partial[0] if len(partial) == 1 else None
     close = [path for project, path in known.items()
-             if difflib.get_close_matches(word, [simple(project), *map(simple, re.split(r"[^a-zA-Z0-9]+", project))], cutoff=0.8)]
+             if difflib.get_close_matches(word, [_simple(project), *map(_simple, re.split(r"[^a-zA-Z0-9]+", project))], cutoff=0.8)]
     return close[0] if len(close) == 1 else None
+
+
+def _is_an_app(name):
+    """Whether these are words from an installed app's name: Chrome, of Google Chrome."""
+    words = re.compile(rf"\b{re.escape(name.lower())}\b")
+    return any(words.search(app.get_name().lower()) for app in Gio.AppInfo.get_all() if app.should_show())
+
+
+def _meant_as_project(name, known):
+    """find_project for your own words, on the way that doesn't ask the model: "tutup chrome" is about Chrome even
+    with a chrome-extension folder around. A project's whole name still means the project."""
+    path = find_project(name, known)
+    if not path or any(_simple(project) == _simple(name) for project in known):
+        return path
+    return None if _simple(name) in EVERYDAY or _is_an_app(name) else path
 
 
 def find_app(name):

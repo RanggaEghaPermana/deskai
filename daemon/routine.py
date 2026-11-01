@@ -20,6 +20,7 @@ keep your own version instead of relearning each morning.
 import datetime
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
@@ -38,6 +39,10 @@ from brain import log
 ROUTINE_FILE = brain.CONFIG_DIR / "routine.json"
 STATE_FILE = brain.STATE_DIR / "routine-state.json"
 LOG_DIR = brain.STATE_DIR / "routine-logs"  # servers that couldn't run as user services
+SHELL_WAIT_S = 5
+SERVER_SETTLE_S = 2  # a server with no port to ask: still running after this long is as good as it gets
+
+_shell_path = None
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 CHROME_HISTORY = Path.home() / ".config" / "google-chrome" / "Default" / "History"
 
@@ -302,11 +307,31 @@ def find_claude():
     return "claude"
 
 
+def shell_path():
+    """PATH as your terminal has it, which is where fnm, Volta, asdf and the like put themselves. Asked once:
+    your shell's startup files can take a moment. It answers in a file, past anything they print."""
+    global _shell_path
+    if _shell_path is None:
+        answered = ""
+        try:
+            with tempfile.NamedTemporaryFile("r") as answer:
+                subprocess.run([pwd.getpwuid(os.getuid()).pw_shell, "-lic", 'printf %s "$PATH" > "$DESKAI_ANSWER"'],
+                               env={**os.environ, "DESKAI_ANSWER": answer.name}, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, timeout=SHELL_WAIT_S)
+                answered = answer.read().strip()
+        except (OSError, KeyError, subprocess.SubprocessError) as e:
+            log.warning("routine: can't ask your shell for its PATH: %s", e)
+        _shell_path = answered
+    return _shell_path
+
+
 def tool_path(claude):
-    """PATH for the servers and Claude: the node install Claude lives in, ~/.local/bin, the system."""
+    """PATH for the servers and Claude: the node install Claude lives in, what your terminal has, then
+    wherever else a tool may be if your shell had nothing to say."""
     node = sorted(Path.home().glob(".nvm/versions/node/*/bin"), key=lambda path: [int(n) for n in re.findall(r"\d+", path.parent.name)])
-    dirs = [os.path.dirname(claude), *(str(path) for path in node[-1:]), str(Path.home() / ".local/bin"), str(Path.home() / ".bun/bin"),
-            "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+    dirs = [os.path.dirname(claude), *shell_path().split(":"), *(str(path) for path in node[-1:]), str(Path.home() / ".local/bin"),
+            str(Path.home() / ".bun/bin"), "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin",
+            *os.environ.get("PATH", "").split(":")]
     return ":".join(dict.fromkeys(d for d in dirs if d))
 
 
@@ -359,6 +384,7 @@ def learn(today=None, project=None):
     servers = server_commands(project, since - datetime.timedelta(days=SERVER_LOOKBACK_DAYS - LOOKBACK_DAYS))
     for server in servers:
         steps.append({"type": "server", **server})
+    steps += _compose_step(project, servers)
     page = chrome_page(day, {s["port"] for s in servers if s["port"]})
     if page:
         steps.append({"type": "url", "url": page})
@@ -372,6 +398,11 @@ def learn(today=None, project=None):
     return plan
 
 
+def _compose_step(project, servers):
+    """A project with a Compose file and no servers of its own runs through Docker."""
+    return [{"type": "compose", "cwd": project}] if not servers and found_projects.has_compose(project) else []
+
+
 def _plan_from_files(plan, project, today):
     """For a project Claude Code never saw: what its own files say it runs, then a terminal there."""
     steps = []
@@ -383,6 +414,7 @@ def _plan_from_files(plan, project, today):
         steps.append({"type": "service", **db})
     servers = found_projects.servers(project)
     steps += [{"type": "server", **server} for server in servers]
+    steps += _compose_step(project, servers)
     port = next((server["port"] for server in servers if server["port"]), None)
     if port:
         steps.append({"type": "url", "url": f"http://127.0.0.1:{port}"})
@@ -456,11 +488,27 @@ def port_open(port, host="127.0.0.1"):
         return False
 
 
-def wait_port(port, timeout=60):
+def crashed(unit):
+    """Whether a server's service has ended with an error, so it won't answer however long it's given. Not knowing
+    counts as no, and so does ending without one: a command may just start something and return."""
+    try:
+        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit], timeout=5).returncode == 0:
+            return False
+        said = subprocess.run(["journalctl", "--user", "-u", unit, "-n", "6", "-o", "cat", "--no-pager"],
+                              capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "Failed with result" in said.rsplit("Started ", 1)[-1]  # not an earlier run's
+
+
+def wait_port(port, timeout=60, unit=None):
+    """Whether the port answers in time. With the service behind it, gives up as soon as that has crashed."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if port_open(port):
             return True
+        if unit and crashed(unit):
+            return False
         time.sleep(0.5)
     return False
 
@@ -471,7 +519,8 @@ def unit_name(project, command):
 
 
 def start_server(step, env):
-    """Starts a dev server as a user service, so it keeps running and its logs are in the journal."""
+    """Starts a dev server as a user service, so it keeps running and its logs are in the journal.
+    Returns the service's name, or None if it had to run as a plain process."""
     unit = unit_name(step["cwd"], step["command"])
     subprocess.run(["systemctl", "--user", "reset-failed", unit], capture_output=True)
     subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
@@ -488,7 +537,32 @@ def start_server(step, env):
             subprocess.Popen(["bash", "-c", step["command"]], cwd=step["cwd"], env=env,
                              stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              start_new_session=True)
+        return None
     return unit
+
+
+def _settle(server, unit, progress):
+    """Waits to see a server come up and says how it went: its port answers, or with no port to ask, it hasn't
+    crashed a moment later."""
+    if server.get("port"):
+        up = wait_port(server["port"], 90, unit)
+    else:
+        time.sleep(SERVER_SETTLE_S)
+        up = not (unit and crashed(unit))
+    progress(server, "done" if up else "failed")
+    return up
+
+
+def _compose_up(project):
+    """Starts a project through Docker, with what it needs from other projects first."""
+    import compose  # not at the top: compose needs session, and session needs this module
+    if not shutil.which("docker"):
+        return False
+    found = compose.projects([*found_projects.find(), project])
+    ok, said, _started = compose.start(next(name for name, folder in found.items() if folder == project), found)
+    if not ok:
+        log.warning("routine: Docker couldn't start %s: %s", project, said)
+    return ok
 
 
 def terminal_args(cwd, inner):
@@ -518,6 +592,8 @@ def label(step):
         return f"{name} :{step['port']}" if step.get("port") else name
     if kind == "url":
         return re.sub(r"^https?://", "", step["url"])
+    if kind == "compose":
+        return "docker compose"
     if kind in ("claude", "terminal"):
         return kind
     return step.get("mode", kind)
@@ -551,16 +627,14 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                     progress(step, "skipped")
                     continue
                 servers.append((step, start_server(step, env)))
+            elif kind == "compose":
+                progress(step, "done" if _compose_up(step["cwd"]) else "failed")
             elif kind == "url":
                 # Open it once its server answers.
                 port = int(re.search(r":(\d+)", step["url"]).group(1))
-                for server, unit in servers:
-                    if server.get("port") and wait_port(server["port"], 90):
-                        progress(server, "done")
-                    elif server.get("port"):
-                        progress(server, "failed")
+                down = {server.get("port") for server, unit in servers if not _settle(server, unit, progress)}
                 servers = []
-                answered = wait_port(port, 30)
+                answered = port not in down and wait_port(port, 30)
                 if cancelled():
                     return
                 if answered:
@@ -583,6 +657,6 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:
             log.warning("routine: %s failed: %s", kind, e)
             progress(step, "failed")
-    for server, _unit in servers:  # no page waited on them
-        progress(server, "done" if not server.get("port") or wait_port(server["port"], 90) else "failed")
+    for server, unit in servers:  # no page waited on them
+        _settle(server, unit, progress)
     write_state(done=datetime.date.today().isoformat())

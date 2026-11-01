@@ -30,6 +30,7 @@ MISSES = 2          # checks in a row without an answer before a running service
 START_WAIT_S = 60   # how long a restart waits for the port
 GIT_WAIT_S = 5      # how long closing a project waits to hear what isn't in git
 STOP_SETTLE_S = 15  # a look that started before a stop may still see it running
+NO_TOOL = re.compile(r"^(?:\S*/)?(?:ba|da|z)?sh: (?:line )?\d+: (\S+): (?:command )?not found$")
 
 
 class Watch:
@@ -175,7 +176,7 @@ class Watch:
                 live.update(state="starting", misses=0, started=time.time(), since=time.time())
         try:
             if item["kind"] in ("server", MANUAL):
-                path = routine.load().get("path") or os.environ.get("PATH", "")
+                path = routine.load().get("path") or routine.tool_path(routine.find_claude())
                 routine.start_server(item, {**os.environ, "PATH": path})
             elif item["kind"] == CONTAINER:
                 if subprocess.run(["docker", "restart", container_name(unit)], capture_output=True, timeout=120).returncode != 0:
@@ -256,6 +257,12 @@ def open_log(item):
     cwd = item["cwd"] or os.path.expanduser("~")
     subprocess.Popen(routine.terminal_args(cwd, log_command(item)), cwd=cwd, start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def missing_tool(said):
+    """The program the shell couldn't find, from what it said: "sh: 1: vite: not found"."""
+    match = NO_TOOL.match(said)
+    return match.group(1) if match else None
 
 
 def last_log_line(item, limit=160):

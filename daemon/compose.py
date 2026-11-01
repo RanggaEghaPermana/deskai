@@ -12,8 +12,8 @@ import subprocess
 from pathlib import Path
 
 import session
+from projects import COMPOSE_FILES, has_compose
 
-COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 ROOTS = [Path.home() / "Docker-Project", Path.home() / "docker"]  # where Compose projects are kept
 UP_TIMEOUT_S = 600  # a first start may pull or build images
 QUICK_TIMEOUT_S = 5  # what the command bar asks while you wait, on the daemon's main thread
@@ -28,10 +28,6 @@ def _run(args, cwd=None, timeout=30):
         return subprocess.CompletedProcess(args, 1, "", str(e))
 
 
-def _has_compose(folder):
-    return any((folder / name).is_file() for name in COMPOSE_FILES)
-
-
 def projects(project_folders=()):
     """{name: folder} of the Compose projects. A name is the folder's, or its path under ~/Docker-Project
     when two share a name ("infra" and "team/infra")."""
@@ -40,10 +36,10 @@ def projects(project_folders=()):
         if not root.is_dir():
             continue
         for folder in sorted([*root.glob("*/"), *root.glob("*/*/")]):
-            if _has_compose(folder) and not any(part.startswith(".") for part in folder.relative_to(root).parts):
+            if has_compose(folder) and not any(part.startswith(".") for part in folder.relative_to(root).parts):
                 found.setdefault(str(folder.relative_to(root)), str(folder))
     for folder in map(Path, project_folders):
-        if _has_compose(folder) and str(folder) not in found.values():
+        if has_compose(folder) and str(folder) not in found.values():
             found.setdefault(folder.name, str(folder))
     for item in _docker_ls():
         folder = str(Path(item.get("ConfigFiles", "").split(",")[0]).parent)
