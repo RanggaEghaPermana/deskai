@@ -16,6 +16,14 @@ import commands  # noqa: E402
 # What the model can pick, and all it can pick. Adding to this is a decision about what DeskAI is, not a detail.
 THE_MODEL_CAN = {"mode", "setup_project", "close_project", "restore_desk", "server", "open_app", "open_url", "open_folder", "edit_modes"}
 ON_A_SERVER = {"restart", "stop", "log"}
+THE_MODEL_FILLS_IN = {"app", "mode", "op", "path", "project", "request", "target", "type", "url"}  # none of them something to run
+SHELLS = {"bash", "sh", "dash", "zsh", "fish"}
+COMMAND_LINES = {"spawn_command_line_async", "spawn_command_line_sync", "create_from_commandline"}  # one string, parsed and run
+SHELL_IN_THE_EXTENSIONS = r"""spawn_?command_?line|create_from_commandline|['"](?:ba|da|z|fi)?sh['"],\s*['"]-\w*c['"]"""
+# Where a shell gets text to run on purpose, and which text: a server's command, from its project's files or your Claude
+# Code sessions, and the line for a new terminal. Never the model's words, so adding to this gets the same look as THE_MODEL_CAN.
+SHELL_ON_PURPOSE = [("daemon/routine.py", "start_server", "step['command']"), ("daemon/routine.py", "start_server", "step['command']"),
+                    ("daemon/routine.py", "terminal_args", "inner")]
 PROGRAMS_EVERYWHERE = {"bash", "gnome-session-quit", "systemctl", "systemd-run"}  # on any desktop DeskAI runs on
 RUNS = {"run", "Popen", "check_output", "check_call", "call"}
 CATCHES_A_MISSING_PROGRAM = {"OSError", "FileNotFoundError", "Exception"}
@@ -93,8 +101,34 @@ def through_a_shell(source):
         name = getattr(call.func, "attr", getattr(call.func, "id", ""))
         module = getattr(getattr(call.func, "value", None), "id", "")
         shell = any(word.arg == "shell" and getattr(word.value, "value", False) is not False for word in call.keywords)
-        if shell or (module == "os" and name in ("system", "popen")) or (not module and name in ("eval", "exec")):
+        if shell or name in COMMAND_LINES or (module == "os" and name in ("system", "popen")) or (not module and name in ("eval", "exec")):
             found.append(call.lineno)
+    return found
+
+
+def _may_be_a_shell(program):
+    """Anything not written out could be one: [shell, "-c", text]."""
+    return not isinstance(program, ast.Constant) or Path(str(program.value)).name in SHELLS
+
+
+def given_to_a_shell(source):
+    """[(function, text)] for each list that has a shell run text not written out right there: ["bash", "-c", text]."""
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    found = []
+    for items in ast.walk(tree):
+        if not isinstance(items, (ast.List, ast.Tuple)):
+            continue
+        for at, flag in enumerate(items.elts[1:], 1):
+            if not (isinstance(flag, ast.Constant) and re.fullmatch(r"-\w*c", str(flag.value)) and _may_be_a_shell(items.elts[at - 1])):
+                continue
+            text = items.elts[at + 1] if at + 1 < len(items.elts) else None
+            if isinstance(text, ast.Constant):
+                continue
+            node = items
+            while node in parents and not isinstance(node, ast.FunctionDef):
+                node = parents[node]
+            found.append((getattr(node, "name", ""), ast.unparse(text) if text else ""))
     return found
 
 
@@ -103,6 +137,28 @@ class OnlyWhatsOnTheList(unittest.TestCase):
         action = commands.COMMAND_SCHEMA["properties"]["actions"]["items"]["properties"]
         self.assertEqual(set(action["type"]["enum"]), THE_MODEL_CAN, "the list of what the model can do changed: see CONTRIBUTING.md")
         self.assertEqual(set(action["op"]["enum"]), ON_A_SERVER, "the list of what the model can do changed: see CONTRIBUTING.md")
+        self.assertEqual(set(action), THE_MODEL_FILLS_IN, "the list of what the model can do changed: see CONTRIBUTING.md")
+
+    def test_a_shell_only_gets_text_where_it_always_has(self):
+        found = [(str(path.relative_to(ROOT)), *given) for path in python_files() if path.parent.name in ("daemon", "setup")
+                 for given in given_to_a_shell(path.read_text())]
+        self.assertEqual(sorted(found), sorted(SHELL_ON_PURPOSE), "a shell must never get the model's words: see SHELL_ON_PURPOSE")
+
+    def test_what_counts_as_giving_a_shell_text(self):
+        self.assertEqual(given_to_a_shell('["bash", "-c", text]'), [("", "text")])
+        self.assertEqual(given_to_a_shell('("/bin/sh", "-lc", text)'), [("", "text")])
+        self.assertEqual(given_to_a_shell('[shutil.which("bash"), "-c", text]'), [("", "text")])
+        self.assertEqual(given_to_a_shell('["env", "bash", "-c", f"run {text}"]'), [("", "f'run {text}'")])
+        self.assertEqual(given_to_a_shell('["bash", "-c"] + [text]'), [("", "")])
+        self.assertEqual(given_to_a_shell('def run(text):\n    return ["zsh", "-ic", text]'), [("run", "text")])
+        self.assertEqual(given_to_a_shell('[shell, "-lic", "echo written out"]'), [])
+        self.assertEqual(given_to_a_shell('["git", "-c", setting, "status"]'), [])
+        self.assertEqual(given_to_a_shell('["bash", script]'), [])
+
+    def test_nor_do_the_extensions_hand_one_anything(self):
+        found = [f"{path.name}:{text.count(chr(10), 0, match.start()) + 1}" for path in sorted((ROOT / "extension").glob("*/*.js"))
+                 for text in [path.read_text()] for match in re.finditer(SHELL_IN_THE_EXTENSIONS, text, re.I)]
+        self.assertEqual(found, [], "the daemon runs programs, from a list of arguments")
 
     def test_nothing_goes_through_a_shell(self):
         found = [f"{path.relative_to(ROOT)}:{line}" for path in python_files() if path.parent.name in ("daemon", "setup")
@@ -114,6 +170,8 @@ class OnlyWhatsOnTheList(unittest.TestCase):
         self.assertEqual(through_a_shell('os.system(text)'), [1])
         self.assertEqual(through_a_shell('os.popen(text)'), [1])
         self.assertEqual(through_a_shell('eval(text)'), [1])
+        self.assertEqual(through_a_shell('GLib.spawn_command_line_async(text)'), [1])
+        self.assertEqual(through_a_shell('Gio.AppInfo.create_from_commandline(text, None, 0)'), [1])
         self.assertEqual(through_a_shell('subprocess.run(["ls"], shell=False)'), [])
         self.assertEqual(through_a_shell('subprocess.run(["ls"])'), [])
         self.assertEqual(through_a_shell('self.eval(text)'), [])
