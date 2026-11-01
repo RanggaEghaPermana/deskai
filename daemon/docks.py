@@ -68,10 +68,11 @@ def turn_off_others(settings=None):
 
     RECORD.parent.mkdir(parents=True, exist_ok=True)
     RECORD.write_text(json.dumps(off) + "\n")
-    # GNOME's disabled list beats everything else, even the extensions a session turns on itself.
-    settings.set_strv("enabled-extensions", [uuid for uuid in enabled if uuid not in off])
-    settings.set_strv("disabled-extensions", [*disabled, *off])
-    Gio.Settings.sync()
+    # GNOME's disabled list beats everything else, even the extensions a session turns on itself. It's the only one
+    # changed: GNOME turns extensions off in steps, and a second change in the meantime can turn one back on halfway.
+    if off:
+        settings.set_strv("disabled-extensions", [*disabled, *off])
+        Gio.Settings.sync()
     return [OTHERS[uuid] for uuid in off]
 
 
@@ -86,7 +87,10 @@ def restore(settings=None):
         return
     if isinstance(off, dict):
         enabled = settings.get_strv("enabled-extensions")
+        # Only what an older version took out of your own list has to go back in.
+        missing = [uuid for uuid, yours in off.items() if yours and uuid not in enabled]
+        if missing:
+            settings.set_strv("enabled-extensions", [*enabled, *missing])
         settings.set_strv("disabled-extensions", [uuid for uuid in settings.get_strv("disabled-extensions") if uuid not in off])
-        settings.set_strv("enabled-extensions", [*enabled, *(uuid for uuid, yours in off.items() if yours and uuid not in enabled)])
         Gio.Settings.sync()
     RECORD.unlink(missing_ok=True)

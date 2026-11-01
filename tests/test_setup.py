@@ -152,6 +152,52 @@ class Versions(unittest.TestCase):
             self.assertFalse(self.gnome_check(version).ok, version)
 
 
+class TurningTheExtensionsOff(unittest.TestCase):
+    def said(self, *states):
+        answers = iter(states)
+        return mock.patch.object(installer, "run", side_effect=lambda *_a, **_k: mock.Mock(stdout=f"  Enabled: No\n  State: {next(answers)}\n"))
+
+    def test_it_waits_for_gnome_to_finish(self):
+        with self.said("DEACTIVATING", "ACTIVE", "INACTIVE") as run, mock.patch.object(installer.time, "sleep"):
+            installer._wait_until_off("a")
+        self.assertEqual(run.call_count, 3)
+
+    def test_for_all_of_them(self):
+        with self.said("INACTIVE", "ACTIVE", "INACTIVE", "INACTIVE") as run, mock.patch.object(installer.time, "sleep"):
+            installer._wait_until_off("a", "b")
+        self.assertEqual(run.call_count, 4)
+
+    def test_not_for_ever(self):
+        with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="State: ACTIVE")), mock.patch.object(installer.time, "sleep"):
+            installer._wait_until_off("a", timeout=0.01)
+
+    def test_with_no_tool_to_ask_it_doesnt_wait(self):
+        with mock.patch.object(installer, "run", side_effect=FileNotFoundError(2, "No such file", "gnome-extensions")), \
+                mock.patch.object(installer.time, "sleep") as sleep:
+            installer._wait_until_off("a")
+        sleep.assert_not_called()
+
+    def test_gone_counts_as_off(self):
+        with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="", stderr="Extension doesn't exist")), \
+                mock.patch.object(installer.time, "sleep") as sleep:
+            installer._wait_until_off("a")
+        sleep.assert_not_called()
+
+    def test_the_service_stops_before_the_docks_come_back(self):
+        order = [step for step, _fn in installer.uninstall_steps()]
+        self.assertLess(order.index("service"), order.index("extension"))
+
+    def test_it_waits_before_it_gives_the_docks_back(self):
+        seen = []
+        shell = PuttingItBack.Settings({"enabled-extensions": [installer.UUID]})
+        with mock.patch.object(installer.Gio.Settings, "new", return_value=shell), mock.patch.object(installer.Gio.Settings, "sync"), \
+                mock.patch.object(installer, "_login_screen", return_value=None), \
+                mock.patch.object(installer, "_wait_until_off", side_effect=lambda *_: seen.append("waited")), \
+                mock.patch.object(installer.docks, "restore", side_effect=lambda _s: seen.append("docks back")):
+            dict(installer.uninstall_steps())["extension"]()
+        self.assertEqual(seen, ["waited", "docks back"])
+
+
 class HooksAreYourCall(unittest.TestCase):
     def test_off_unless_theyre_there_already(self):
         source = (ROOT / "setup" / "deskai_setup.py").read_text()
@@ -201,7 +247,7 @@ class PuttingItBack(unittest.TestCase):
         for owner, name, value in ((installer, "INSTALLED", self.root / "installed.json"), (installer, "_login_screen", lambda: self.login),
                                    (installer.Gio.Settings, "new", lambda _schema: self.shell), (installer.Gio.Settings, "sync", lambda: None),
                                    (installer.docks, "restore", lambda _settings: None), (installer, "CONFIG", self.root / "config"),
-                                   (installer, "version", lambda: "9.9"),
+                                   (installer, "version", lambda: "9.9"), (installer, "_wait_until_off", lambda *_: None),
                                    (installer, "linked_here", lambda: True), (installer, "is_system_payload", lambda: False)):
             patcher = mock.patch.object(owner, name, value)
             patcher.start()
@@ -480,7 +526,7 @@ class PlainFailures(unittest.TestCase):
         steps, ran = self.rest_of_the_steps(installer.uninstall_steps())
         with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
             self.assertTrue(installer.run_steps(steps, lambda *_: None))
-        self.assertEqual(ran, ["extension", "service", "files", "polkit", "settings"])
+        self.assertEqual(ran, ["service", "extension", "files", "polkit", "settings"])
         for name in ("LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             self.patch(installer, name, self.root / "gone" / name)
         dict(installer.uninstall_steps())["files"]()

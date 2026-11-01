@@ -76,7 +76,20 @@ class TurningOff(Docks):
         self.install(DASH)
         settings = FakeSettings(enabled=["a@b", DASH, "c@d"])
         self.assertEqual(docks.turn_off_others(settings), ["Dash to Dock"])
-        self.assertEqual((settings.enabled, settings.disabled), (["a@b", "c@d"], [DASH]))
+        self.assertEqual((settings.enabled, settings.disabled), (["a@b", DASH, "c@d"], [DASH]))
+
+    def test_only_one_list_changes(self):
+        # GNOME turns extensions off in steps, and a second change meanwhile can turn one back on halfway.
+        self.session_starts(UBUNTU)
+        self.install(DASH)
+        settings = FakeSettings(enabled=[DASH])
+        with mock.patch.object(settings, "set_strv", wraps=settings.set_strv) as writes:
+            docks.turn_off_others(settings)
+        self.assertEqual([call.args[0] for call in writes.call_args_list], ["disabled-extensions"])
+        with mock.patch.object(settings, "set_strv", wraps=settings.set_strv) as writes:
+            docks.restore(settings)
+        self.assertEqual([call.args[0] for call in writes.call_args_list], ["disabled-extensions"])
+        self.assertEqual((settings.enabled, settings.disabled), ([DASH], []))
 
     def test_all_of_them(self):
         self.session_starts(UBUNTU)

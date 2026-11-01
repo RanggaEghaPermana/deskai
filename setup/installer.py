@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -105,6 +106,7 @@ CAN_FAIL = {"hooks", "ollama"}
 PROGRESS_BAR = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")  # how Ollama draws one, in what it says on stderr
 SAID_KEEPS = 4000     # characters of what a tool said: Ollama's bar repeats for a whole download, and the error comes last
 LOG_KEEPS = 64 * 1024
+EXTENSION_OFF_WAIT_S = 8
 
 
 class SetupError(Exception):
@@ -630,6 +632,20 @@ def install_steps(options):
             ("hooks", hooks), ("finish", finish)]
 
 
+def _wait_until_off(*uuids, timeout=EXTENSION_OFF_WAIT_S):
+    """Until GNOME has finished turning these off. It does that in steps, and a change to its extension settings in the
+    meantime has it turn back on one it's still in the middle of: half there, holding the dock's name, until the next login."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if not any("State: ACTIVE" in said or "State: DEACTIVATING" in said
+                       for said in (run("gnome-extensions", "info", uuid, timeout=5).stdout for uuid in uuids)):
+                return
+        except (OSError, subprocess.SubprocessError):
+            return
+        time.sleep(0.2)
+
+
 def uninstall_steps(purge=False):
     """[(id, function)]: what removing DeskAI does. Keeps your modes and stats unless purge."""
 
@@ -638,6 +654,8 @@ def uninstall_steps(purge=False):
         settings = Gio.Settings.new("org.gnome.shell")
         settings.set_strv("enabled-extensions",
                           [u for u in settings.get_strv("enabled-extensions") if u not in (UUID, LOGIN_UUID)])
+        Gio.Settings.sync()
+        _wait_until_off(UUID, LOGIN_UUID)
         if record.get("extensions_were_off"):
             settings.set_boolean("disable-user-extensions", True)
         docks.restore(settings)
@@ -690,7 +708,9 @@ def uninstall_steps(purge=False):
             for folder in (CONFIG_DIR, STATE / "deskai", CACHE / "deskai"):
                 shutil.rmtree(folder, ignore_errors=True)
 
-    return [("extension", extension), ("hooks", hooks), ("service", service), ("files", files),
+    # The service goes first: with it still running, the dock going and coming back looks like a new install to it, and it
+    # turns off the docks this has just given back.
+    return [("service", service), ("extension", extension), ("hooks", hooks), ("files", files),
             ("polkit", polkit), ("settings", settings)]
 
 
