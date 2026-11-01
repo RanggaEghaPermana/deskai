@@ -448,6 +448,17 @@ def write_state(**values):
     brain.write_json_atomic(STATE_FILE, {**read_state(), **values})
 
 
+def _run_of(unit):
+    """What this run of a service goes by. It changes whenever the service starts again, whoever starts it."""
+    return subprocess.run(["systemctl", "show", "--property=InvocationID", "--value", unit], capture_output=True, text=True, timeout=10).stdout.strip()
+
+
+def started_by_deskai(unit):
+    """Whether this run of a service is one a project's setup started. If not, it was already on, or you started it."""
+    started = read_state().get("started_services", {}).get(unit)
+    return bool(started) and started == _run_of(unit)
+
+
 def due(now=None):
     """Whether to offer the routine now: a workday, within the hours, not done or snoozed."""
     plan = load()
@@ -620,6 +631,8 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                     continue
                 # Not ours to start silently: GNOME asks for your password (polkit) if it needs to.
                 ok = subprocess.run(["systemctl", "start", step["unit"]], timeout=120).returncode == 0
+                if ok:
+                    write_state(started_services={**read_state().get("started_services", {}), step["unit"]: _run_of(step["unit"])})
                 if ok and step.get("port"):
                     ok = wait_port(step["port"], 30)
                 progress(step, "done" if ok else "failed")

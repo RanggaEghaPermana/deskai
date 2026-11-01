@@ -13,6 +13,7 @@ import re
 import time
 
 import brain
+import sites
 
 LEARNED_FILE = brain.STATE_DIR / "learned.json"
 REVIEW_FILE = brain.STATE_DIR / "review.json"
@@ -23,8 +24,9 @@ CLASSES = ("on_task", "off_task", "neutral")
 WEIGHTS = {"you": 5.0, "claude": 1.0}
 MIN_EVIDENCE = 3.0      # of a verdict, before it's ever given
 CONFIDENT = 0.9
-SEEN_WORD = 2.0         # a title needs this much known evidence to go on at all
+SEEN_WORD = 2           # how many windows called that a word has to be in, before it counts for a verdict
 TOKEN = re.compile(r"[^\W_]{2,}", re.UNICODE)
+SITE_AT_THE_END = re.compile(r"\s[-–—|·•]\s[^-–—|·•]*$")
 STOP_WORDS = frozenset("the and for with from your you this that are was dan yang di ke dari untuk dengan ini itu "
                        "google chrome firefox new tab http https www com".split())
 
@@ -86,7 +88,7 @@ class Learned:
     def _model(self, mode):
         model = self._models.get(mode)
         if model is None:
-            model = {"total": dict.fromkeys(CLASSES, 0.0), "words": dict.fromkeys(CLASSES, 0.0), "counts": {}}
+            model = {"total": dict.fromkeys(CLASSES, 0.0), "words": dict.fromkeys(CLASSES, 0.0), "counts": {}, "seen": {}}
             for example in self.examples:
                 if example["mode"] != mode:
                     continue
@@ -96,6 +98,7 @@ class Learned:
                     model["words"][example["verdict"]] += weight
                     counts = model["counts"].setdefault(token, dict.fromkeys(CLASSES, 0.0))
                     counts[example["verdict"]] += weight
+                    model["seen"].setdefault(token, dict.fromkeys(CLASSES, 0))[example["verdict"]] += 1
             self._models[mode] = model
         return model
 
@@ -106,25 +109,34 @@ class Learned:
         if not total:
             return None
         words = tokens(app_id, title)
-        known = [word for word in words if word in model["counts"] and not word.startswith("app:")]
-        if sum(sum(model["counts"][word].values()) for word in known) < SEEN_WORD:
-            return None  # nothing in this title it has seen enough of
+        said = [word for word in words if not word.startswith("app:")]
+        known = [word for word in said if word in model["counts"]]
+        # Mostly words it hasn't seen: knowing "YouTube" says nothing about "Calculus 1 - Full College Course - YouTube".
+        if not known or len(known) < len(said) / 3:
+            return None
         vocabulary = max(len(model["counts"]), 1)
         scores = {}
         for verdict in CLASSES:
-            if not model["total"][verdict]:
-                continue
-            score = math.log(model["total"][verdict] / total)
+            # Not having seen a verdict yet isn't proof against it.
+            score = math.log((model["total"][verdict] + 0.5) / (total + 0.5 * len(CLASSES)))
             for word in words:
                 if word in model["counts"]:
                     score += math.log((model["counts"][word][verdict] + 0.5) / (model["words"][verdict] + 0.5 * vocabulary))
             scores[verdict] = score
         best = max(scores, key=scores.get)
-        top = max(scores.values())
-        sure = math.exp(scores[best] - top) / sum(math.exp(s - top) for s in scores.values())
+        sure = 1 / sum(math.exp(score - scores[best]) for score in scores.values())
         if sure < CONFIDENT or model["total"][best] < MIN_EVIDENCE:
             return None
-        return best, sure
+        # Being wrongly called a distraction is worse than being missed: it takes a word about the page, not the site
+        # it's on ("Python Lecture - YouTube"), and not a page for learning something.
+        if best == "off_task":
+            if sites.LEARNING.search(title or ""):
+                return None
+            about = tokens(None, SITE_AT_THE_END.sub("", title or ""))
+            known = [word for word in known if word in about]
+        # One window is no pattern, and with no other verdict to set it against, neither is one word.
+        backing = [word for word in known if model["seen"][word][best] >= SEEN_WORD]
+        return (best, sure) if len(backing) >= (1 if sum(map(bool, model["total"].values())) > 1 else 2) else None
 
     def seed_from_verdicts(self, cache, config):
         """Claude's earlier verdicts, for the modes they can still be traced to. Never the local model's."""

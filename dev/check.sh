@@ -22,8 +22,8 @@ else
   tail -n 40 "$log"
 fi
 
-# 105 of the 109 are right today. Raise this as more are, and never lower it to get a change through.
-if python3 evals/run.py --no-model --min-right 105 >"$log" 2>&1; then
+# 126 of the 129 are right today. Raise this as more are, and never lower it to get a change through.
+if python3 evals/run.py --no-model --min-right 126 >"$log" 2>&1; then
   passed "the lists still understand what they should"
 else
   broke "the lists no longer understand what they should"

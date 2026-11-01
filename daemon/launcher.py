@@ -49,6 +49,13 @@ def app_info(app_id):
         return None
 
 
+def names_of(app_id):
+    """What an app goes by where its desktop id isn't known, like on a notification or when it's installed another way: its
+    id, the end of its id (org.keepassxc.KeePassXC.desktop being KeePassXC), and its name if it's installed. In lowercase."""
+    info = app_info(app_id)
+    return {app_id.lower(), app_id.removesuffix(".desktop").split(".")[-1].split("_")[0].lower(), *([info.get_name().lower()] if info else [])}
+
+
 def open_app(app_id):
     """Opens an installed app by its desktop id. False if there's no such app, or it wouldn't start."""
     info = app_info(app_id)

@@ -264,6 +264,102 @@ else
   fi
 fi
 
+# modes.json, as the dock takes it: what it can't go by doesn't change anything, and saving over it keeps a copy first.
+modes="$(val "_T.ext._modesFile.get_path()")"
+cp "$modes" "$modes.smoke"
+for broken in '{"modes": {"mine":' '{"modes": {"mine": {"exit": null}}}' '{"modes": {"building": {}}, "breaks": {"after_minutes": "90"}}'; do
+  printf '%s' "$broken" >"$modes"
+  sleep 0.7
+  expect "the dock doesn't go by: $broken" "$(val "'social' in _T.ext._modes")" true
+done
+ev "_T.ext._saveConfig(); 'ok'" >/dev/null
+sleep 0.5
+kept="$(ls "$modes".broken-* 2>/dev/null | head -n 1)"
+if [ -n "$kept" ]; then passed "saving over a broken modes.json keeps a copy"; else broke "saving over a broken modes.json keeps a copy"; fi
+expect "with what was in it" "$(cat "$kept" 2>/dev/null)" '{"modes": {"building": {}}, "breaks": {"after_minutes": "90"}}'
+expect "and says so" "$(val "_T.ext._card.shown")" true
+expect "the file is good again" "$(python3 -c 'import json, sys; print("social" in json.load(open(sys.argv[1]))["modes"])' "$modes")" True
+ev "_T.ext._saveConfig(); 'ok'" >/dev/null
+expect "saving over a good one keeps nothing" "$(ls "$modes".broken-* 2>/dev/null | wc -l)" 1
+ev "_T.ext._closeCard(); 'ok'" >/dev/null
+sleep 0.5
+rm -f "$modes".broken-*
+
+# A free mode made a focus mode from the dialog really is one, and back.
+social="{label: 'Social', description: '', color: '#e5484d', icon: 'chat-message-new-symbolic'}"
+ev "_T.ext._updateMode('social', {...$social, focus: true})" >/dev/null
+expect "ticking focus on a free mode makes it a focus mode" "$(val "_T.ext._modes.social.focus")" true
+expect "and it filters notifications" "$(val "_T.ext._modes.social.notifications.policy")" filter
+ev "_T.ext._updateMode('social', {...$social, focus: false})" >/dev/null
+expect "unticking it makes it a free one again" "$(val "_T.ext._modes.social.focus")" false
+expect "and it lets them through" "$(val "_T.ext._modes.social.notifications.policy")" all
+
+# An app updating a notification from before the focus mode: it's held like any other, with no banner.
+if command -v notify-send >/dev/null; then
+  ev "_T.ext._setMode('social'); 'ok'" >/dev/null
+  sleep 0.3
+  sent="$(notify-send -p -a SmokeApp first "before the focus mode")"
+  for _ in $(seq 1 20); do [ "$(val "Main.messageTray._notification?.title ?? ''")" = first ] && break; sleep 0.25; done
+  expect "outside a focus mode it shows" "$(val "Main.messageTray._notification?.title ?? ''")" first
+  ev "Main.messageTray._notificationExpired = true; Main.messageTray._updateState(); 'ok'" >/dev/null
+  for _ in $(seq 1 40); do [ "$(val "Main.messageTray._notification === null")" = true ] && break; sleep 0.25; done
+  ev "_T.ext._setMode('building'); 'ok'" >/dev/null
+  notify-send -r "$sent" -a SmokeApp second "updated during it"
+  sleep 0.6
+  expect "an update during a focus mode gets no banner" "$(val "Main.messageTray._notification?.title ?? 'none'")" none
+  expect "it's held" "$(val "[..._T.ext._held.values()].map(h => h.notification.title).join()")" second
+  # Letting it through on purpose still works.
+  ev "_T.ext._surfaceHeld([..._T.ext._held.keys()][0]); 'ok'" >/dev/null
+  for _ in $(seq 1 20); do [ "$(val "Main.messageTray._notification?.title ?? ''")" = second ] && break; sleep 0.25; done
+  expect "what's let through on purpose shows" "$(val "Main.messageTray._notification?.title ?? ''")" second
+  ev "Main.messageTray._notificationExpired = true; Main.messageTray._updateState(); 'ok'" >/dev/null
+  sleep 0.6
+  # One that's held and then says something new is judged again: the next message in a chat, say.
+  ev "(() => {
+    _T.told = [];
+    const emit = _T.ext._emitSignal;
+    _T.ext._emitSignal = function (name, types, args) {
+      if (name === 'NotificationHeld')
+        _T.told.push(args[3]);
+      return emit.call(this, name, types, args);
+    };
+  })()" >/dev/null
+  sent="$(notify-send -p -a SmokeApp third "nothing much")"
+  sleep 0.4
+  notify-send -r "$sent" -a SmokeApp third "nothing much still"
+  sleep 0.4
+  expect "a held notification with something new is told again" "$(val "_T.told.join('|')")" "nothing much|nothing much still"
+  expect "and stays held" "$(val "Main.messageTray._notification?.title ?? 'none'")" none
+  notify-send -r "$sent" -a SmokeApp third "urgent now"
+  for _ in $(seq 1 20); do [ "$(val "Main.messageTray._notification?.title ?? ''")" = third ] && break; sleep 0.25; done
+  expect "if it now gets past the filter it shows" "$(val "Main.messageTray._notification?.title ?? ''")" third
+  expect "and isn't held any more" "$(val "_T.ext._held.size")" 0
+  ev "Main.messageTray._notificationExpired = true; Main.messageTray._updateState(); 'ok'" >/dev/null
+  sleep 0.6
+  ev "_T.ext._setMode('social'); 'ok'" >/dev/null
+  sleep 0.3
+else
+  skipped "a notification updated during a focus mode: notify-send isn't installed"
+fi
+
+# An inbox item doesn't outlive its window, even after the screen was locked with it there.
+if [ "$windows" = "2" ]; then
+  ev "(() => {
+    const inbox = _T.ext._inbox, win = _T.wins().at(-1);
+    inbox._put({key: 'smoke-window', kind: 'done', label: 'Smoke', title: 'Smoke', project: '', body: '', appId: '', gicon: null, notification: null, window: win, match: ''});
+    const kept = inbox.keep();
+    inbox.destroy();
+    inbox.pickUp(kept);
+    return win.delete(global.get_current_time());
+  })()" >/dev/null
+  for _ in $(seq 1 20); do [ "$(val "_T.wins().length")" = 1 ] && break; sleep 0.25; done
+  expect "closing a window takes its inbox item along" "$(val "_T.ext._inbox.list().some(i => i.key === 'smoke-window')")" false
+else
+  skipped "an inbox item for a closed window: no window to close"
+fi
+
+mv "$modes.smoke" "$modes"
+
 logged="$(grep -E "$ERRORS" "$LOG" | sed -E 's/^.*(JS ERROR|Gjs-CRITICAL|GNOME Shell-CRITICAL)( \*\*: [0-9:.]+:)?/\1/' | sort | uniq -c | cut -c1-240 | head -n 14)"
 if [ -z "$logged" ]; then
   passed "nothing logged an error"

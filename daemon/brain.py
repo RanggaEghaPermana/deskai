@@ -15,6 +15,9 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib
 
+import launcher
+import sites
+
 log = logging.getLogger("deskai")
 
 BUS_NAME = "io.github.RanggaEghaPermana.DeskAI"
@@ -32,6 +35,8 @@ BROWSERS = {
     "org.mozilla.firefox.desktop", "brave-browser.desktop", "com.brave.Browser.desktop",
     "microsoft-edge.desktop", "zen.desktop", "app.zen_browser.zen.desktop",
 }
+# The rest, by their name. An app that's one of these goes by the block list, whatever else is listed.
+BROWSER_NAMES = re.compile(r"chrom(?:e|ium)|firefox|brave|\bedge\b|vivaldi|\bopera\b|librewolf|waterfox|floorp|epiphany|falkon", re.I)
 # Switching to these says nothing about focus either way.
 SYSTEM_APPS = {
     "org.gnome.Nautilus.desktop", "org.gnome.Settings.desktop", "gnome-control-center.desktop",
@@ -50,7 +55,7 @@ LLM_DEFAULTS = {
     "ollama_model": "qwen3:1.7b",
     "ollama_url": "http://127.0.0.1:11434",
     "triage_notifications": True,
-    "exclude_apps": [],
+    "exclude_apps": ["org.keepassxc.KeePassXC.desktop", "bitwarden.desktop", "1password.desktop"],
 }
 # Models that accept the server-side refusal fallback.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1"}
@@ -73,37 +78,60 @@ def write_json_atomic(path, data):
         raise
 
 
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_strings(value):
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def _section(parent, field, errors, where=""):
+    """A part of the config that has to be an object, and nothing to look at if it isn't."""
+    value = parent.get(field, {})
+    if isinstance(value, dict):
+        return value
+    errors.append(f"{where}{field} must be an object")
+    return {}
+
+
 def validate_config(cfg):
-    """Returns a list of problems; empty means the config is usable."""
+    """Returns a list of problems; empty means the config is usable. The dock goes by the same rules: config.js."""
     if not isinstance(cfg, dict):
-        return ["the root must be a JSON object"]
+        return ["modes.json must be a JSON object"]
     modes = cfg.get("modes")
     if not isinstance(modes, dict) or not modes:
         return ["`modes` must be an object with at least one mode"]
     errors = []
     if cfg.get("language", "en") not in ("en", "id"):
         errors.append("language must be en or id")
-    if cfg.get("dock", {}).get("autohide", "windows") not in ("windows", "smart", "always", "never"):
+    dock = _section(cfg, "dock", errors)
+    if dock.get("autohide", "windows") not in ("windows", "smart", "always", "never"):
         errors.append("dock.autohide must be windows, smart, always or never")
-    inbox = cfg.get("inbox", {})
-    if not isinstance(inbox, dict):
-        errors.append("inbox must be an object")
-    else:
-        if not isinstance(inbox.get("enabled", True), bool):
-            errors.append("inbox.enabled must be true or false")
-        for field in ("messages", "agent_apps"):
-            value = inbox.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-                errors.append(f"inbox.{field} must be a list of strings")
-    breaks = cfg.get("breaks", {})
-    if not isinstance(breaks, dict) or not isinstance(breaks.get("enabled", True), bool):
-        errors.append("breaks must be an object, and breaks.enabled true or false")
-    elif not isinstance(breaks.get("after_minutes", 120), (int, float)) or breaks.get("after_minutes", 120) <= 0:
+    if not _is_number(dock.get("icon_size", 38)) or dock.get("icon_size", 38) <= 0:
+        errors.append("dock.icon_size must be a number > 0")
+    inbox = _section(cfg, "inbox", errors)
+    if not isinstance(inbox.get("enabled", True), bool):
+        errors.append("inbox.enabled must be true or false")
+    for field in ("messages", "agent_apps"):
+        if not _is_strings(inbox.get(field, [])):
+            errors.append(f"inbox.{field} must be a list of strings")
+    breaks = _section(cfg, "breaks", errors)
+    if not isinstance(breaks.get("enabled", True), bool):
+        errors.append("breaks.enabled must be true or false")
+    if not _is_number(breaks.get("after_minutes", 120)) or breaks.get("after_minutes", 120) <= 0:
         errors.append("breaks.after_minutes must be a number of minutes > 0")
-    room = cfg.get("room_warnings", {})
-    if not isinstance(room, dict) or not isinstance(room.get("enabled", True), bool):
-        errors.append("room_warnings must be an object, and room_warnings.enabled true or false")
-    if "default_mode" in cfg and cfg["default_mode"] not in modes:
+    if not isinstance(_section(cfg, "room_warnings", errors).get("enabled", True), bool):
+        errors.append("room_warnings.enabled must be true or false")
+    llm = _section(cfg, "llm", errors)
+    for field in ("backend", "model", "effort", "ollama_model", "ollama_url"):
+        if not isinstance(llm.get(field, ""), str):
+            errors.append(f"llm.{field} must be a string")
+    if not isinstance(llm.get("triage_notifications", True), bool):
+        errors.append("llm.triage_notifications must be true or false")
+    if not _is_strings(llm.get("exclude_apps", [])):
+        errors.append("llm.exclude_apps must be a list of strings")
+    if "default_mode" in cfg and (not isinstance(cfg["default_mode"], str) or cfg["default_mode"] not in modes):
         errors.append(f"default_mode `{cfg['default_mode']}` isn't in modes")
     for key, mode in modes.items():
         where = f"modes.{key}"
@@ -112,42 +140,53 @@ def validate_config(cfg):
         if not isinstance(mode, dict):
             errors.append(f"{where}: must be an object")
             continue
-        if not isinstance(mode.get("label", key), str):
-            errors.append(f"{where}.label must be a string")
-        if "color" in mode and not COLOR_RE.match(str(mode["color"])):
+        for field in ("label", "description", "icon"):
+            if not isinstance(mode.get(field, ""), str):
+                errors.append(f"{where}.{field} must be a string")
+        if "color" in mode and not (isinstance(mode["color"], str) and COLOR_RE.match(mode["color"])):
             errors.append(f"{where}.color must be #rrggbb")
         for field in ("apps", "allow", "block"):
-            value = mode.get(field, [])
-            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            if not _is_strings(mode.get(field, [])):
                 errors.append(f"{where}.{field} must be a list of strings")
-        policy = mode.get("notifications", {}).get("policy", "all")
-        if policy not in ("all", "filter", "none"):
+        notifications = _section(mode, "notifications", errors, f"{where}.")
+        if notifications.get("policy", "all") not in ("all", "filter", "none"):
             errors.append(f"{where}.notifications.policy must be all, filter or none")
+        for field in ("allow_apps", "keywords"):
+            if not _is_strings(notifications.get(field, [])):
+                errors.append(f"{where}.notifications.{field} must be a list of strings")
         if mode.get("on_distraction", "nudge") not in ("nudge", "minimize"):
             errors.append(f"{where}.on_distraction must be nudge or minimize")
         for field in ("nudge_after", "renudge_after"):
             value = mode.get(field, 1)
-            if not isinstance(value, (int, float)) or value <= 0:
+            if not _is_number(value) or value <= 0:
                 errors.append(f"{where}.{field} must be a number of seconds > 0")
+        leaving = _section(mode, "exit", errors, f"{where}.")
         for field in ("delay", "per_press"):
-            value = mode.get("exit", {}).get(field, 0)
-            if not isinstance(value, (int, float)) or value < 0:
+            value = leaving.get(field, 0)
+            if not _is_number(value) or value < 0:
                 errors.append(f"{where}.exit.{field} must be a number of seconds >= 0")
     return errors
 
 
 class Config:
-    """modes.json, reloaded whenever the file changes. A broken file keeps the last good copy."""
+    """modes.json, reloaded whenever the file changes. A broken file keeps the last good copy, and `problem` says
+    what's wrong with it: the card string, and its fields."""
 
     def __init__(self, path=MODES_FILE):
         self.path = Path(path)
         self.data = {"modes": {}}
+        self.problem = None
         self._seen = None
 
     def refresh(self):
         try:
             stat = self.path.stat()
         except FileNotFoundError:
+            self.problem = None
+            return False
+        except OSError as e:
+            log.warning("modes.json unreadable, keeping previous config: %s", e)
+            self.problem = ("config_unreadable", {})
             return False
         # The time alone misses two saves a few milliseconds apart, on Ubuntu 24.04's kernel.
         seen = (stat.st_mtime_ns, stat.st_ino, stat.st_size)
@@ -156,15 +195,29 @@ class Config:
         self._seen = seen
         try:
             data = json.loads(self.path.read_text())
-        except (OSError, json.JSONDecodeError) as e:
+        except json.JSONDecodeError as e:
             log.warning("modes.json unreadable, keeping previous config: %s", e)
+            self.problem = ("config_not_json", {"line": e.lineno, "column": e.colno})
+            return False
+        except (OSError, ValueError) as e:  # ValueError: not text at all
+            log.warning("modes.json unreadable, keeping previous config: %s", e)
+            self.problem = ("config_unreadable", {})
             return False
         errors = validate_config(data)
         if errors:
             log.warning("modes.json invalid, keeping previous config: %s", "; ".join(errors))
+            self.problem = ("config_bad_value", {"field": re.match(r"`?([\w.-]+)", errors[0]).group(1), "details": "; ".join(errors)})
             return False
         self.data = data
+        self.problem = None
         return True
+
+    def problem_in_words(self, language=None):
+        """What's wrong with the file, or "" if nothing is."""
+        if not self.problem:
+            return ""
+        key, fields = self.problem
+        return card_text(language or self.language, key, **fields)
 
     @property
     def language(self):
@@ -172,7 +225,9 @@ class Config:
 
     @property
     def llm(self):
-        return {**LLM_DEFAULTS, **self.data.get("llm", {})}
+        mine = self.data.get("llm", {})
+        # A list of your own adds to these: it doesn't send your password manager to the model.
+        return {**LLM_DEFAULTS, **mine, "exclude_apps": list(dict.fromkeys([*LLM_DEFAULTS["exclude_apps"], *mine.get("exclude_apps", [])]))}
 
     @property
     def breaks(self):
@@ -216,26 +271,46 @@ def verdict(kind, reason="", source="rule", site=""):
     return {"verdict": kind, "reason": reason, "source": source, "site": site}
 
 
+def is_browser(app_id):
+    """Whether an app's window is about whatever site it shows, not the app: by its id, or by what the system files it under."""
+    if not app_id:
+        return False
+    if app_id in BROWSERS or BROWSER_NAMES.search(app_id):
+        return True
+    info = launcher.app_info(app_id)
+    return "WebBrowser" in ((info.get_categories() or "") if info else "")
+
+
+def _mentions(keyword, text):
+    """Whether a keyword from a list is in this text as itself. Discord isn't in discord-bot, ~/projects/discord or
+    discord.py, Vite isn't in "Invite", and " / X" isn't in "Docs / XState". It is in "Home / X" and "discord.com"."""
+    word = keyword.lower()
+    before = r"(?<![\w-])(?<![^/]/)" if word[:1].isalnum() else ""
+    after = r"(?![\w-])" + sites.NOT_A_FILE if word[-1:].isalnum() else ""
+    return bool(word) and re.search(before + re.escape(word) + after, text.lower()) is not None
+
+
 def rule_verdict(mode, app_id, app_name, title, language="en"):
     """Cheap first pass. Returns None when only a model can tell."""
     if not app_id and not title:
         return verdict("neutral")
     if app_id in SYSTEM_APPS:
         return verdict("neutral")
-    haystack = f"{app_name}\n{title}".lower()
-    blocked = next((k for k in mode.get("block", []) if k.lower() in haystack), None)
-    allowed = next((k for k in mode.get("allow", []) if k.lower() in haystack), None)
-    if blocked and allowed:
-        return None  # "Laravel tutorial - YouTube": let the model weigh it
     label = mode.get("label", "this")
+    # An app the mode is for, whatever's in its title: ~/projects/discord-bot in your terminal.
+    if app_id in mode.get("apps", []) and not is_browser(app_id):
+        return verdict("on_task", card_text(language, "rule_app", site=app_name, mode=label), site=app_name)
+    haystack = f"{app_name}\n{title}"
+    blocked = next((k for k in mode.get("block", []) if _mentions(k, haystack)), None)
+    allowed = next((k for k in mode.get("allow", []) if _mentions(k, haystack)), None)
+    if blocked and (allowed or (is_browser(app_id) and sites.about_the_work(mode, title))):
+        return None  # "Laravel tutorial - YouTube", "Twitter API v2 documentation": it points both ways
     if blocked:
         site = blocked.strip(" /:") or app_name
         return verdict("off_task", card_text(language, "rule_off", site=site, mode=label), site=site)
     if allowed:
         site = allowed.strip(" /:") or app_name
         return verdict("on_task", card_text(language, "rule_on", site=site, mode=label), site=site)
-    if app_id in mode.get("apps", []) and app_id not in BROWSERS:
-        return verdict("on_task", card_text(language, "rule_app", site=app_name, mode=label), site=app_name)
     return None
 
 
@@ -245,19 +320,19 @@ def allow_activity(mode, app_id, app_name, title, site=""):
     Block keywords that catch it go; the allow list gains the narrowest keyword that still
     matches, a block keyword or the site the model named, else the page title or app name.
     Returns that keyword."""
-    haystack = f"{app_name}\n{title}".lower()
-    blocked = [k for k in mode.get("block", []) if k.lower() in haystack]
+    haystack = f"{app_name}\n{title}"
+    blocked = [k for k in mode.get("block", []) if _mentions(k, haystack)]
     if blocked:
         mode["block"] = [k for k in mode["block"] if k not in blocked]
         keyword = blocked[0]
-    elif site and site.lower() in haystack:
+    elif site and _mentions(site, haystack):
         keyword = site
-    elif app_id in BROWSERS or not app_name:
+    elif is_browser(app_id) or not app_name:
         keyword = title or app_name
     else:
         keyword = app_name
     allow = mode.setdefault("allow", [])
-    if not any(k.lower() in haystack for k in allow):
+    if not any(_mentions(k, haystack) for k in allow):
         allow.append(keyword)
     return keyword
 
@@ -536,7 +611,13 @@ CARD_STRINGS = {
         "list_blocked": "{word} is blocked in {mode}",
         "server_is_up": "{name} is running",
         "server_mine": "{name} is running in your terminal, so its log is there too.",
-        "project_hand_started": "You started these yourself, and they're still running:",
+        "config_problem": "modes.json has a mistake",
+        "config_not_json": "It isn't valid JSON: look at line {line}, column {column}.",
+        "config_unreadable": "DeskAI can't read the file.",
+        "config_bad_value": "Check {field}. `deskai doctor` says what's wrong with it.",
+        "config_keeping": "Until it's fixed, DeskAI goes by the last version that worked.",
+        "config_defaults": "Until it's fixed, the dock uses the default modes and your focus isn't checked.",
+        "project_hand_started": "DeskAI didn't start these, and they're still running:",
         "project_hand_title": "{name}: stop these too?",
         "project_hand_stop": "Stop them",
         "project_hand_keep": "Leave them",
@@ -724,7 +805,13 @@ CARD_STRINGS = {
         "list_blocked": "{word} diblokir di {mode}",
         "server_is_up": "{name} lagi jalan",
         "server_mine": "{name} jalan di terminal lu, jadi log-nya ada di sana.",
-        "project_hand_started": "Ini lu nyalain sendiri, dan masih jalan:",
+        "config_problem": "Ada yang salah di modes.json",
+        "config_not_json": "Bukan JSON yang valid: cek baris {line}, kolom {column}.",
+        "config_unreadable": "DeskAI nggak bisa baca filenya.",
+        "config_bad_value": "Cek {field}. `deskai doctor` bilang salahnya apa.",
+        "config_keeping": "Sampai dibenerin, DeskAI tetep pake versi terakhir yang bener.",
+        "config_defaults": "Sampai dibenerin, dock pake mode bawaan dan fokus lu nggak dicek.",
+        "project_hand_started": "Ini bukan DeskAI yang nyalain, dan masih jalan:",
         "project_hand_title": "{name}: matiin ini juga?",
         "project_hand_stop": "Matiin",
         "project_hand_keep": "Biarin",

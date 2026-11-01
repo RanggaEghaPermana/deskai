@@ -25,6 +25,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Card} from './card.js';
 import {CommandBar} from './commandbar.js';
 import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
+import {isValidConfig} from './config.js';
 import {ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
@@ -201,10 +202,6 @@ function writeJson(file, data) {
     file.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
 }
 
-function isValidConfig(cfg) {
-    return cfg && typeof cfg.modes === 'object' && Object.keys(cfg.modes).length > 0;
-}
-
 function separator() {
     return new St.Widget({style_class: 'deskai-sep', y_expand: true});
 }
@@ -251,6 +248,7 @@ export default class DeskAIExtension extends Extension {
         this._pending = null;
         this._appButtons = [];
         this._quiet = new WeakSet(); // notifications kept out of banners (held, or in the inbox)
+        this._judged = new Set(); // notifications whose banner has been through the mode's filter, while it waits to show
         this._inbox = new Inbox({
             changed: () => this._syncInbox(),
             announce: item => this._announceInbox(item),
@@ -388,6 +386,7 @@ export default class DeskAIExtension extends Extension {
         if (this._updateStateOriginal) {
             Main.messageTray._updateState = this._updateStateOriginal;
             this._updateStateOriginal = null;
+            this._judged.clear();
         }
         for (const source of this._watchedSources)
             source.disconnectObject(this);
@@ -594,7 +593,8 @@ export default class DeskAIExtension extends Extension {
         const wanted = this._surfaceOnSwitch;
         this._surfaceOnSwitch = null;
         const surfaced = wanted?.mode === name ? held.find(h => h.id === wanted.id) : null;
-        surfaced?.notification.source?.emit('notification-request-banner', surfaced.notification);
+        if (surfaced)
+            this._showBanner(surfaced.notification);
 
         const rest = held.filter(h => h !== surfaced);
         if (rest.length) {
@@ -1618,16 +1618,41 @@ export default class DeskAIExtension extends Extension {
 
     // ---- editing modes.json ---------------------------------------------
 
+    // Saving replaces the file, and one DeskAI can't read may still have your own modes in it.
+    // Returns whether it's safe to save.
+    _keepBrokenFile() {
+        if (!this._modesFile.query_exists(null) || isValidConfig(readJson(this._modesFile)))
+            return true;
+        const stamp = GLib.DateTime.new_now_local().format('%Y%m%d-%H%M%S');
+        const copy = Gio.File.new_for_path(`${this._modesFile.get_path()}.broken-${stamp}`);
+        try {
+            this._modesFile.copy(copy, Gio.FileCopyFlags.OVERWRITE, null, null);
+        } catch (e) {
+            Main.notifyError('DeskAI', this._t('configNotSaved', {why: e.message}));
+            return false;
+        }
+        this._showCard({
+            id: 'config-kept',
+            kind: 'command',
+            title: this._t('configKeptTitle'),
+            text: this._t('configKeptText', {file: copy.get_basename()}),
+            timeout: 30,
+        });
+        return true;
+    }
+
     _saveConfig() {
         this._modes = this._config.modes;
         this._modeOrder = Object.keys(this._modes);
         const text = `${JSON.stringify(this._config, null, 2)}\n`;
-        this._lastWritten = text;
-        try {
-            this._modesFile.replace_contents(new TextEncoder().encode(text), null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
-        } catch (e) {
-            Main.notifyError('DeskAI', `Couldn't save modes.json: ${e.message}`);
+        if (this._keepBrokenFile()) {
+            this._lastWritten = text;
+            try {
+                this._modesFile.replace_contents(new TextEncoder().encode(text), null, false,
+                    Gio.FileCreateFlags.REPLACE_DESTINATION | Gio.FileCreateFlags.PRIVATE, null);
+            } catch (e) {
+                Main.notifyError('DeskAI', this._t('configNotSaved', {why: e.message}));
+            }
         }
         this._updateIndicator();
     }
@@ -1700,6 +1725,7 @@ export default class DeskAIExtension extends Extension {
             return;
         Object.assign(mode, {label, description, color, icon});
         if (focus && !mode.focus) {
+            mode.focus = true;
             const template = JSON.parse(JSON.stringify(NEW_FOCUS_MODE));
             for (const [field, value] of Object.entries(template)) {
                 if (mode[field] === undefined || (field === 'notifications' && mode.notifications?.policy === 'all'))
@@ -2689,13 +2715,20 @@ export default class DeskAIExtension extends Extension {
         const tray = Main.messageTray;
         const original = tray._updateState;
         const quiet = this._quiet;
+        const judge = notification => this._judgeQueued(notification);
+        const waiting = queue => {
+            this._judged = new Set(queue);
+        };
         this._updateStateOriginal = original;
         tray._updateState = function (...args) {
             const queued = this._notificationQueue.length;
+            [...this._notificationQueue].forEach(judge);
             this._notificationQueue = this._notificationQueue.filter(n => !quiet.has(n));
             if (this._notificationQueue.length !== queued)
                 this.emit('queue-changed');
-            return original.apply(this, args);
+            const result = original.apply(this, args);
+            waiting(this._notificationQueue);
+            return result;
         };
         for (const source of Main.messageTray.getSources())
             this._watchSource(source);
@@ -2714,7 +2747,20 @@ export default class DeskAIExtension extends Extension {
             this);
     }
 
+    // An app updating a notification asks for its banner again, with no 'notification-added' for it. So
+    // whatever waits to show without having been through the filter since it last showed goes through it now.
+    _judgeQueued(notification) {
+        if (this._judged.has(notification) || this._quiet.has(notification) || !notification.source)
+            return;
+        try {
+            this._onNotificationAdded(notification.source, notification);
+        } catch (e) {
+            logError(e, 'DeskAI: can\'t judge an updated notification');
+        }
+    }
+
     _onNotificationAdded(source, notification) {
+        this._judged.add(notification);
         const {Urgency} = MessageTray;
         // GNOME's "Screencast recorded" (no picture, unlike a screenshot's): the dock's card
         // for the recording comes a moment later and takes its place.
@@ -2752,14 +2798,32 @@ export default class DeskAIExtension extends Extension {
         const id = ++this._heldSeq;
         this._held.set(id, {id, notification, app});
         this._quiet.add(notification);
-        notification.connectObject('destroy', () => {
-            this._held.delete(id);
-            this._syncModeButtons(false);
-            this._updateIndicator();
-        }, this);
+        notification.connectObject(
+            'destroy', () => {
+                this._held.delete(id);
+                this._syncModeButtons(false);
+                this._updateIndicator();
+            },
+            'notify::title', () => this._debounce(`held:${id}`, 0, () => this._heldChanged(id)),
+            'notify::body', () => this._debounce(`held:${id}`, 0, () => this._heldChanged(id)),
+            this);
         this._syncModeButtons(false);
         this._updateIndicator();
         this._emitSignal('NotificationHeld', '(usss)', [id, app, title, body]);
+    }
+
+    // An app updating a held notification has something new to say, like the next message in a chat: that gets judged too.
+    _heldChanged(id) {
+        const held = this._held.get(id);
+        if (!held)
+            return;
+        const {notification, app} = held;
+        const title = notification.title ?? '';
+        const body = notification.body ?? '';
+        if (this._modes[this._mode]?.notifications?.policy === 'filter' && this._passesFilter(app, title, body))
+            this._surfaceHeld(id);
+        else
+            this._emitSignal('NotificationHeld', '(usss)', [id, app, title, body]);
     }
 
     _passesFilter(app, title, body) {
@@ -2770,6 +2834,12 @@ export default class DeskAIExtension extends Extension {
             (rules.keywords ?? []).some(k => text.includes(k.toLowerCase()));
     }
 
+    // On purpose: this one doesn't go through the filter again.
+    _showBanner(notification) {
+        this._judged.add(notification);
+        notification.source?.emit('notification-request-banner', notification);
+    }
+
     _surfaceHeld(id) {
         const held = this._held.get(id);
         if (!held)
@@ -2777,7 +2847,7 @@ export default class DeskAIExtension extends Extension {
         this._held.delete(id);
         held.notification.disconnectObject(this);
         this._quiet.delete(held.notification);
-        held.notification.source?.emit('notification-request-banner', held.notification);
+        this._showBanner(held.notification);
         this._syncModeButtons(false);
         this._updateIndicator();
         return true;

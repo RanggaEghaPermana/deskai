@@ -19,8 +19,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   which projects have work not committed or pushed.
 - **Servers on the dock.** The dev servers and database in your projects get a status dot, including the
   ones you started yourself in a terminal. If one DeskAI started stops, you see why, and one click restarts
-  it or opens its log. Closing a project asks before stopping anything you started yourself, and tells you
-  if it has files not committed or commits not pushed.
+  it or opens its log. Closing a project asks before stopping anything DeskAI didn't start, your database
+  included, and tells you if it has files not committed or commits not pushed.
 - **Docker in the command bar.** Start, stop or restart a Compose project by name, along with the containers it
   needs from other projects, and see which images you have. Running containers get a status dot too.
 - **Who has which port.** Ask who has a port, what's free and what's in the way. A Docker project whose port is
@@ -178,7 +178,9 @@ deskai routine       # the workday routine
 deskai hooks install # let AI agents report to the dock
 ```
 
-Modes live in `~/.config/deskai/modes.json`, and the dock picks up changes right away.
+Modes live in `~/.config/deskai/modes.json`, and the dock picks up changes right away. If you make a mistake in
+it, a card says where and DeskAI keeps going by the last version that worked. Should anything have to save over a
+file it can't read, the old one is kept next to it as `modes.json.broken-…`.
 
 ## Remove
 

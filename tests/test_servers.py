@@ -119,7 +119,7 @@ class ClosingAProject(unittest.TestCase):
     OTHER = {"unit": "deskai-shop-php.service", "cwd": "/work/shop", "command": "php -S 127.0.0.1:9000", "port": 9000}
     DB = {"unit": "postgresql@18-main.service", "port": 5432}
 
-    def close(self, running, databases):
+    def close(self, running, databases, ours=False):
         watch = servers.Watch()
         self.stopped = []
 
@@ -131,25 +131,82 @@ class ClosingAProject(unittest.TestCase):
                 mock.patch.object(servers.session, "databases", return_value=[]), \
                 mock.patch.object(servers.routine, "port_open", return_value=True), \
                 mock.patch.object(servers.routine, "database_service", side_effect=lambda folder: databases.get(folder)), \
+                mock.patch.object(servers.routine, "started_by_deskai", return_value=ours), \
                 mock.patch.object(servers.subprocess, "run", side_effect=run):
             return servers.close_project(watch, "/work/app")
 
-    def test_its_servers_and_database_stop(self):
-        report = self.close([self.PHP, self.NODE], {"/work/app": self.DB})
+    def test_its_servers_stop_and_a_database_deskai_started(self):
+        report, ask = self.close([self.PHP, self.NODE], {"/work/app": self.DB}, ours=True)
         self.assertEqual(sorted(self.stopped), sorted([self.PHP["unit"], self.NODE["unit"], self.DB["unit"]]))
         self.assertEqual({state for _label, state, _other in report}, {"stopped"})
+        self.assertIsNone(ask)
+
+    def test_a_database_deskai_didnt_start_is_only_asked_about(self):
+        report, ask = self.close([self.PHP], {"/work/app": self.DB})
+        self.assertEqual(self.stopped, [self.PHP["unit"]])
+        self.assertEqual(ask, {"unit": self.DB["unit"], "label": "postgresql@18-main", "kind": "service"})
+        self.assertEqual([state for _label, state, _other in report], ["stopped"])
 
     def test_another_projects_server_keeps_running(self):
-        self.close([self.PHP, self.OTHER], {"/work/app": self.DB})
+        self.close([self.PHP, self.OTHER], {"/work/app": self.DB}, ours=True)
         self.assertNotIn(self.OTHER["unit"], self.stopped)
 
     def test_a_database_another_project_uses_stays_on(self):
-        report = self.close([self.PHP, self.OTHER], {"/work/app": self.DB, "/work/shop": self.DB})
-        self.assertNotIn(self.DB["unit"], self.stopped)
-        self.assertIn(("postgresql@18-main", "kept", "shop"), report)
+        for ours in (True, False):
+            report, ask = self.close([self.PHP, self.OTHER], {"/work/app": self.DB, "/work/shop": self.DB}, ours=ours)
+            self.assertNotIn(self.DB["unit"], self.stopped)
+            self.assertIn(("postgresql@18-main", "kept", "shop"), report)
+            self.assertIsNone(ask)
 
     def test_nothing_running(self):
-        self.assertEqual(self.close([], {}), [])
+        self.assertEqual(self.close([], {}), ([], None))
+
+
+class StartedByDeskAI(unittest.TestCase):
+    """Whether closing a project may stop a service goes by this run of it, not by its name."""
+
+    STEP = {"type": "service", "unit": "postgresql@18-main.service"}
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patcher = mock.patch.object(servers.routine, "STATE_FILE", Path(folder.name) / "routine-state.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.active = False
+        self.run_id = "first-run"
+
+    def systemctl(self, command, **_kwargs):
+        if "is-active" in command:
+            return mock.Mock(returncode=0 if self.active else 3)
+        if "start" in command:
+            self.active = True
+        return mock.Mock(returncode=0, stdout=f"{self.run_id}\n")
+
+    def setup_runs(self):
+        with mock.patch.object(servers.routine.subprocess, "run", side_effect=self.systemctl):
+            servers.routine.run({"steps": [self.STEP]}, lambda *_a: None, lambda _m: None)
+
+    def ours(self):
+        with mock.patch.object(servers.routine.subprocess, "run", side_effect=self.systemctl):
+            return servers.routine.started_by_deskai(self.STEP["unit"])
+
+    def test_what_setup_started(self):
+        self.setup_runs()
+        self.assertTrue(self.ours())
+
+    def test_not_what_was_already_on(self):
+        self.active = True
+        self.setup_runs()
+        self.assertFalse(self.ours())
+
+    def test_not_after_it_started_again(self):
+        self.setup_runs()
+        self.run_id = "after-you-restarted-it-or-a-reboot"
+        self.assertFalse(self.ours())
+
+    def test_not_what_it_never_heard_of(self):
+        self.assertFalse(self.ours())
 
     def test_a_folder_with_a_similar_name_isnt_inside(self):
         self.assertFalse(servers.session.inside("/work/app-old", "/work/app"))

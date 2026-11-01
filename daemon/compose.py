@@ -80,16 +80,46 @@ def containers_of(folder):
     return set(CONTAINER_NAME.findall(_text(folder, COMPOSE_FILES)))
 
 
+# Where a project says what it connects to: DB_HOST=x, - REDIS_HOST=x, {DB_HOST: x}, network_mode: container:x. Not everything
+# with the same letters in it: image: redis:7, ./redis:/data, DB_CONNECTION=mysql, network_mode: service:x or a comment.
+REACHES = re.compile(r"""(?:^\s*(?:export\s+|-\s+)?|[{,]\s*)["']?(?!hostname\b|extra_hosts\b)
+                         (?:[\w.-]*(?:HOST|SERVER|ADDR|URL|URI|DSN|ENDPOINT|BROKER|CONNECTION_?STRING)[\w.-]*|network_mode)
+                         ["']?\s*[=:]\s*(?![./]|service:)["']?([^\s}\]"']+)""", re.I | re.X)
+LINKS = re.compile(r"^\s*(?:external_links|links|volumes_from)\s*:\s*(.*)$")
+# What a container runs can wait for or ask another one, as a host and port or after -h: wait-for x:3306, mysqladmin ping -h x.
+RUNS = re.compile(r"^\s*(?:command|entrypoint|test)\s*:\s*(.*)$")
+RUN_HOST = re.compile(r"""(?:-h|--host)[=\s"',]+([\w.-]+)|([\w.-]+:\d+)(?![\w.-])""")
+# Under any name, a URL says its host, and the rest of it is other things: redis://localhost:6379 is not about a container called redis.
+URL = re.compile(r"""[a-z][\w+.-]*://(?:[^/@\s"']*@)?([^/?#\s"']*)[^\s"']*""", re.I)
+
+
+def _what_it_reaches(text):
+    """The parts of a Compose or .env file that say what the project connects to."""
+    found, listing = [], None
+    for line in text.splitlines():
+        line = re.sub(r"(?:^|\s)#.*$", "", line)
+        found += URL.findall(line)
+        link, run = LINKS.match(line), RUNS.match(line)
+        if link or run:
+            listing, line = (LINKS, link.group(1)) if link else (RUNS, run.group(1))
+        elif not (listing and line.strip().startswith("-")):
+            listing = listing if not line.strip() else None
+            found += [URL.sub("", value) for value in REACHES.findall(line)]
+            continue
+        found += [line] if listing is LINKS else [m.group(1) or m.group(2) for m in RUN_HOST.finditer(line)]
+    return "\n".join(found)
+
+
 def needed(name, found):
     """{project: [containers]} this one needs running first, in order: the containers of other projects
-    it reaches by name, like DB_HOST=shared-db_mysql in its .env or its Compose file."""
+    it connects to by name, like DB_HOST=shared-db_mysql in its .env or its Compose file."""
     folder = found[name]
-    text = _text(folder, COMPOSE_FILES) + "\n" + _text(folder, (".env",))
+    text = _what_it_reaches(_text(folder, COMPOSE_FILES) + "\n" + _text(folder, (".env",)))
     others = {other: containers_of(path) for other, path in found.items() if other != name}
     wanted = {}
     for container in sorted(set().union(*others.values()) - containers_of(folder)) if others else ():
         # A whole name: "${DB_HOST:-shared-db_mysql}" counts, "old-shared-db_mysql" doesn't.
-        if re.search(rf"(?<![\w.])(?<!\w-){re.escape(container)}(?![\w.-])", text):
+        if re.search(rf"(?<![\w.])(?<!\w-){re.escape(container)}(?![\w.@-])", text):
             owner = _owner(container, [other for other, names in others.items() if container in names], found)
             wanted.setdefault(owner, []).append(container)
     return wanted

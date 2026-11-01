@@ -169,6 +169,11 @@ class Watch:
         with self.lock:
             return [dict(item) for item in self.items.values() if item["kind"] == MANUAL and session.inside(item["cwd"], folder)]
 
+    def stop_service(self, unit):
+        """Stops a system service, on the dock or not."""
+        return self.stop(unit) if self.get(unit) else \
+            subprocess.run(["systemctl", "stop", unit], capture_output=True, timeout=120).returncode == 0
+
     def restart(self, unit):
         """Starts it again and waits for it to answer. Returns whether it did. One you started yourself
         comes back as DeskAI's own, since your terminal can't be asked to run it again."""
@@ -202,8 +207,9 @@ class Watch:
 
 
 def close_project(watch, folder):
-    """Stops a project's servers, and its database unless a project that's still running uses it too.
-    Returns what happened: [(label, "stopped" | "failed" | "kept", the project keeping it, or "")]."""
+    """Stops a project's servers, and its database if DeskAI started it and no project that's still running uses it.
+    Returns what happened, [(label, "stopped" | "failed" | "kept", the project keeping it, or "")], and the database
+    that isn't DeskAI's to stop without asking, or None."""
     watch.scan()
     running = session.servers()
     mine = [s for s in running if session.inside(s["cwd"], folder)]
@@ -213,17 +219,18 @@ def close_project(watch, folder):
         ok = watch.stop(server["unit"])
         report.append((routine.label({"type": "server", **server}), "stopped" if ok else "failed", ""))
     database = routine.database_service(folder)
-    if database and subprocess.run(["systemctl", "is-active", "--quiet", database["unit"]]).returncode == 0:
-        label = routine.label({"type": "service", **database})
-        sharing = next((os.path.basename(s["cwd"]) for s in others
-                        if (routine.database_service(s["cwd"]) or {}).get("unit") == database["unit"]), "")
-        if sharing:
-            report.append((label, "kept", sharing))
-        else:
-            ok = watch.stop(database["unit"]) if watch.get(database["unit"]) else \
-                subprocess.run(["systemctl", "stop", database["unit"]], capture_output=True, timeout=120).returncode == 0
-            report.append((label, "stopped" if ok else "failed", ""))
-    return report
+    if not database or subprocess.run(["systemctl", "is-active", "--quiet", database["unit"]]).returncode != 0:
+        return report, None
+    label = routine.label({"type": "service", **database})
+    sharing = next((os.path.basename(s["cwd"]) for s in others
+                    if (routine.database_service(s["cwd"]) or {}).get("unit") == database["unit"]), "")
+    if sharing:
+        report.append((label, "kept", sharing))
+    elif routine.started_by_deskai(database["unit"]):
+        report.append((label, "stopped" if watch.stop_service(database["unit"]) else "failed", ""))
+    else:
+        return report, {"unit": database["unit"], "label": label, "kind": "service"}
+    return report, None
 
 
 def _git(folder, *args):

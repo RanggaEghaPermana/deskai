@@ -310,10 +310,17 @@ def read_json(path):
         return None
 
 
+def read_modes():
+    """What's in modes.json, or {} if it isn't an object: gone, or broken."""
+    modes = read_json(MODES_FILE)
+    return modes if isinstance(modes, dict) else {}
+
+
 def current_choices():
     """The settings an earlier install left, to start the setup window from."""
-    modes = read_json(MODES_FILE) or {}
-    backend = (modes.get("llm") or {}).get("backend", "")
+    modes = read_modes()
+    llm = modes.get("llm")
+    backend = llm.get("backend", "") if isinstance(llm, dict) else ""
     ai = {v: k for k, v in BACKENDS.items()}.get(backend, "")
     if backend == "auto":
         ai = "api" if has_api_key() else "claude" if find_claude() else "ollama" if find_ollama() else "none"
@@ -396,12 +403,21 @@ def _write_private_json(path, data):
     _write_private(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
+def _keep_broken_config():
+    """Starting over replaces the file, and one that can't be read may still have your own modes in it."""
+    if MODES_FILE.exists() and MODES_FILE.stat().st_size:
+        kept = MODES_FILE.with_name(f"{MODES_FILE.name}.broken-{datetime.now():%Y%m%d-%H%M%S}")
+        shutil.copy2(MODES_FILE, kept)
+        print(f"modes.json can't be read, so the old one is kept as {kept}", file=sys.stderr)
+
+
 def _write_config(app_dir, options):
     """modes.json with this language and AI choice, keeping any modes you already have."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     defaults = app_dir / "extension" / UUID / "modes.default.json"
-    modes = read_json(MODES_FILE)
+    modes = read_modes()
     if not modes:
+        _keep_broken_config()
         modes = json.loads(defaults.read_text())
         try:
             personalize.personalize(modes)
@@ -410,7 +426,7 @@ def _write_config(app_dir, options):
     modes["language"] = options.language
     # Claude's login on "auto": if Claude ever stops working and Ollama is set up, it carries on with that.
     backend = "auto" if options.ai == "claude" and not has_api_key() else BACKENDS[options.ai]
-    modes.setdefault("llm", {})["backend"] = backend
+    modes["llm"] = {**(modes["llm"] if isinstance(modes.get("llm"), dict) else {}), "backend": backend}
     _write_private_json(MODES_FILE, modes)
     routine = read_json(ROUTINE_FILE) or {}
     routine["enabled"] = options.routine
@@ -693,7 +709,7 @@ def main():
         parser.error("use the setup window for a normal install (./setup.sh), or --dev for a developer one")
     choices = current_choices()
     # A developer install starts from whatever AI is around, and keeps the settings already there.
-    options = Options(dev=True, keep_config=bool(read_json(MODES_FILE)), language=choices["language"] or "en",
+    options = Options(dev=True, keep_config=bool(read_modes()), language=choices["language"] or "en",
                       ai=choices["ai"] or ("claude" if find_claude() else "none"))
     if not run_steps(install_steps(options), show):
         sys.exit(1)

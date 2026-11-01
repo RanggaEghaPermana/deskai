@@ -12,6 +12,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -213,6 +214,7 @@ class Brain:
         self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
         self.dock_seen = False
+        self.config_told = None
         self.routine_running = None  # the setup going on right now
         self.guide_tries = 0
         self.whatsapp_checked = False
@@ -453,7 +455,8 @@ class Brain:
         # A small local model lets nearly everything through (11 of 14 real ones Claude held), so it
         # doesn't get to judge these. They're safe in the tray, and the first time someone new lands
         # there, you get asked.
-        if self.llm.backend == "ollama" or not self.config.llm["triage_notifications"] or not self._llm_ready():
+        if self.llm.backend == "ollama" or not self.config.llm["triage_notifications"] or self._kept_from_the_model(app, title) or \
+                not self._llm_ready():
             self._maybe_ask_sender(notification_id, app, title, body)
             return
         prompt = brain.notification_prompt(self.mode, mode, self.config.modes(), app, title, body)
@@ -461,6 +464,13 @@ class Brain:
         mode_at = self.mode
         future.add_done_callback(
             lambda f: GLib.idle_add(self._on_triaged, f, notification_id, app, title, body, mode_at))
+
+    def _kept_from_the_model(self, *said):
+        """Whether this is about an app under llm.exclude_apps. A notification only says the app's name, or a browser's and its
+        extension's in the title, and a window's id depends on how the app was installed: deb, flatpak or snap."""
+        text = "\n".join(filter(None, said)).lower()
+        return any(len(name) > 2 and re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", text)
+                   for app_id in self.config.llm["exclude_apps"] for name in launcher.names_of(app_id))
 
     def _maybe_ask_sender(self, notification_id, app, title, body):
         now = time.monotonic()
@@ -1263,9 +1273,9 @@ class Brain:
             if setting_up:
                 setting_up["thread"].join(timeout=ROUTINE_STOP_WAIT_S)
             try:
-                report = servers.close_project(self.watch, path)
+                report, database = servers.close_project(self.watch, path)
                 terminals = session.project_terminals(path)
-                hand = self.watch.hand_started_in(path)
+                hand = self.watch.hand_started_in(path) + ([database] if database else [])
             except (OSError, subprocess.SubprocessError, ValueError) as e:
                 log.warning("command: can't close %s: %s", path, e)
                 GLib.idle_add(self._command_failed, e)
@@ -1281,7 +1291,7 @@ class Brain:
                           ([self._say("project_unpushed", count=unpushed)] if unpushed else []))
 
     def _project_closed(self, path, report, terminals, hand, git=None):
-        """Servers you started yourself don't get stopped without asking. If nobody answers, they keep running."""
+        """What DeskAI didn't start doesn't get stopped without asking. If nobody answers, it keeps running."""
         if not hand:
             return self._project_report(path, report, terminals, git)
         self.closing_hand = {"path": path, "report": report, "terminals": terminals, "items": hand, "git": git}
@@ -1304,7 +1314,8 @@ class Brain:
             report = list(closing["report"])
             for item in closing["items"]:
                 try:
-                    state = ("stopped" if self.watch.stop(item["unit"]) else "failed") if stop else "left"
+                    stopping = self.watch.stop_service if item["kind"] == "service" else self.watch.stop
+                    state = ("stopped" if stopping(item["unit"]) else "failed") if stop else "left"
                 except (OSError, subprocess.SubprocessError) as e:
                     log.warning("command: can't stop %s: %s", item["label"], e)
                     state = "failed"
@@ -1647,6 +1658,17 @@ class Brain:
             self.llm = brain.LLM(self.config.llm)
             self.llm_warned = False
             log.info("config reloaded · AI: %s", self.llm.describe())
+        self._tell_config_problem()
+
+    def _tell_config_problem(self):
+        """Once for each thing wrong with modes.json, as soon as there's a dock to say it on."""
+        if self.config.problem == self.config_told or not self.dock_seen:
+            return
+        self.config_told = self.config.problem
+        if self.config.problem:
+            going_by = "config_keeping" if self.config.data["modes"] else "config_defaults"
+            self.card({"id": "config-problem", "kind": "command", "title": self._say("config_problem"),
+                       "text": f"{self.config.problem_in_words()}\n{self._say(going_by)}", "actions": [], "timeout": 30})
 
     def _llm_ready(self):
         return self.llm.available and time.monotonic() >= self.llm_paused_until
@@ -1701,7 +1723,7 @@ class Brain:
 
         # A small local model calls nearly everything a distraction once titles get ambiguous (it agreed
         # with Claude on 12 of 113 real windows, and flagged 98). It doesn't get to judge windows.
-        if self.llm.backend == "ollama" or act.app_id in self.config.llm["exclude_apps"] or not self._llm_ready():
+        if self.llm.backend == "ollama" or self._kept_from_the_model(act.app_id, act.app_name, act.title) or not self._llm_ready():
             self._apply(act, brain.verdict("neutral", source="default"))
             return False
         if key in self.inflight:
@@ -1811,7 +1833,7 @@ class Brain:
         idle_ms = self._idle_ms() if idle_ms is None else idle_ms
         kind = "idle" if idle_ms > IDLE_AFTER_MS else (act.verdict or "neutral")
         self.stats.add(self.mode, kind, elapsed, act.label)
-        if kind == "neutral" and act.source == "default" and act.app_id not in self.config.llm["exclude_apps"]:
+        if kind == "neutral" and act.source == "default" and not self._kept_from_the_model(act.app_id, act.app_name, act.title):
             self.unsure.note(self.mode, act.app_id, act.app_name, act.title, elapsed)
 
     def _safely(self, part, *args):

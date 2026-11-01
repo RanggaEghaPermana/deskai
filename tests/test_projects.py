@@ -439,6 +439,49 @@ class EverydayWords(unittest.TestCase):
         self.assertEqual(self.act("matiin toko"), {"type": "close_project", "project": "toko"})
         self.assertEqual(self.act("nyalain toko"), {"type": "setup_project", "project": "toko"})
 
+    def test_what_you_say_about_other_things_doesnt_touch_a_project(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("youtube-clone", "database-tugas", "postgres-notes", "sistem-gudang", "shopping-cart",
+                                                      "main-app", "docker-lab", "kalkulator-app")}
+        for text in ("tutup youtube", "matiin youtube", "tutup tab gudang", "matiin database", "matiin db", "stop postgres", "matiin docker",
+                     "tutup server", "tutup kalkulator", "tutup art", "tutup mainan", "youtube udah kelar", "database selesai", "nyalain database",
+                     "siapin youtube"):
+            action = self.act(text)
+            self.assertNotIn(action and action["type"], ("close_project", "setup_project"), text)
+
+    def test_their_own_names_still_mean_them(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("youtube-clone", "database-tugas", "postgres-notes", "sistem-gudang", "shopping-cart",
+                                                      "main-app", "MyBakery")}
+        for text, project in (("tutup youtube-clone", "youtube-clone"), ("tutup youtube clone", "youtube clone"), ("matiin database tugas", "database tugas"),
+                              ("stop postgres-notes", "postgres-notes"), ("tutup gudang", "gudang"), ("tutup gudnag", "gudnag"), ("tutup gudang aja", "gudang"),
+                              ("tutup shopping", "shopping"), ("tutup cart", "cart"), ("tutup shopping cart", "shopping cart"), ("tutup main", "main"),
+                              ("tutup bakery", "bakery"), ("tutup the gudang", "the gudang")):
+            self.assertEqual(self.act(text), {"type": "close_project", "project": project}, text)
+
+    def test_indonesian_endings_on_a_name(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("sistem-gudang", "absensi", "toko-online")}
+        for text, project in (("matiin gudangnya", "gudangnya"), ("stop absensinya", "absensinya"), ("tutup project gudangnya", "gudangnya"),
+                              ("tutup gudangku", "gudangku"), ("tutup tokonya", "tokonya"), ("tutup absensimu", "absensimu")):
+            action = self.act(text)
+            self.assertEqual(action, {"type": "close_project", "project": project}, text)
+            self.assertEqual(commands.find_project(project, self.KNOWN), f"/w/{next(k for k in self.KNOWN if project[:4] in k)}", text)
+        self.assertTrue(commands._names_project({"type": "close_project", "project": "sistem-gudang"}, "matiin gudangnya", self.KNOWN))
+
+    def test_the_same_endings_on_what_isnt_a_project(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("youtube-clone", "database-tugas", "chrome-extension")}
+        for text in ("tutup youtubenya", "matiin databasenya", "tutup chromenya"):
+            self.assertIsNone(self.act(text), text)
+
+    def test_names_with_the_word_project_in_them(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("project-x", "my-project", "projectzero")}
+        for text, project in (("tutup project-x", "project-x"), ("matiin project-x", "project-x"), ("tutup projectzero", "projectzero")):
+            self.assertEqual(self.act(text), {"type": "close_project", "project": project}, text)
+
+    def test_words_in_a_name_written_together(self):
+        self.KNOWN = {name: f"/w/{name}" for name in ("ERPSystem", "APIGateway", "myShopApp", "webshop")}
+        for text, project in (("tutup system", "system"), ("tutup gateway", "gateway"), ("tutup shop app", "shop app"), ("tutup erp", "erp")):
+            self.assertEqual(self.act(text), {"type": "close_project", "project": project}, text)
+        self.assertIsNone(self.act("tutup hop"), "letters from inside a word aren't a name")
+
     def test_nor_does_the_model_get_to_close_it(self):
         action = {"type": "close_project", "project": "chrome-extension"}
         with mock.patch.object(commands, "_is_an_app", side_effect=lambda name: name.lower() == "chrome"):

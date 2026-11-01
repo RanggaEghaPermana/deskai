@@ -772,10 +772,17 @@ def _simple(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+ENDING = re.compile(r"(?:nya|ku|mu)$")  # in Indonesian, "gudangnya" and "gudangku" are about gudang
+
+
+def _project_word(name):
+    return _simple(re.sub(r"\b(project|proyek|projek|folder|the)\b", "", os.path.basename((name or "").rstrip("/")), flags=re.I))
+
+
 def find_project(name, known):
     """The project a name means, for a model (or fingers) only roughly right: the name itself, the last
     part of a path it made up, the one project that contains it, or the one it's a close misspelling of."""
-    word = _simple(re.sub(r"\b(project|proyek|projek|folder|the)\b", "", os.path.basename((name or "").rstrip("/")), flags=re.I))
+    word = _project_word(name)
     if not word:
         return None
     exact = [path for project, path in known.items() if _simple(project) == word]
@@ -784,7 +791,10 @@ def find_project(name, known):
         return exact[0] if exact else partial[0] if len(partial) == 1 else None
     close = [path for project, path in known.items()
              if difflib.get_close_matches(word, [_simple(project), *map(_simple, re.split(r"[^a-zA-Z0-9]+", project))], cutoff=0.8)]
-    return close[0] if len(close) == 1 else None
+    if close:
+        return close[0] if len(close) == 1 else None
+    plain = ENDING.sub("", word)
+    return find_project(plain, known) if plain != word and len(plain) >= 3 else None
 
 
 def _is_an_app(name):
@@ -793,15 +803,35 @@ def _is_an_app(name):
     return any(words.search(app.get_name().lower()) for app in Gio.AppInfo.get_all() if app.should_show())
 
 
+# Said about something other than a project, whatever folders there are: "matiin database" with a database-tugas around.
+NOT_A_PROJECT = EVERYDAY | {"database", "databases", "db", "server", "servers", "docker", "container", "containers", "kontainer",
+                            "service", "services", "servis", "file", "files", "berkas"} | \
+    {_simple(word) for word in (*SITES, *DEV_SERVICES, *APP_WORDS)}
+
+
+def _reads_as(word, project):
+    """Whether these letters read as this project's name: from the start of one of its words ("besar" of toko-besar, not
+    "art" of shopping-cart), or a slip of the fingers about as long as what it misses ("gudnag", not "mainan" for main-app)."""
+    parts = [part.lower() for part in re.split(r"[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", project) if part]
+    return any("".join(parts[i:]).startswith(word) for i in range(len(parts))) or \
+        len(word) > 3 and any(abs(len(word) - len(part)) <= 1 and difflib.SequenceMatcher(None, word, part).ratio() >= 0.8
+                              for part in (_simple(project), *parts))
+
+
 def _meant_as_project(name, known):
     """find_project for your own words, on the way that doesn't ask the model: "tutup chrome" is about Chrome even
     with a chrome-extension folder around. A project's whole name still means the project."""
     path = find_project(name, known)
-    if not path or any(_simple(project) == _simple(name) for project in known):
+    if not path or any(_simple(project) in (_simple(name), _project_word(name)) for project in known):
         return path
+    words = [word for word in name.lower().split() if word not in servers.NOT_A_NAME]
+    word = _project_word(" ".join(words))
+    plain = ENDING.sub("", word)
+    project = next(project for project, where in known.items() if where == path)
     # Too short to be part of a name by anything but chance: "stop it" with a kit-ui folder around.
-    return None if _simple(name) in EVERYDAY or len(_simple(name)) < 3 or (name or "").strip().lower() in servers.NOT_A_NAME or \
-        _is_an_app(name) else path
+    if len(word) < 3 or NOT_A_PROJECT.intersection({word, plain, *words}) or any(_is_an_app(said) for said in {name, plain}):
+        return None
+    return path if _reads_as(word, project) or (len(plain) >= 3 and _reads_as(plain, project)) else None
 
 
 def find_app(name):

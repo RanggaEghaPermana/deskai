@@ -8,13 +8,19 @@ what learned from you, then the model.
 import re
 
 
-def _words(*options):
-    return re.compile(r"(?<![\w.-])(?:" + "|".join(options) + r")(?![\w-])", re.I)
+# After a word, these make it a file or a library and not the site: Anime.js, discord.py. "Detik.com" is still Detik.
+NOT_A_FILE = r"(?!\.(?:jsx?|tsx?|py|rs|go|rb|java|php|cs|cpp|c|h|md|json|ya?ml|html?|css|sh|toml|lock|txt)\b)"
 
 
+def _words(*options, then=""):
+    return re.compile(r"(?<![\w.-])(?:" + "|".join(options) + r")(?![\w-])" + then, re.I)
+
+
+# Words that also mean something ordinary only count in the shape the distraction comes in: "Temu | Explore" and "Tas - Temu"
+# but not "Temu Kembali Informasi", "Resep Bubur" but not "Resep obat", "Ramalan Zodiak" but not "Ramalan Penjualan".
 DISTRACTIONS = _words(
     # shopping
-    "lazada", "shopee", "tokopedia", "blibli", "bukalapak", "zalora", "tiktok shop", "aliexpress", "temu",
+    "lazada", "shopee", "tokopedia", "blibli", "bukalapak", "zalora", "tiktok shop", "aliexpress", "temu(?=\\.com| ?[|:]| [-–—] )", "(?<=[-|–] )temu$",
     # watching
     "netflix", "disney\\+", "prime video", "vidio", "wetv", "iqiyi", "viu", "twitch", "nonton", "anime", "sub indo",
     "drakor", "episode \\d+", "bioskop",
@@ -22,11 +28,18 @@ DISTRACTIONS = _words(
     "genshin( impact)?", "mobile legends", "valorant", "roblox", "minecraft", "free fire", "pubg", "steam store",
     # sports and gossip
     "timnas", "liga (inggris|italia|spanyol|champions|1)", "premier league", "hasil pertandingan", "transfer pemain",
-    "gosip", "selebriti", "zodiak", "ramalan", "horoscope", "horoskop",
+    "gosip", "selebriti", "zodiak", "ramalan (?:zodiak|bintang|cinta|jodoh|karier|karir|shio|nasib|tarot|hari ini)", "horoscope", "horoskop",
     # food and leisure
-    "resep", "cookpad",
+    "resep(?! (?:obat|dokter|kacamata|antibiotik|digital|elektronik|sukses|rahasia|bisnis))",
+    "cookpad",
     # feeds
     "instagram", "tiktok", "facebook", "reddit", "pinterest",
+    then=NOT_A_FILE,
+)
+# Learning about a thing is not the same as being distracted by it: "Minecraft modding in Java tutorial".
+LEARNING = _words(
+    "tutorials?", "lectures?", "courses?", "kursus", "kuliah", "materi", "belajar", "jurnal", "journal", "papers?", "skripsi",
+    "khan academy", "coursera", "udemy", "dicoding",
 )
 TECH = _words(
     "documentation", "docs?", "dokumentasi", "api reference", "api", "sdk", "getting started", "upgrade guide", "changelog",
@@ -56,15 +69,24 @@ ASKED_BY_WHEN = re.compile(r"\b(tolong|mohon|please|bisa|can you|could you)\b.*\
                            r"|jam \d+|today|tomorrow|tonight|by \d+)\b", re.I | re.S)
 
 
+def _is_coding(mode):
+    return bool(CODING_MODE.search(f"{mode.get('label', '')} {mode.get('description', '')}"))
+
+
+def about_the_work(mode, title):
+    """Whether a title is about the tools of the trade, in a mode for coding: "Twitter API v2 documentation"."""
+    return _is_coding(mode) and bool(TECH.search(title or ""))
+
+
 def window_verdict(mode, app_id, title):
     """(on_task or off_task, what it is) when a window's plainly one or the other in a focus mode, else None."""
-    coding = bool(CODING_MODE.search(f"{mode.get('label', '')} {mode.get('description', '')}"))
+    coding = _is_coding(mode)
     if coding and app_id and EDITORS.match(app_id):
         return "on_task", ""
     text = title or ""
     tech = TECH.search(text)
     distraction = DISTRACTIONS.search(text)
-    if tech and distraction:
+    if distraction and (tech or LEARNING.search(text)):
         return None  # "Scraping Shopee with Python": a model can read that
     if distraction:
         return "off_task", distraction.group(0).strip().title()

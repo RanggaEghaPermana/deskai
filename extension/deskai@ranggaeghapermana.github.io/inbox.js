@@ -67,6 +67,7 @@ export class Inbox {
     constructor({changed, announce, hush}) {
         this._items = new Map();
         this._sessions = new Map(); // agent session → the window it runs in
+        this._watchedWindows = new Set();
         this._changed = changed;
         this._announce = announce;
         this._hush = hush;
@@ -75,8 +76,26 @@ export class Inbox {
     destroy() {
         for (const item of this._items.values())
             item.notification?.disconnectObject(this);
+        for (const win of this._watchedWindows)
+            win.disconnectObject(this);
+        this._watchedWindows.clear();
         this._items.clear();
         this._sessions.clear();
+    }
+
+    // A window that's gone takes what pointed at it along: there's nothing left to go back to.
+    _watchWindow(win) {
+        if (this._watchedWindows.has(win))
+            return;
+        this._watchedWindows.add(win);
+        win.connectObject('unmanaged', () => {
+            win.disconnectObject(this);
+            this._watchedWindows.delete(win);
+            for (const item of [...this._items.values()]) {
+                if (item.window === win)
+                    this.remove(item.key);
+            }
+        }, this);
     }
 
     // What's here, to pick up again once the screen is unlocked: locking it turns the extension off.
@@ -100,6 +119,8 @@ export class Inbox {
                 this._hush(item.notification);
                 this._follow(item.key, item.notification);
             }
+            if (item.window)
+                this._watchWindow(item.window);
         }
         if (this._items.size)
             this._changed();
@@ -150,6 +171,8 @@ export class Inbox {
             old.notification.disconnectObject(this);
         const item = {...old, ...fields, count: (old?.count ?? 0) + 1, time: Date.now()};
         this._items.set(item.key, item);
+        if (item.window)
+            this._watchWindow(item.window);
         this._changed();
         this._announce(item);
         return item;

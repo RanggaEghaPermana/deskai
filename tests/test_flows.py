@@ -54,6 +54,7 @@ class Fake(deskaid.Brain):
         self.drift_since = self.last_nudge = None
         self.servers_sent = None
         self.dock_seen = False
+        self.config_told = None
         self.routine_running = None
 
     def card(self, spec):
@@ -75,6 +76,89 @@ class Base(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)
         self.brain = Fake(self.folder)
+
+
+class NotificationsAndTheModel(Base):
+    BODY = "Jadwal demo dimajuin"
+
+    def setUp(self):
+        super().setUp()
+        self.brain = Fake(self.folder, backend="claude")
+
+    def sent(self, app, title="Dimas"):
+        self.brain.pool.submit.reset_mock()
+        self.brain.on_notification(1, app, title, self.BODY)
+        return self.brain.pool.submit.called
+
+    def test_the_rest_go_to_it(self):
+        self.assertTrue(self.sent("Slack"))
+
+    def test_a_password_manager_never_does(self):
+        for app in ("KeePassXC", "Bitwarden", "1Password", "keepassxc"):
+            self.assertFalse(self.sent(app, "Entri baru"), app)
+
+    def test_nor_its_browser_extension(self):
+        self.assertFalse(self.sent("Google Chrome", "Bitwarden"))
+
+    def test_by_the_name_it_has_when_its_installed(self):
+        vault = deskaid.launcher.app_info
+        (self.folder / "modes.json").write_text(json.dumps({**json.loads((self.folder / "modes.json").read_text()),
+                                                            "llm": {"exclude_apps": ["com.example.vlt.desktop"]}}))
+        self.brain.config.refresh()
+        with mock.patch.object(deskaid.launcher, "app_info", side_effect=lambda app: mock.Mock(get_name=lambda: "My Vault") if "vlt" in app else vault(app)):
+            self.assertFalse(self.sent("My Vault"))
+        self.assertFalse(self.sent("vlt"))
+
+    def test_your_own_list_adds_to_the_password_managers(self):
+        (self.folder / "modes.json").write_text(json.dumps({**json.loads((self.folder / "modes.json").read_text()),
+                                                            "llm": {"exclude_apps": ["slack.desktop"]}}))
+        self.brain.config.refresh()
+        self.assertFalse(self.sent("Slack"))
+        self.assertFalse(self.sent("Bitwarden"))
+        self.assertTrue(self.sent("Teams"))
+
+    def test_without_any_list_they_stay_out(self):
+        config = {key: value for key, value in json.loads((self.folder / "modes.json").read_text()).items() if key != "llm"}
+        (self.folder / "modes.json").write_text(json.dumps(config))
+        self.brain.config.refresh()
+        self.assertFalse(self.sent("Bitwarden"))
+
+    def test_it_still_asks_you_about_them(self):
+        self.brain.on_notification(1, "Bitwarden", "Dimas", self.BODY)
+        self.assertEqual(self.brain.cards[0]["title"], "Dimas")
+
+    def window(self, app_id, app_name, title="Some window"):
+        self.brain.pool.submit.reset_mock()
+        self.brain.seq = 1
+        self.brain.inflight, self.brain.fits_shown, self.brain.cache = set(), set(), mock.Mock(get=lambda _key: None)
+        self.brain.config.data["modes"]["building"].pop("apps", None)
+        self.brain.activity = deskaid.Activity(1, app_id, app_name, title)
+        self.brain._classify(1)
+        return self.brain.pool.submit.called
+
+    def test_a_window_goes_to_it(self):
+        self.assertTrue(self.window("org.example.Notes.desktop", "Notes"))
+
+    def test_a_password_managers_window_never_does_however_it_was_installed(self):
+        for app_id, name in (("org.keepassxc.KeePassXC.desktop", ""), ("keepassxc_keepassxc.desktop", ""), ("bitwarden_bitwarden.desktop", ""),
+                             ("com.bitwarden.desktop.desktop", ""), ("com.1password.1Password.desktop", ""), ("org.example.vlt.desktop", "Bitwarden")):
+            self.assertFalse(self.window(app_id, name), app_id)
+            self.assertEqual(self.brain.activity.verdict, "neutral", app_id)
+
+    def test_nor_is_it_asked_about_later(self):
+        self.brain.activity = deskaid.Activity(1, "bitwarden_bitwarden.desktop", "", "A secret entry")
+        self.brain.activity.verdict, self.brain.activity.source = "neutral", "default"
+        self.brain.last_tick = time.monotonic() - 1
+        self.brain.stats = mock.Mock()
+        self.brain._account(idle_ms=0)
+        self.assertEqual(self.brain.unsure.seen, {})
+
+    def test_a_short_name_doesnt_catch_every_word(self):
+        (self.folder / "modes.json").write_text(json.dumps({**json.loads((self.folder / "modes.json").read_text()),
+                                                            "llm": {"exclude_apps": ["my_app.desktop"]}}))
+        self.brain.config.refresh()
+        self.assertFalse(self.sent("my_app.desktop"))
+        self.assertTrue(self.sent("My Documents"))
 
 
 class Notifications(Base):
@@ -477,6 +561,41 @@ class ClosingWithHandStarted(Base):
         self.assertIn("server :8000 tetep jalan", self.brain.cards[-1]["text"])
         self.assertIn("Nggak ada", self.brain.cards[-1]["title"])
 
+    DATABASE = {"unit": "postgresql@18-main.service", "label": "postgresql@18-main", "kind": "service"}
+
+    def test_closing_hands_the_database_over_to_be_asked_about(self):
+        with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
+                mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
+                mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain._close_project("app")
+        with mock.patch.object(deskaid.servers, "close_project", return_value=([], self.DATABASE)), \
+                mock.patch.object(deskaid.session, "project_terminals", return_value=[]), \
+                mock.patch.object(self.brain.watch, "hand_started_in", return_value=[self.ITEM]), \
+                mock.patch.object(deskaid.servers, "git_state", return_value=None), \
+                mock.patch.object(deskaid.GLib, "idle_add") as idle:
+            thread.call_args.kwargs["target"]()
+        self.assertEqual(idle.call_args[0][4], [self.ITEM, self.DATABASE])
+
+    def test_a_database_is_asked_about_too(self):
+        self.brain._project_closed("/w/app", [("vite :5173", "stopped", "")], [], [self.DATABASE])
+        self.assertIn("postgresql@18-main", self.brain.cards[0]["text"])
+        self.assertIn("bukan DeskAI", self.brain.cards[0]["text"])
+        self.assertEqual([a["id"] for a in self.brain.cards[0]["actions"]], ["project:keep-hand", "project:stop-hand"])
+
+    def test_stopping_the_database_when_you_say_so(self):
+        self.brain._project_closed("/w/app", [], [], [self.DATABASE])
+        with mock.patch.object(self.brain.watch, "stop_service", return_value=True) as stopping:
+            self.answer("project:stop-hand")
+        stopping.assert_called_once_with(self.DATABASE["unit"])
+        self.assertIn("✓ postgresql@18-main", self.brain.cards[-1]["text"])
+
+    def test_leaving_the_database(self):
+        self.brain._project_closed("/w/app", [], [], [self.DATABASE])
+        with mock.patch.object(self.brain.watch, "stop_service") as stopping:
+            self.answer("project:keep-hand")
+        stopping.assert_not_called()
+        self.assertIn("postgresql@18-main tetep jalan", self.brain.cards[-1]["text"])
+
     def test_without_any_it_says_what_it_did_right_away(self):
         self.brain._project_closed("/w/app", [("vite :5173", "stopped", "")], [], [])
         self.assertIn("✓ vite :5173", self.brain.cards[0]["text"])
@@ -532,7 +651,7 @@ class ClosingWithWorkNotInGit(Base):
 
     def test_closing_a_project_asks_git_about_its_folder(self):
         with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \
-                mock.patch.object(deskaid.servers, "close_project", return_value=self.REPORT), \
+                mock.patch.object(deskaid.servers, "close_project", return_value=(self.REPORT, None)), \
                 mock.patch.object(deskaid.session, "project_terminals", return_value=[]), \
                 mock.patch.object(self.brain.watch, "hand_started_in", return_value=[]), \
                 mock.patch.object(deskaid.servers, "git_state", return_value=(4, 0)) as state, \
@@ -586,7 +705,7 @@ class ClosingWhileSettingUp(Base):
         self.start()
         running = self.brain.routine_running
         closing = self.close()
-        with mock.patch.object(deskaid.servers, "close_project", return_value=[]), \
+        with mock.patch.object(deskaid.servers, "close_project", return_value=([], None)), \
                 mock.patch.object(deskaid.session, "project_terminals", return_value=[]), \
                 mock.patch.object(self.brain.watch, "hand_started_in", return_value=[]), \
                 mock.patch.object(deskaid.servers, "git_state", return_value=None), \
@@ -655,6 +774,65 @@ class ConfigReload(unittest.TestCase):
             config = brain.Config(path)
             self.assertTrue(config.refresh())
             self.assertFalse(config.refresh())
+
+
+class ABrokenConfig(Base):
+    def setUp(self):
+        super().setUp()
+        self.good = (self.folder / "modes.json").read_text()
+        self.brain.dock_seen = True
+        self.broken('{"modes": {')
+
+    def broken(self, text):
+        (self.folder / "modes.json").write_text(text)
+
+    def look(self):
+        with mock.patch.object(deskaid.brain, "LLM"):
+            deskaid.Brain._refresh_config(self.brain)
+
+    def told(self):
+        return [card for card in self.brain.cards if card["id"] == "config-problem"]
+
+    def test_you_hear_about_it_once(self):
+        for _ in range(3):
+            self.look()
+        self.assertEqual(len(self.told()), 1)
+        self.assertIn("Ada yang salah di modes.json", self.told()[0]["title"])
+        self.assertIn("baris 1", self.told()[0]["text"])
+        self.assertIn("versi terakhir", self.told()[0]["text"])
+
+    def test_and_again_when_its_something_else_that_is_wrong(self):
+        self.look()
+        self.broken(json.dumps({**json.loads(self.good), "dock": None}))
+        self.look()
+        self.assertEqual(len(self.told()), 2)
+        self.assertIn("Cek dock", self.told()[1]["text"])
+
+    def test_and_again_if_it_breaks_after_being_fixed(self):
+        self.look()
+        self.broken(self.good)
+        self.look()
+        self.assertEqual(len(self.told()), 1)
+        self.broken('{"modes": {')
+        self.look()
+        self.assertEqual(len(self.told()), 2)
+
+    def test_it_waits_for_a_dock_to_say_it_on(self):
+        self.brain.dock_seen = False
+        self.look()
+        self.assertEqual(self.told(), [])
+        self.brain.dock_seen = True
+        self.look()
+        self.assertEqual(len(self.told()), 1)
+
+    def test_with_nothing_good_to_go_by_it_says_so(self):
+        self.brain.config = brain.Config(self.folder / "modes.json")
+        self.look()
+        self.assertIn("default modes", self.told()[0]["text"])
+
+    def test_it_says_nothing_raw(self):
+        self.look()
+        self.assertNotIn("Expecting", self.told()[0]["text"])
 
 
 class WhyASetupFailed(Base):

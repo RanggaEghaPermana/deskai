@@ -130,6 +130,57 @@ class Needs(unittest.TestCase):
         self.assertEqual(compose.needs("notes", self.found), [])  # another name that only ends the same
         self.assertEqual(sorted(compose.dependents("infra", self.found)), ["BLOG-SITE", "shop-dev"])
 
+    def needs_with(self, compose_text="", env=""):
+        (self.root / "notes" / "docker-compose.yml").write_text(f"services:\n  app:\n    build: .\n{compose_text}")
+        (self.root / "notes" / ".env").write_text(env)
+        return compose.needs("notes", self.found)
+
+    def test_saying_how_it_connects_counts(self):
+        for compose_text, env in (("", "DB_HOST=shared-db_mysql\n"), ("", "export DB_HOST=shared-db_mysql\n"), ("", 'db_host="shared-db_mysql"\n'),
+                                  ("", "DATABASE_URL=postgres://me:pw@shared_postgres:5432/notes\n"),
+                                  ("", "KAFKA_BOOTSTRAP_SERVERS=shared-db_mysql:9092\n"),
+                                  ("    environment:\n      - DB_HOST=shared-db_mysql\n", ""),
+                                  ('    environment:\n      "DB_HOST": "shared-db_mysql"\n', ""),
+                                  ("    external_links:\n      - shared-db_mysql:db\n", ""),
+                                  ("    links:\n\n      - shared-db_mysql\n", ""),
+                                  ("    external_links: [shared-db_mysql]\n", ""),
+                                  ("    network_mode: container:shared-db_mysql\n", ""),
+                                  ("    environment: {DB_HOST: shared-db_mysql}\n", ""),
+                                  ("    environment: {OTHER: 1, DB_HOST: shared-db_mysql, MORE: 2}\n", ""),
+                                  ("", "ELASTICSEARCH_NODE=http://shared-db_mysql:9200\n"), ("", "AMQP=amqp://me:pw@shared-db_mysql:5672/vhost\n"),
+                                  ("", "MONGO=mongodb://other:27017,shared-db_mysql:27017/db\n"), ("", "JDBC=jdbc:mysql://shared-db_mysql:3306/x\n"),
+                                  ("    command: wait-for shared-db_mysql:3306 -- run\n", ""),
+                                  ("    entrypoint: dockerize -wait tcp://shared-db_mysql:3306\n", ""),
+                                  ('    healthcheck:\n      test: ["CMD", "mysqladmin", "ping", "-h", "shared-db_mysql"]\n', ""),
+                                  ("    command:\n      - wait-for\n      - shared-db_mysql:3306\n", ""),
+                                  ("    command: php artisan queue --host=shared-db_mysql\n", "")):
+            self.assertEqual(self.needs_with(compose_text, env), ["infra"], compose_text + env)
+
+    def test_the_same_letters_elsewhere_dont(self):
+        for compose_text, env in (("    image: shared-db_mysql:7\n", ""), ("    volumes:\n      - ./shared-db_mysql:/data\n", ""),
+                                  ("    ports:\n      - 3306:3306 # shared-db_mysql\n", ""),
+                                  ("    # DB_HOST: shared-db_mysql\n", ""), ("    hostname: shared-db_mysql\n", ""),
+                                  ("    labels:\n      - owner=shared-db_mysql\n", ""),
+                                  ("    external_links:\n      - other\n    volumes:\n      - shared-db_mysql:/data\n", ""),
+                                  ("", "DB_CONNECTION=shared-db_mysql\n"), ("", "DB_DATABASE=shared_postgres\n"), ("", "# DB_HOST=shared-db_mysql\n"),
+                                  ("", "DB_HOST=db # was shared-db_mysql\n"), ("", "MAIL_FROM_ADDRESS=shared_postgres@example.com\n"),
+                                  ("", "# see http://shared-db_mysql:3306\n"), ("    build: . # from http://shared-db_mysql:1\n", ""),
+                                  ("    network_mode: service:shared-db_mysql\n", ""), ("", "SOCKET_HOST=./shared-db_mysql\n"),
+                                  ("    image: registry-host:5000/shared-db_mysql:7\n", ""), ("    command: shared-db_mysql --port 1\n", ""),
+                                  ("    command:\n      - shared-db_mysql\n", ""), ("    build: https://example.com/shared-db_mysql.git\n", "")):
+            self.assertEqual(self.needs_with(compose_text, env), [], compose_text + env)
+
+    def test_a_url_is_about_its_host(self):
+        (self.root / "infra" / "docker-compose.yml").write_text(
+            "services:\n  a:\n    container_name: redis\n  b:\n    container_name: postgres\n  c:\n    container_name: app\n")
+        found = compose.projects()
+        for env, wanted in (("REDIS_URL=redis://localhost:6379\n", {}), ("CACHE_URL=redis://127.0.0.1:6379/0\n", {}),
+                            ("DATABASE_URL=postgres://me:pw@localhost:5432/app\n", {}), ("DATABASE_URL=postgres://postgres@localhost/x\n", {}),
+                            ("REDIS_URL=redis://redis:6379\n", {"infra": ["redis"]}),
+                            ("DATABASE_URL=postgres://me:pw@postgres:5432/app\n", {"infra": ["postgres"]})):
+            (self.root / "notes" / ".env").write_text(env)
+            self.assertEqual(compose.needed("notes", found), wanted, env)
+
     def test_the_one_on_top_owns_a_container_two_define(self):
         self.assertEqual(compose._owner("shared-db_mysql", ["team/infra", "infra"], self.found), "infra")
 

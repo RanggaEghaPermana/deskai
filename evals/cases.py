@@ -26,6 +26,22 @@ WINDOWS = [  # (app id, app name, title, acceptable verdicts) in the default Bui
     ("spotify.desktop", "Spotify", "Spotify - Daily Mix 1", {"neutral", "off_task"}),
     ("libreoffice-calc.desktop", "LibreOffice Calc", "laporan.ods - LibreOffice Calc", {"neutral", "on_task"}),
     ("org.gnome.Nautilus.desktop", "Files", "Downloads", {"neutral"}),
+    # A word from a list inside something else. These all used to count as distractions, or as work.
+    ("org.gnome.Ptyxis.desktop", "Terminal", "~/projects/discord-bot", {"on_task"}),
+    ("code.desktop", "Visual Studio Code", "discord-bot - Visual Studio Code", {"on_task"}),
+    (CHROME, "Google Chrome", "Twitter API v2 documentation", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Docs / XState", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Invite teammates", {"neutral"}),
+    (CHROME, "Google Chrome", "My npm-free life", {"neutral"}),
+    (CHROME, "Google Chrome", "Episode 4: Integrals - Khan Academy", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Ramalan Penjualan Q3", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Temu Kembali Informasi", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Resep obat dan dosis - Jurnal Farmasi", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Minecraft modding in Java tutorial", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Anime.js animation timeline", {"on_task", "neutral"}),
+    (CHROME, "Google Chrome", "Resep Kopi Susu Kekinian", {"off_task"}),
+    (CHROME, "Google Chrome", "Naruto Episode 220", {"off_task"}),
+    ("vivaldi-stable.desktop", "Vivaldi", "A friend - Instagram", {"off_task"}),
 ]
 NOTIFICATIONS = [  # (app, title, body, let through?)
     ("Bank", "Kode OTP", "Kode OTP kamu 123456, berlaku 5 menit", True),
@@ -50,7 +66,8 @@ NOTIFICATIONS = [  # (app, title, body, let through?)
     ("News", "Berita hari ini", "Bisa jadi ini ponsel terbaik tahun ini", False),
 ]
 PROJECTS = {"toko-online": "/projects/toko-online", "sistem-gudang": "/projects/sistem-gudang",
-            "blog-saya": "/projects/blog-saya", "aplikasi-kasir": "/projects/aplikasi-kasir"}
+            "blog-saya": "/projects/blog-saya", "aplikasi-kasir": "/projects/aplikasi-kasir",
+            "youtube-clone": "/projects/youtube-clone", "database-tugas": "/projects/database-tugas", "shopping-cart": "/projects/shopping-cart"}
 FOCUS = "245 minutes focused (Building 245 minutes). Distracted for 12 more minutes, 15 minutes in other modes. Away from the keyboard for 30 minutes, not counted"
 APPS = """firefox.desktop — Firefox
 google-chrome.desktop — Google Chrome
@@ -152,4 +169,15 @@ COMMANDS = [  # (what's typed, what a right answer does: the action's type and w
     ("restart the server", ("server_ask", {"op": "restart"})),
     ("stop it", ("nothing", {})),
     ("kill it", ("nothing", {})),
+    # Words for other things, with a folder that has them in its name. These used to close that project, without asking.
+    ("tutup youtube", ("nothing", {})),
+    ("tutup tab gudang", ("nothing", {})),
+    ("matiin database", ("nothing", {})),
+    ("tutup art", ("nothing", {})),
+    ("tutup youtube-clone", ("close_project", {"project": "/projects/youtube-clone"})),
+    ("matiin database tugas", ("close_project", {"project": "/projects/database-tugas"})),
+    ("tutup cart", ("close_project", {"project": "/projects/shopping-cart"})),
+    ("matiin gudangnya", ("close_project", {"project": "/projects/sistem-gudang"})),
+    ("tutup tokonya", ("close_project", {"project": "/projects/toko-online"})),
+    ("tutup youtubenya", ("nothing", {})),
 ]

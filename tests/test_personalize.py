@@ -1,9 +1,11 @@
 """Filling a new install's modes with the apps you use. Run with: python3 -m unittest discover tests"""
 
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -150,6 +152,42 @@ class WritingConfig(unittest.TestCase):
     def test_modes_you_already_have_stay(self):
         installer.MODES_FILE.write_text(json.dumps({"modes": {"building": {"apps": ["mine.desktop"]}}}))
         self.assertEqual(self.written()["modes"]["building"]["apps"], ["mine.desktop"])
+
+    def kept(self):
+        return list(self.root.glob("modes.json.broken-*"))
+
+    def test_a_file_it_cant_read_is_kept_before_starting_over(self):
+        for broken in ('{"modes": {"mine":', "[1, 2]", "5"):
+            with self.subTest(broken):
+                installer.MODES_FILE.write_text(broken)
+                with redirect_stderr(io.StringIO()):
+                    self.assertIn("building", self.written()["modes"])
+                copy, = self.kept()
+                self.assertEqual(copy.read_text(), broken)
+                copy.unlink()
+
+    def test_nothing_to_keep(self):
+        self.written()
+        self.assertEqual(self.kept(), [])
+        installer.MODES_FILE.write_text("")
+        self.written()
+        self.assertEqual(self.kept(), [])
+
+    def test_a_good_file_isnt_copied(self):
+        installer.MODES_FILE.write_text(json.dumps({"modes": {"building": {}}}))
+        self.written()
+        self.assertEqual(self.kept(), [])
+
+    def test_settings_of_the_wrong_kind_dont_stop_it(self):
+        installer.MODES_FILE.write_text(json.dumps({"modes": {"building": {}}, "llm": None}))
+        self.assertEqual(self.written()["llm"]["backend"], installer.BACKENDS["none"])
+        installer.MODES_FILE.write_text(json.dumps({"modes": {"building": {}}, "llm": {"model": "mine"}}))
+        self.assertEqual(self.written()["llm"], {"model": "mine", "backend": installer.BACKENDS["none"]})
+
+    def test_setup_opens_on_a_broken_file(self):
+        for broken in ('{"modes": {"mine":', "[1, 2]", '{"llm": 5, "language": "id"}', '{"llm": null}'):
+            installer.MODES_FILE.write_text(broken)
+            self.assertEqual(installer.current_choices()["ai"], "", broken)
 
     def test_if_it_goes_wrong_the_defaults_are_still_written(self):
         personalize.installed_apps.side_effect = OSError("no")

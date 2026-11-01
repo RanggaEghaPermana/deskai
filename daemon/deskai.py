@@ -45,11 +45,16 @@ def name_has_owner(name):
     return result.unpack()[0]
 
 
+def problem_details(config):
+    """What's wrong with modes.json, all of it, or "" if nothing is."""
+    return config.problem[1].get("details") or config.problem_in_words("en") if config.problem else ""
+
+
 def load_config():
     config = brain.Config()
     config.refresh()
     if not config.data["modes"]:
-        sys.exit(f"{brain.MODES_FILE} is missing or broken. The extension creates it when it first runs.")
+        sys.exit(f"{brain.MODES_FILE}: {problem_details(config) or 'not there yet. The extension creates it when it first runs.'}")
     return config
 
 
@@ -405,9 +410,8 @@ def cmd_doctor(_args):
                    "log out and back in, then check: journalctl --user -b | grep -i deskai"))
     checks.append(("brain (deskaid) running", name_has_owner(BRAIN_NAME),
                    "systemctl --user restart deskaid; journalctl --user -u deskaid -f"))
-    checks.append((f"modes.json valid ({brain.MODES_FILE})", bool(config.data["modes"]),
-                   "see the errors in: journalctl --user -u deskaid" if brain.MODES_FILE.exists()
-                   else "not there yet; the extension creates it when it first runs"))
+    checks.append((f"modes.json valid ({brain.MODES_FILE})", bool(config.data["modes"]) and not config.problem,
+                   problem_details(config) or "not there yet; the extension creates it when it first runs"))
     llm = brain.LLM(config.llm)
     if config.llm["backend"] == "none":
         checks.append(("AI off (your choice): your allow and block lists decide", True, ""))
