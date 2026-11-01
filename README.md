@@ -10,7 +10,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 - **Focus modes.** Writing, Building, Studying, Social: each with its own apps, allowed and blocked
   sites, and notification rules. A nudge when you drift, and a daily focus recap.
 - **Inbox on the dock.** WhatsApp messages and AI agents (Claude Code, Codex, Gemini CLI, and the
-  desktop AI apps) tell you when they're done or need you. One click takes you there.
+  desktop AI apps) tell you when they're done or need you, even while the screen was locked. One click takes
+  you there.
 - **Command bar.** Press `Super+/` or click the sparkle and type what you want: "set up my project",
   "restart the server", "close my project", "how long did I focus today?". It can only do what's on a
   fixed list, never run commands. Plain requests, in English or Indonesian, are done instantly with no AI:

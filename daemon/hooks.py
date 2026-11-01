@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import brain
@@ -22,6 +23,8 @@ BACKUP_SUFFIX = ".deskai-bak"
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 GEMINI_SETTINGS = Path.home() / ".gemini" / "settings.json"
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
+WAITING_FILE = brain.STATE_DIR / "inbox-waiting.jsonl"
+WAITING_MAX_BYTES = 256 * 1024
 
 # Claude Code: event → run in the background? The hook takes ~0.1 s, and a background one can be
 # cut off when Claude exits right after (as `claude -p` does after its Stop), so only Notification,
@@ -134,9 +137,22 @@ def run(agent, payload, send):
         try:
             send(json.dumps(event, ensure_ascii=False))
         except Exception:
-            pass  # the dock isn't running
+            _wait_for_the_dock(event)
     if agent == "gemini":
         print("{}")
+
+
+def _wait_for_the_dock(event):
+    """There's no dock while the screen is locked. It reads this when it's back, and throws it away if the session
+    ended instead. Readable only by you: it has what the agent said."""
+    try:
+        WAITING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if WAITING_FILE.exists() and WAITING_FILE.stat().st_size > WAITING_MAX_BYTES:
+            WAITING_FILE.unlink()  # nothing's coming for it: the dock has been off for a long time
+        with os.fdopen(os.open(WAITING_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a") as f:
+            f.write(json.dumps({**event, "at": time.time()}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # a hook must never break the agent
 
 
 # ---- installing ----------------------------------------------------------------

@@ -79,6 +79,32 @@ export class Inbox {
         this._sessions.clear();
     }
 
+    // What's here, to pick up again once the screen is unlocked: locking it turns the extension off.
+    keep() {
+        return {items: [...this._items.values()], sessions: [...this._sessions]};
+    }
+
+    // What keep() gave, without what went away in the meantime. It isn't news, so nothing is announced.
+    pickUp({items, sessions}) {
+        const windows = liveWindows();
+        const notifications = new Set(Main.messageTray.getSources().flatMap(source => source.notifications));
+        for (const [session, win] of sessions) {
+            if (windows.includes(win))
+                this._sessions.set(session, win);
+        }
+        for (const item of items) {
+            if (item.window ? !windows.includes(item.window) : item.notification && !notifications.has(item.notification))
+                continue;
+            this._items.set(item.key, item);
+            if (item.notification) {
+                this._hush(item.notification);
+                this._follow(item.key, item.notification);
+            }
+        }
+        if (this._items.size)
+            this._changed();
+    }
+
     get size() {
         return this._items.size;
     }

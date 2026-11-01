@@ -226,6 +226,8 @@ function isAppWindow(win) {
 
 // The first enable in a shell is the login; later ones are unlocking or switching DeskAI back on.
 let firstEnable = true;
+// Locking the screen turns the extension off, but what's in the inbox is still waiting for you: {inbox, since}.
+let keptWhileLocked = null;
 
 export default class DeskAIExtension extends Extension {
     enable() {
@@ -289,6 +291,46 @@ export default class DeskAIExtension extends Extension {
 
         this._motion = new Motion();
         this._syncMotion();
+        this._pickUpAfterLock();
+    }
+
+    // Back from a locked screen: what the inbox held, what agents said meanwhile (`deskai hook` leaves
+    // that in a file while there's no dock to tell), and what came in as notifications. At any other
+    // start, whatever is in that file is old.
+    _pickUpAfterLock() {
+        const kept = keptWhileLocked;
+        keptWhileLocked = null;
+        const waiting = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_state_dir(), 'deskai', 'inbox-waiting.jsonl']));
+        const lines = readText(waiting)?.split('\n').filter(Boolean);
+        try {
+            if (lines)
+                waiting.delete(null);
+        } catch (e) {
+            console.warn(`DeskAI: cannot remove ${waiting.get_path()}: ${e.message}`);
+        }
+        if (!kept)
+            return;
+        this._inbox.pickUp(kept.inbox);
+        const settings = this._inboxSettings();
+        if (!settings.enabled)
+            return;
+        for (const line of lines ?? []) {
+            try {
+                const event = JSON.parse(line);
+                // A new turn looks for the window in front, which says nothing about a turn from before you came back.
+                if (event.at >= kept.since && event.event !== 'start' && event.event !== 'prompt')
+                    this._inbox.takeHook(event);
+            } catch (e) {
+                console.warn(`DeskAI: bad inbox event: ${e.message}`);
+            }
+        }
+        for (const source of Main.messageTray.getSources()) {
+            for (const notification of [...source.notifications]) {
+                if (notification.datetime?.to_unix?.() >= kept.since && !notification.forFeedback &&
+                    notification.urgency !== MessageTray.Urgency.CRITICAL)
+                    this._inbox.takeNotification(source, notification, settings);
+            }
+        }
     }
 
     // The shell-wide animations, on unless modes.json says {"motion": {"enabled": false}};
@@ -351,6 +393,8 @@ export default class DeskAIExtension extends Extension {
             source.disconnectObject(this);
         this._watchedSources.clear();
         this._releaseHeld();
+        // In whole seconds, which is all a notification's time says.
+        keptWhileLocked = Main.sessionMode.isLocked && this._inbox ? {inbox: this._inbox.keep(), since: Math.floor(Date.now() / 1000)} : null;
         this._inbox?.destroy();
         this._inbox = null;
         this._releaseCommandKey();

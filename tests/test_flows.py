@@ -232,6 +232,44 @@ class TheTick(Base):
         self.assertEqual(len(logs.records), 1)
 
 
+class DeskSnapshots(Base):
+    """The dock is off while the screen is locked. A snapshot from then would be an empty desk."""
+
+    def took(self, finish):
+        self.brain.bus = mock.Mock()
+        with mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain._snapshot_desk()
+            got = self.brain.bus.call.call_args.args[-1]
+            got(mock.Mock(call_finish=finish), None)
+        return [call.kwargs["args"][0] for call in thread.call_args_list]
+
+    @staticmethod
+    def error(code):
+        def finish(_result):
+            raise deskaid.GLib.Error.new_literal(deskaid.Gio.dbus_error_quark(), "no", code)
+        return finish
+
+    def test_with_no_dock_it_keeps_what_it_has(self):
+        self.assertEqual(self.took(self.error(deskaid.Gio.DBusError.SERVICE_UNKNOWN)), [])
+        self.assertEqual(self.took(self.error(deskaid.Gio.DBusError.NAME_HAS_NO_OWNER)), [])
+
+    def test_a_dock_that_didnt_answer_doesnt_mean_an_empty_desk(self):
+        self.assertEqual(self.took(self.error(deskaid.Gio.DBusError.NO_REPLY)), [])
+
+    def test_an_answer_it_cant_read_doesnt_either(self):
+        self.assertEqual(self.took(lambda _r: mock.Mock(unpack=lambda: ("not json",))), [])
+
+    def test_with_a_dock_it_takes_one(self):
+        windows = [{"app": "x.desktop"}]
+        self.assertEqual(self.took(lambda _r: mock.Mock(unpack=lambda: (json.dumps(windows),))), [windows])
+
+    def test_a_really_empty_desk_counts(self):
+        self.assertEqual(self.took(lambda _r: mock.Mock(unpack=lambda: ("[]",))), [[]])
+
+    def test_an_older_dock_still_gets_one(self):
+        self.assertEqual(self.took(self.error(deskaid.Gio.DBusError.UNKNOWN_METHOD)), [None])
+
+
 class AFullDisk(Base):
     def test_a_write_that_fails_leaves_no_half_file(self):
         target = self.folder / "state" / "x.json"

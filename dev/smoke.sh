@@ -119,6 +119,52 @@ held_while_in() {
 expect "a focus mode holds back another app's notification" "$(held_while_in org.example.Chat Chat)" 1
 expect "but not one from the AI app you're in" "$(held_while_in com.anthropic.Claude.desktop Claude)" 0
 
+# Locking the screen turns the extension off, and the test helper with it, so a timer keeps Eval working meanwhile.
+extension_state() { val "Main.extensionManager.lookup('$UUID')?.state" 2>/dev/null; }
+until_state() { for _ in $(seq 1 60); do [ "$(extension_state)" = "$1" ] && return 0; sleep 0.25; done; return 1; }
+inbox_keys() { val "_T.ext._inbox.list().map(i => i.key).sort().join(' ')"; }
+tell_inbox() { gdbus call --session --dest "io.github.RanggaEghaPermana.DeskAI" --object-path /io/github/RanggaEghaPermana/DeskAI \
+  --method io.github.RanggaEghaPermana.DeskAI.Inbox "$1" >/dev/null; }
+
+tell_inbox '{"source":"claude-code","event":"attention","session":"before","cwd":"/w/a","text":"izin"}'
+ev "(() => {
+  const GLib = imports.gi.GLib;
+  _T.keepEval = true;
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => { global.context.unsafe_mode = true; return _T.keepEval; });
+  Main.screenShield.lock(false);
+  return 'ok';
+})()" >/dev/null
+if until_state 2; then
+  passed "locking the screen turns the extension off"
+  printf '%s' '{"hook_event_name":"Notification","notification_type":"permission_prompt","session_id":"during","cwd":"/w/b","message":"izin"}' |
+    python3 "$ROOT/daemon/deskai.py" hook claude
+  expect "what an agent says meanwhile waits for the dock" "$([ -s "$XDG_STATE_HOME/deskai/inbox-waiting.jsonl" ] && echo waits)" waits
+  if command -v notify-send >/dev/null; then
+    notify-send -a Chrome "WhatsApp" "halo"
+    sleep 0.3
+    expected_message=" msg::WhatsApp:WhatsApp"
+  else
+    skipped "a message that comes while locked: notify-send isn't installed"
+    expected_message=""
+  fi
+  ev "Main.screenShield.deactivate(false); 'ok'" >/dev/null
+  until_state 1 || broke "unlocking turns the extension back on"
+  sleep 0.5
+  expect "the inbox is all there after unlocking" "$(inbox_keys)" "agent:claude-code:before agent:claude-code:during$expected_message"
+  expect "the file is read and gone" "$([ -e "$XDG_STATE_HOME/deskai/inbox-waiting.jsonl" ] && echo there || echo gone)" gone
+  # Turning it off yourself isn't locking: nothing comes back.
+  ev "Main.extensionManager.disableExtension('$UUID'); 'ok'" >/dev/null
+  until_state 2
+  ev "Main.extensionManager.enableExtension('$UUID'); 'ok'" >/dev/null
+  until_state 1
+  sleep 0.5
+  expect "turning it off yourself clears the inbox" "$(inbox_keys)" ""
+else
+  broke "locking the screen turns the extension off: it's in state $(extension_state)"
+fi
+ev "_T.keepEval = false; _T.ext._closeCard(); 'ok'" >/dev/null
+sleep 0.5
+
 try_everything() {
   local how="$1" animated="$2" first second
 

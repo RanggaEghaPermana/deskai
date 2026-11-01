@@ -675,7 +675,13 @@ class Brain:
         def got(conn, result):
             try:
                 windows = json.loads(conn.call_finish(result).unpack()[0])
-            except (GLib.Error, ValueError):
+            except ValueError:
+                return
+            except GLib.Error as e:
+                # No dock to ask, as while the screen is locked: that isn't an empty desk, and the last
+                # snapshots from before are what a session ending right now should come back to.
+                if not e.matches(Gio.dbus_error_quark(), Gio.DBusError.UNKNOWN_METHOD):
+                    return
                 windows = None  # an older dock without GetWindows
             threading.Thread(target=take, args=(windows,), name="snapshot", daemon=True).start()
 
