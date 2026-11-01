@@ -966,7 +966,15 @@ class Brain:
         if taken:
             held = ", ".join(f":{port} ({who})" for port, who in taken)
             return False, self._say("ports_taken", ports=held), []
-        return compose.start(name, found, op)
+        return self._in_plain_words(compose.start(name, found, op))
+
+    def _in_plain_words(self, result):
+        """A tool's (ok, what it said, ...), with what it said put in plain words. As it said it goes in the log."""
+        ok, said, *more = result
+        if ok:
+            return result
+        log.warning("command: %s", said)
+        return (False, self._say(commands.trouble(said)), *more)
 
     def _docker_or_service(self, kind, action):
         """Starts, stops or restarts a Compose project or a system service, off the main thread: a first
@@ -986,7 +994,7 @@ class Brain:
                 # Stopping what others need: say so on the card, they lose their database.
                 running = compose.states(found)
                 hurt = [other for other in compose.dependents(name, found) if running.get(other) == "running"]
-                work = lambda: (*compose.act(folder, op), hurt)  # noqa: E731
+                work = lambda: self._in_plain_words((*compose.act(folder, op), hurt))  # noqa: E731
             else:
                 work = lambda: self._start_project(name, found, op)  # noqa: E731
         else:
@@ -995,13 +1003,14 @@ class Brain:
             if not name or op not in ("up", "stop", "restart"):
                 self._command_card(self._say("command_no_server"))
                 return
-            work = lambda: commands.systemctl(action["unit"], {"up": "start"}.get(op, op))  # noqa: E731
+            work = lambda: self._in_plain_words(commands.systemctl(action["unit"], {"up": "start"}.get(op, op)))  # noqa: E731
         self._command_card(self._say(f"compose_working_{op}", name=name), timeout=120)
 
         def done(result):
-            ok, said, *more = result or (False, "")
+            ok, said, *more = result or (False, self._say("trouble_unknown"))
             others = ", ".join(more[0]) if more and more[0] else ""
-            text = self._say(f"compose_done_{op}", name=name) if ok else self._say("compose_failed", name=name, error=said or "?")
+            text = (self._say(f"compose_done_{op}", name=name) if ok else
+                    self._say("compose_failed", name=more[1] if len(more) > 1 else name, why=said))
             if ok and others:
                 text += " " + self._say("compose_also_stopped" if op == "stop" else "compose_also_started", names=others)
             self._command_card(text, timeout=20 if others else 15)
@@ -1041,9 +1050,12 @@ class Brain:
 
         threading.Thread(target=work, name="command", daemon=True).start()
 
+    def _could_not(self, error):
+        return self._say("command_failed", why=self._say(commands.trouble(error)))
+
     def _command_failed(self, error):
         hint = getattr(error, "hint", None)
-        self._command_card(self._say(hint, **error.params) if hint else self._say("command_failed", error=str(error)[:160]))
+        self._command_card(self._say(hint, **error.params) if hint else self._could_not(error))
         return False
 
     def _run_actions(self, result):
@@ -1062,7 +1074,7 @@ class Brain:
                 say, reported = self._run_action(kind, action, say)
             except (GLib.Error, OSError, subprocess.SubprocessError, ValueError) as e:
                 log.warning("command: %s failed: %s", kind, e)
-                say, reported = self._say("command_failed", error=str(e)[:160]), False
+                say, reported = self._could_not(e), False
             answered_elsewhere = answered_elsewhere or reported
         if not answered_elsewhere:
             self._command_card(say or self._say("command_nothing"))
@@ -1326,6 +1338,7 @@ class Brain:
             shutil.copy2(brain.MODES_FILE, brain.MODES_FILE.with_suffix(".json.bak"))
             brain.write_json_atomic(brain.MODES_FILE, config)
         except OSError as e:
+            log.warning("command: can't save your modes: %s", e)
             self._command_failed(e)
             return
         self._command_card(self._say("command_applied"))

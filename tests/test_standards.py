@@ -24,6 +24,8 @@ SHELL_IN_THE_EXTENSIONS = r"""spawn_?command_?line|create_from_commandline|['"](
 # Code sessions, and the line for a new terminal. Never the model's words, so adding to this gets the same look as THE_MODEL_CAN.
 SHELL_ON_PURPOSE = [("daemon/routine.py", "start_server", "step['command']"), ("daemon/routine.py", "start_server", "step['command']"),
                     ("daemon/routine.py", "terminal_args", "inner")]
+RAW_FIELDS = {"error", "exception", "traceback"}
+ON_A_CARD = {"_say", "_command_card", "card"}
 PROGRAMS_EVERYWHERE = {"bash", "gnome-session-quit", "systemctl", "systemd-run"}  # on any desktop DeskAI runs on
 RUNS = {"run", "Popen", "check_output", "check_call", "call"}
 CATCHES_A_MISSING_PROGRAM = {"OSError", "FileNotFoundError", "Exception"}
@@ -132,6 +134,20 @@ def given_to_a_shell(source):
     return found
 
 
+def raw_on_a_card(source):
+    """[line] for each error that's caught and then put straight into what a card says."""
+    found = []
+    for handler in ast.walk(ast.parse(source)):
+        if not (isinstance(handler, ast.ExceptHandler) and handler.name):
+            continue
+        for call in (node for statement in handler.body for node in ast.walk(statement)):
+            if isinstance(call, ast.Call) and getattr(call.func, "attr", "") in ON_A_CARD and any(
+                    isinstance(name, ast.Name) and name.id == handler.name
+                    for given in [*call.args, *(word.value for word in call.keywords)] for name in ast.walk(given)):
+                found.append(call.lineno)
+    return found
+
+
 class OnlyWhatsOnTheList(unittest.TestCase):
     def test_the_model_picks_from_a_fixed_list(self):
         action = commands.COMMAND_SCHEMA["properties"]["actions"]["items"]["properties"]
@@ -175,6 +191,26 @@ class OnlyWhatsOnTheList(unittest.TestCase):
         self.assertEqual(through_a_shell('subprocess.run(["ls"], shell=False)'), [])
         self.assertEqual(through_a_shell('subprocess.run(["ls"])'), [])
         self.assertEqual(through_a_shell('self.eval(text)'), [])
+
+
+class PlainWords(unittest.TestCase):
+    def test_no_card_has_room_for_a_raw_error(self):
+        found = [key for table in brain.CARD_STRINGS.values() for key, text in table.items() if fields(text) & RAW_FIELDS]
+        self.assertEqual(found, [], "say why in plain words: see commands.trouble")
+
+    def test_no_error_goes_straight_on_a_card(self):
+        found = [f"{path.relative_to(ROOT)}:{line}" for path in python_files() if path.parent.name == "daemon"
+                 for line in raw_on_a_card(path.read_text())]
+        self.assertEqual(found, [], "say why in plain words: see commands.trouble")
+
+    def test_what_counts_as_raw(self):
+        caught = 'try:\n    a()\nexcept OSError as e:\n    {}'
+        self.assertEqual(raw_on_a_card(caught.format('self._say("x", why=str(e))')), [4])
+        self.assertEqual(raw_on_a_card(caught.format('self._command_card(f"failed: {e}")')), [4])
+        self.assertEqual(raw_on_a_card(caught.format('self.card({"title": str(e)})')), [4])
+        self.assertEqual(raw_on_a_card(caught.format('self._command_failed(e)')), [])
+        self.assertEqual(raw_on_a_card(caught.format('log.warning("failed: %s", e)')), [])
+        self.assertEqual(raw_on_a_card(caught.format('self._say("x")')), [])
 
 
 class BothLanguages(unittest.TestCase):

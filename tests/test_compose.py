@@ -158,7 +158,7 @@ class Needs(unittest.TestCase):
         with mock.patch.object(compose, "_running_containers", return_value=set()), \
                 mock.patch.object(compose, "_run", return_value=mock.Mock(returncode=1, stdout="")), \
                 mock.patch.object(compose, "act", side_effect=[(False, "port 3309 in use")]) as act:
-            self.assertEqual(compose.start("shop-dev", self.found), (False, "infra: port 3309 in use", []))
+            self.assertEqual(compose.start("shop-dev", self.found), (False, "port 3309 in use", [], "infra"))
         self.assertEqual(act.call_args.args, (self.found["infra"], "up"))
 
     def test_by_container_or_image(self):

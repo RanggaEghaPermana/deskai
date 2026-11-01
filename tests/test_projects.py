@@ -403,6 +403,14 @@ class ProjectThatRunsThroughDocker(Folder):
             self.assertEqual(self.run_step(), ["running", "done"])
         self.assertEqual(start.call_args.args[0], "toko")
 
+    def test_when_what_it_needs_from_another_project_fails(self):
+        with mock.patch.object(routine.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(compose, "_docker_ls", return_value=[]), \
+                mock.patch.object(compose, "start", return_value=(False, "manifest unknown", [], "infra")), \
+                self.assertLogs("deskai", "WARNING") as logged:
+            self.assertEqual(self.run_step(), ["running", "failed"])
+        self.assertIn("manifest unknown", logged.output[0])
+
     def test_its_label(self):
         self.assertEqual(routine.label({"type": "compose", "cwd": self.project}), "docker compose")
 

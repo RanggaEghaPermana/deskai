@@ -551,6 +551,105 @@ class NoDocker(Base):
         self.assertEqual(self.brain.cards[-1]["title"], brain.card_text("id", "compose_no_docker"))
 
 
+class PlainWords(Base):
+    def setUp(self):
+        super().setUp()
+        self.brain._in_background = lambda work, then: then(work())
+        self.brain._check_servers = mock.Mock()
+        self.found = {"shop": "/w/shop"}
+
+    def said(self):
+        card = self.brain.cards[-1]
+        return card["text"] or card["title"]
+
+    def docker(self, op="up", **patches):
+        with mock.patch.object(deskaid.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(deskaid.commands, "all_projects", return_value={}), \
+                mock.patch.object(deskaid.compose, "projects", return_value=self.found), \
+                mock.patch.object(deskaid.compose, "states", return_value={}), \
+                mock.patch.object(deskaid.compose, "dependents", return_value=[]), \
+                mock.patch.object(deskaid.ports, "busy_for", return_value=patches.pop("taken", [])), \
+                mock.patch.multiple(deskaid.compose, **patches):
+            self.brain._docker_or_service("compose", {"type": "compose", "op": op, "project": "shop"})
+
+    def test_what_each_tool_says_comes_out_plain(self):
+        for said, key in [
+            # As this computer really said them.
+            ("Failed to start x.service: Access denied as the requested operation requires interactive authentication. "
+             "However, interactive authentication has not been enabled by the calling program.\n"
+             "See system logs and 'systemctl status x.service' for details.", "trouble_no_permission"),
+            ("[Errno 2] No such file or directory: 'docker'", "trouble_not_there"),
+            ("[Errno 13] Permission denied: '/root/x'", "trouble_no_permission"),
+            ("Command '['sleep', '2']' timed out after 0.05 seconds", "trouble_too_long"),
+            ("Program ‘x’ not found in $PATH", "trouble_not_there"),
+            # As Docker and systemd are known to say them.
+            ("Failed to start x.service: Unit x.service not found.", "trouble_no_service"),
+            ("permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock", "trouble_no_permission"),
+            ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?", "trouble_docker_off"),
+            ("failed to connect to the docker API at unix:///var/run/docker.sock", "trouble_docker_off"),
+            ("Bind for 0.0.0.0:8080 failed: port is already allocated", "trouble_port_taken"),
+            ("listen tcp4 0.0.0.0:80: bind: address already in use", "trouble_port_taken"),
+            ("pull access denied for foo, repository does not exist or may require 'docker login'", "trouble_no_image"),
+            ("manifest for foo:latest not found: manifest unknown", "trouble_no_image"),
+            ("write /var/lib/docker/x: no space left on device", "trouble_no_room"),
+            ("yaml: line 3: mapping values are not allowed in this context", "trouble_unknown"),
+            ("", "trouble_unknown"),
+        ]:
+            self.assertEqual(deskaid.commands.trouble(said), key, said)
+
+    def test_the_model_failing_says_so(self):
+        self.assertEqual(deskaid.commands.trouble(brain.LLMError("stopped: max_tokens")), "trouble_ai")
+        self.assertEqual(deskaid.commands.trouble(json.JSONDecodeError("Expecting value", "", 0)), "trouble_ai")
+
+    def test_dockers_own_words_stay_in_the_log(self):
+        with self.assertLogs("deskai", "WARNING") as logged:
+            self.docker(start=mock.Mock(return_value=(False, "Bind for 0.0.0.0:8080 failed: port is already allocated", [])))
+        self.assertEqual(self.said(), "shop gagal: port yang dibutuhin lagi dipakai")
+        self.assertIn("Bind for 0.0.0.0:8080", logged.output[0])
+
+    def test_when_it_stops_too(self):
+        self.docker("stop", act=mock.Mock(return_value=(False, "[Errno 13] Permission denied: '/w/shop'")))
+        self.assertEqual(self.said(), "shop gagal: nggak ada izin, atau password-nya dibatalin")
+
+    def test_it_says_which_project_failed(self):
+        self.docker(start=mock.Mock(return_value=(False, "manifest unknown", [], "infra")))
+        self.assertEqual(self.said(), "infra gagal: Docker nggak nemu image-nya")
+
+    def test_a_reason_of_our_own_stays_as_it_is(self):
+        self.docker(taken=[(8080, "nginx")], start=mock.Mock())
+        self.assertEqual(self.said(), "shop gagal: port :8080 (nginx) lagi dipakai")
+
+    def test_with_nothing_to_go_by_it_points_at_the_log(self):
+        self.docker(start=mock.Mock(return_value=(False, "", [])))
+        self.assertEqual(self.said(), "shop gagal: alasannya ada di log: journalctl --user -u deskaid")
+
+    def test_nor_when_the_work_itself_broke(self):
+        self.brain._in_background = lambda _work, then: then(None)  # what it gets when the work raises
+        self.docker(start=mock.Mock())
+        self.assertEqual(self.said(), "shop gagal: alasannya ada di log: journalctl --user -u deskaid")
+
+    def test_a_system_service_says_the_real_reason(self):
+        denied = "Failed to start mysql.service: Access denied\nSee system logs and 'systemctl status mysql.service' for details."
+        with mock.patch.object(deskaid.commands, "service_label", return_value="MySQL"), \
+                mock.patch.object(deskaid.commands.subprocess, "run", return_value=mock.Mock(returncode=1, stderr=denied)):
+            self.brain._docker_or_service("dev_service", {"type": "dev_service", "op": "start", "unit": "mysql.service"})
+        self.assertEqual(self.said(), "MySQL gagal: nggak ada izin, atau password-nya dibatalin")
+
+    def test_the_command_bar_never_shows_an_errno(self):
+        with mock.patch.object(self.brain, "_run_action", side_effect=PermissionError(13, "Permission denied", "/root/x")):
+            self.brain._run_actions({"say": "", "actions": [{"type": "open_folder"}]})
+        self.assertEqual(self.said(), "Nggak bisa: nggak ada izin, atau password-nya dibatalin")
+
+    def test_nor_does_a_failure_from_the_model(self):
+        self.brain._command_failed(brain.LLMError("API error 500: internal"))
+        self.assertNotIn("500", self.said())
+        self.assertIn("AI-nya", self.said())
+
+    def test_a_hint_still_comes_first(self):
+        self.brain._command_failed(brain.LLMError("no AI available", hint="llm_none"))
+        self.assertEqual(self.said(), brain.card_text("id", "llm_none"))
+
+
 class SettingUpAProject(Base):
     def test_it_remembers_the_project_for_the_morning(self):
         with mock.patch.object(deskaid.commands, "find_project", return_value="/w/app"), \

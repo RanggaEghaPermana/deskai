@@ -559,7 +559,7 @@ def _compose_up(project):
     if not shutil.which("docker"):
         return False
     found = compose.projects([*found_projects.find(), project])
-    ok, said, _started = compose.start(next(name for name, folder in found.items() if folder == project), found)
+    ok, said, *_rest = compose.start(next(name for name, folder in found.items() if folder == project), found)
     if not ok:
         log.warning("routine: Docker couldn't start %s: %s", project, said)
     return ok

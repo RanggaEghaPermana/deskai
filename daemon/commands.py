@@ -166,6 +166,18 @@ EVERYDAY = {"wifi", "bluetooth", "internet", "laptop", "komputer", "computer", "
             "volume", "musik", "music", "lagu", "song", "video", "notifikasi", "notification", "notifications", "notif", "mic",
             "mikrofon", "microphone", "kamera", "camera", "browser", "tab", "window", "jendela"}  # not a part of a project's name
 ACT_NOISE = re.compile(r"\b(docker|compose|project|proyek|projek|container|kontainer|image|images|service|servis|dong|ya|lagi|gua|gue|aku|saya|nya)\b", re.I)
+# What goes wrong, in the words of Docker, systemctl, Python and GLib, and the card string that says it plainly. The first
+# that matches wins: "permission denied while trying to connect to the Docker daemon socket" is about permission.
+TROUBLES = (
+    (re.compile(r"pull access denied|manifest unknown|manifest for \S+ not found|no such image|repository does not exist", re.I), "trouble_no_image"),
+    (re.compile(r"permission denied|access denied|not authorized|authentication", re.I), "trouble_no_permission"),
+    (re.compile(r"connect to the docker|docker daemon", re.I), "trouble_docker_off"),
+    (re.compile(r"port is already allocated|address already in use", re.I), "trouble_port_taken"),
+    (re.compile(r"no space left", re.I), "trouble_no_room"),
+    (re.compile(r"timed out|timeout|deadline exceeded", re.I), "trouble_too_long"),
+    (re.compile(r"unit \S+ not found", re.I), "trouble_no_service"),
+    (re.compile(r"no such file or directory|not found in \$PATH", re.I), "trouble_not_there"),
+)
 # A system service you'd start for coding, by the word you'd use for it. php-fpm is whichever version is installed.
 DEV_SERVICES = {"mysql": "mysql", "mariadb": "mariadb", "postgres": "postgresql", "postgresql": "postgresql",
                 "redis": "redis-server", "mongo": "mongod", "mongodb": "mongod", "apache": "apache2", "apache2": "apache2",
@@ -311,7 +323,14 @@ def systemctl(unit, op):
         done = subprocess.run(["systemctl", op, unit], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         return False, str(e)
-    return done.returncode == 0, done.stderr.strip().splitlines()[-1][:200] if done.stderr.strip() else ""
+    return done.returncode == 0, done.stderr.strip()[:400]  # its last line only says to see the logs
+
+
+def trouble(said):
+    """Which card string says what went wrong, from an error or a tool's own words. Those are for the log."""
+    if isinstance(said, (brain.LLMError, json.JSONDecodeError)):
+        return "trouble_ai"
+    return next((key for words, key in TROUBLES if words.search(str(said))), "trouble_unknown")
 
 
 def service_label(unit):
@@ -693,7 +712,7 @@ def edit_modes(llm, language, request):
     new_config = json.loads(result["config_json"])
     errors = brain.validate_config(new_config)
     if errors:
-        raise ValueError("; ".join(errors))
+        raise brain.LLMError("; ".join(errors))
     return result["summary"], None if json.loads(old_text) == new_config else new_config
 
 

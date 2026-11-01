@@ -157,7 +157,8 @@ def _running_containers():
 def start(name, found, op="up"):
     """Starts or restarts a project, first starting the containers it needs from other projects if they
     aren't running: only those, so infra's MySQL comes up for shop but its PostgreSQL stays as it was.
-    Returns (ok, the last thing Docker said, [the projects it started something in])."""
+    Returns (ok, the last thing Docker said, [the projects it started something in]), and if a project it
+    needs is what failed, which one."""
     started = []
     running = _running_containers()
     for other, containers in needed(name, found).items():
@@ -168,7 +169,7 @@ def start(name, found, op="up"):
         if done.returncode != 0:  # never created yet: Compose creates them, with the rest of that project
             ok, said = act(found[other], "up")
             if not ok:
-                return False, f"{other}: {said}", started
+                return False, said, started, other
         started.append(other)
     ok, said = act(found[name], op)
     return ok, said, started
