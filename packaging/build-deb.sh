@@ -25,11 +25,15 @@ mkdir -p "$APP/packaging"
 cp "$ROOT/packaging/deskai-sessions.sh" "$APP/packaging/"
 cp "$ROOT/packaging/postinst" "$ROOT/packaging/prerm" "$PKG/DEBIAN/"
 cp "$ROOT/setup/$APP_ID.svg" "$PKG/usr/share/icons/hicolor/scalable/apps/"
-cp "$ROOT/packaging/$APP_ID.Setup.desktop" "$PKG/usr/share/applications/"
+cp "$ROOT/packaging/$APP_ID.Setup.desktop" "$ROOT/packaging/$APP_ID.Presets.desktop" "$PKG/usr/share/applications/"
 cp "$ROOT/packaging/$APP_ID.Setup.metainfo.xml" "$PKG/usr/share/metainfo/"
 cat > "$PKG/usr/bin/deskai-setup" <<'SCRIPT'
 #!/bin/sh
 exec /usr/bin/python3 /usr/share/deskai/setup/deskai_setup.py "$@"
+SCRIPT
+cat > "$PKG/usr/bin/deskai-presets" <<'SCRIPT'
+#!/bin/sh
+exec /usr/bin/python3 /usr/share/deskai/daemon/presets_window.py "$@"
 SCRIPT
 cat > "$PKG/usr/share/doc/deskai/copyright" <<COPYRIGHT
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -41,7 +45,7 @@ Copyright: 2026 Rangga Egha Permana
 License: GPL-3+
  On Debian and Ubuntu, the full text is in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
-chmod 755 "$PKG/usr/bin/deskai-setup"
+chmod 755 "$PKG/usr/bin/deskai-setup" "$PKG/usr/bin/deskai-presets"
 find "$PKG" -type d -exec chmod 755 {} +
 find "$APP" -type f -exec chmod 644 {} +
 chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/prerm"

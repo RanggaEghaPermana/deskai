@@ -218,6 +218,8 @@ ROOM_WARNINGS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hid
                            r"(?:\s+(?:ram|memori|memory|disk|storage|penyimpanan))?$", re.I)
 BREAKS = re.compile(r"^(matiin|matikan|stop|turn off|nyalain|nyalakan|hidupin|idupin|turn on)\s+(?:pengingat|reminder)(?:\s+(?:istirahat|break\w*))?$", re.I)
 BREAKS_ON = re.compile(r"^(nyala|hidup|idup|turn on)", re.I)
+PRESETS_WINDOW = re.compile(r"^(?:(?:buka|bukain|open|atur|kelola|edit|bikin|buat|tambah|manage|create|make|add)\s+)?(?:(?:the|a|my|new)\s+)?"
+                            r"presets?(?:\s+(?:pribadi|baru|gua|gue|gw|aku|saya))?$", re.I)
 BLOCK_LIST = re.compile(r"^(?:blokir|block)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
 ADD_TO_BLOCKED = re.compile(r"^(?:tambahin|tambahkan|tambah|add)\s+(.+?)\s+(?:ke|to)\s+(?:yang\s+)?(?:di)?blo[ck]\w*(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
 ALLOW_LIST = re.compile(r"^(?:izinin|izinkan|allow)\s+(.+?)(?:\s+(?:di|in)\s+(?:mode\s+)?(\S+))?$", re.I)
@@ -494,6 +496,8 @@ def _quick_action(words, modes, watch, known_projects):
     mode = _mode_named(name, modes)
     if mode:
         return {"type": "mode", "mode": mode}
+    if PRESETS_WINDOW.match(words):
+        return {"type": "presets_window"}
     match = SERVER_OP.match(words)
     if match:
         said = match.group(2).strip()

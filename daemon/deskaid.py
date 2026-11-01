@@ -16,6 +16,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +36,7 @@ import guide  # noqa: E402
 import launcher  # noqa: E402
 import learned  # noqa: E402
 import localai  # noqa: E402
+import presets  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
 import servers  # noqa: E402
@@ -66,6 +68,12 @@ SENDER_ASK_GAP_S = 90        # two new senders at once get one question
 REVIEW_EVERY_S = 3 * 3600    # without a pause to ask in, look this often
 SAVE_EVERY = 60
 CACHE_LIMIT = 3000
+PRESET_TURN_WAIT_S = 600     # how long a step done by hand waits for you, as the window says
+PRESET_TURN_SHOW_S = 60      # cards take each other's place, so it comes back this often
+PRESET_CLICK_GAP_S = 0.7     # the next card comes up in the same place: the second click of a double click mustn't answer it
+BRAIN_METHODS = Gio.DBusNodeInfo.new_for_xml(f"""<node><interface name="{BRAIN_NAME}">
+  <method name="RunPreset"><arg type="s" name="name" direction="in"/></method>
+</interface></node>""").interfaces[0]
 
 
 class Activity:
@@ -221,6 +229,10 @@ class Brain:
         self.shell_settings = None
         self.config_told = None
         self.routine_running = None  # the setup going on right now
+        self.presets = presets.Store()
+        self.preset_run = None     # the preset going on right now
+        self.preset_asking = None  # a preset, and the commands in it you haven't seen yet
+        self.preset_meant = None   # the preset a slip of the fingers looked like
         self.guide_tries = 0
         self.whatsapp_checked = False
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
@@ -245,6 +257,12 @@ class Brain:
         GLib.timeout_add_seconds(DOCK_WAIT_S, self._dock_never_came)
         Gio.bus_own_name_on_connection(
             self.bus, BRAIN_NAME, Gio.BusNameOwnerFlags.DO_NOT_QUEUE, None, self._on_name_lost)
+        # The newer call came with GLib 2.84, and Ubuntu 24.04 has 2.80. The older one says it's deprecated on anything newer.
+        export = self.bus.register_object_with_closures2 if hasattr(self.bus, "register_object_with_closures2") else self.bus.register_object
+        try:
+            export(OBJECT_PATH, BRAIN_METHODS, self._on_brain_call, None, None)
+        except (GLib.Error, TypeError) as e:  # only "try it" in the presets window needs this
+            log.warning("can't offer the presets window a way in: %s", e)
         self.bus.signal_subscribe(
             BUS_NAME, BUS_NAME, None, OBJECT_PATH, None, Gio.DBusSignalFlags.NONE, self._on_signal)
         Gio.bus_watch_name_on_connection(
@@ -604,6 +622,23 @@ class Brain:
         elif action == "system:room-off":
             self._set_room_warnings(False)
             self._command_card(self._say("room_off"))
+        elif action == "presets:open":
+            self._open_presets_window()
+        elif action == "preset:allow" and self.preset_asking and self.preset_asking["shown"] and card_id == "preset-ask":
+            self._allow_preset_command()
+        elif action == "preset:refuse":
+            self.preset_asking = None
+        elif action == "preset:meant" and self.preset_meant and card_id == "command":
+            name, self.preset_meant = self.preset_meant, None
+            self._after_a_click(self._run_preset_named, name)
+        elif action == "preset:not-meant":
+            self.preset_meant = None
+        elif action.startswith("preset:next:") and self.preset_run and action == f"preset:next:{self.preset_run['turn_at']}":
+            self.preset_run["turn"].set()
+        elif action == "preset:stop" and self.preset_run:
+            self.preset_run["cancel"].set()
+            if self.preset_run["turn"]:
+                self.preset_run["turn"].set()
         elif action == "command:apply" and self.pending_edit:
             self._apply_edit()
         elif action == "command:cancel":
@@ -1103,9 +1138,21 @@ class Brain:
 
     def on_command(self, text):
         log.info("command: %s", text[:120])
+        self.presets.refresh()
+        preset = presets.named(text, self.presets.items)  # your own word comes before anything DeskAI would make of it
+        if preset:
+            self._start_preset(preset)
+            return
         quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch, commands.all_projects())
         if quick:
             self._run_actions(quick)
+            return
+        meant = presets.near(text, self.presets.items)
+        if meant:
+            self.preset_meant = meant[0]["name"]
+            self._command_card(self._say("preset_meant", keyword=meant[1]), timeout=30, actions=[
+                {"id": "preset:not-meant", "label": self._say("preset_not_meant")},
+                {"id": "preset:meant", "label": self._say("preset_run"), "primary": True}])
             return
         if not self.llm.available:
             self._command_card(self._say("command_needs_ai"))
@@ -1258,6 +1305,9 @@ class Brain:
         elif kind == "mode_list":
             self._edit_list(action)
             answered_elsewhere = True
+        elif kind == "presets_window":
+            self._open_presets_window()
+            say = say or self._say("command_done")
         elif kind == "focus_today":
             say = commands.focus_answer(self.config)
         elif kind == "breaks":
@@ -1393,6 +1443,141 @@ class Brain:
         self.routine_marks = {}
         self._routine_card(plan, self._say("routine_running"), 120)
         self._run_routine(plan)
+        return False
+
+    # ---- presets ------------------------------------------------------------
+
+    def _on_brain_call(self, _conn, _sender, _path, _iface, method, params, invocation):
+        """The presets window, trying out what you just saved."""
+        if method == "RunPreset":
+            self._run_preset_named(*params.unpack())
+        invocation.return_value(None)
+
+    def _run_preset_named(self, name):
+        self.presets.refresh()
+        preset = next((preset for preset in self.presets.items if preset["name"] == name), None)
+        if preset:
+            self._start_preset(preset)
+        else:
+            self._command_card(self._say("preset_gone"))
+
+    def _open_presets_window(self):
+        window = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets_window.py")
+        try:
+            subprocess.Popen(launcher.own_scope([sys.executable, window]), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            log.warning("can't open the presets window: %s", e)
+            self._command_failed(e)
+
+    def _start_preset(self, preset):
+        if self.preset_run:
+            self._command_card(self._say("preset_busy", name=self.preset_run["preset"]["name"]))
+            return
+        self.preset_asking = {"preset": preset, "commands": presets.unseen_commands(preset), "shown": False}
+        self._ask_or_run_preset()
+
+    def _ask_or_run_preset(self):
+        """One command to a card, so that all of it fits, and nothing starts until you've seen them all."""
+        preset, unseen = self.preset_asking["preset"], self.preset_asking["commands"]
+        if not unseen:
+            self.preset_asking = None
+            self._run_preset(preset)
+            return
+        self.preset_asking["shown"] = True
+        self.card({"id": "preset-ask", "kind": "command", "title": self._say("preset_ask_title", name=preset["name"]),
+                   "text": f"$ {unseen[0]}\n{self._say('preset_ask_text')}", "timeout": 120,
+                   "actions": [{"id": "preset:refuse", "label": self._say("preset_cancel")},
+                               {"id": "preset:allow", "label": self._say("preset_allow"), "primary": True}]})
+
+    def _allow_preset_command(self):
+        self.preset_asking["shown"] = False
+        command = self.preset_asking["commands"].pop(0)
+        try:
+            presets.allow(command)
+        except OSError as e:  # it's still your word for this time
+            log.warning("can't note an allowed command: %s", e)
+        self._after_a_click(lambda: self.preset_asking and self._ask_or_run_preset())
+
+    def _after_a_click(self, work, *args):
+        GLib.timeout_add(int(PRESET_CLICK_GAP_S * 1000), lambda: work(*args) and False)
+
+    def _run_preset(self, preset):
+        log.info("preset: running %s", preset["name"])
+        labels = [presets.label(step, self._say, lambda mode: (self.config.mode(mode) or {"label": mode})["label"])
+                  for step in preset["steps"]]
+        run = {"preset": preset, "labels": labels, "marks": {}, "cancel": threading.Event(), "turn": None, "turn_at": None}
+        self.preset_run = run
+
+        def progress(at, state, why):
+            GLib.idle_add(self._preset_progress, run, at, state, why)
+
+        def set_mode(mode):
+            if not self.config.mode(mode):
+                return False
+            GLib.idle_add(lambda: self.call("SetMode", "(s)", (mode,)) and False)
+            return True
+
+        def work():
+            try:
+                presets.run(preset, progress, set_mode, lambda at, step: self._wait_for_your_turn(run, at, step), run["cancel"].is_set)
+            except Exception as e:  # never take the daemon down with it
+                log.exception("preset failed: %s", e)
+                run["why"] = "preset_why_step"
+                run["cancel"].set()
+            GLib.idle_add(self._preset_finished, run)
+
+        threading.Thread(target=work, name="preset", daemon=True).start()
+
+    def _wait_for_your_turn(self, run, at, step):
+        """On the preset's thread: says whether to go on."""
+        if at:
+            run["cancel"].wait(PRESET_CLICK_GAP_S)
+        run["turn"], run["turn_at"] = threading.Event(), at
+        for _ in range(PRESET_TURN_WAIT_S // PRESET_TURN_SHOW_S):
+            GLib.idle_add(self._your_turn_card, run, at, step)
+            if run["turn"].wait(PRESET_TURN_SHOW_S):
+                return not run["cancel"].is_set()
+        run["unanswered"] = at
+        return False
+
+    def _your_turn_card(self, run, at, step):
+        if run["turn_at"] == at and not run["turn"].is_set():
+            self.card({"id": "preset", "kind": "command", "title": self._say("preset_your_turn", name=run["preset"]["name"]),
+                       "text": step["text"], "timeout": PRESET_TURN_SHOW_S + 30,
+                       "actions": [{"id": "preset:stop", "label": self._say("preset_cancel")},
+                                   {"id": f"preset:next:{at}", "label": self._say("preset_next"), "primary": True}]})
+        return False
+
+    def _preset_card(self, run, title, timeout, **more):
+        lines = presets.progress_lines(run["labels"], run["marks"])
+        why = self._say(run["why"]) if run.get("why") else ""
+        self.card({"id": "preset", "kind": "command", "title": title, "text": "\n".join([*lines, *([why] if why else [])]),
+                   "timeout": 25 if why else timeout, **more})
+
+    def _preset_progress(self, run, at, state, why):
+        run["marks"][at] = state
+        log.info("preset: %s, step %d %s", run["preset"]["name"], at + 1, state)
+        if why:
+            run["why"], run["failed_at"] = why, at
+        waiting_on_you = state == "running" and run["preset"]["steps"][at]["type"] == "hand"
+        if not (waiting_on_you or run["cancel"].is_set() or state == "failed"):
+            self._preset_card(run, self._say("preset_running", name=run["preset"]["name"]), 120, busy=True,
+                              actions=[{"id": "preset:stop", "label": self._say("preset_cancel")}])
+        return False
+
+    def _preset_finished(self, run):
+        self.preset_run = None
+        name = run["preset"]["name"]
+        if "unanswered" in run:
+            title = self._say("preset_unanswered", name=name, n=run["unanswered"] + 1)
+        elif run["cancel"].is_set():
+            title = self._say("preset_stopped", name=name)
+        elif "failed_at" in run:
+            title = self._say("preset_failed", name=name, n=run["failed_at"] + 1)
+        else:
+            title = self._say("preset_ready", name=name)
+        self._preset_card(run, title, 12)
         return False
 
     def _edit_modes(self, request):
@@ -1698,6 +1883,13 @@ class Brain:
             log.info("config reloaded · AI: %s", self.llm.describe())
         self._tell_config_problem()
 
+    def _tell_presets_broken(self):
+        """Once for each time presets.json breaks, as soon as there's a dock to say it on."""
+        self.presets.refresh()
+        if self.presets.broken and not self.presets.told and self.dock_seen:
+            self.presets.told = True
+            self._command_card(self._say("preset_file_bad"), timeout=30)
+
     def _tell_config_problem(self):
         """Once for each thing wrong with modes.json, as soon as there's a dock to say it on."""
         if self.config.problem == self.config_told or not self.dock_seen:
@@ -1928,6 +2120,7 @@ class Brain:
         self._safely(self._tick_away, idle_ms)
         self._safely(self._tick_coach, idle_ms)
         self._safely(self._say_how_the_local_ai_went)
+        self._safely(self._tell_presets_broken)
 
         if self.mode is not None and time.monotonic() - self.last_server_check > SERVER_CHECK_EVERY:
             self._safely(self._check_servers)

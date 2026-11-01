@@ -218,6 +218,23 @@ def send_inbox(event_json):
                     Gio.DBusCallFlags.NO_AUTO_START, 1500, None)
 
 
+def cmd_presets(args):
+    import presets  # not at the top: this file is also what an AI agent's hook runs, and that has to be quick
+    if args.action == "log":
+        os.execvp("journalctl", ["journalctl", "--user", "-t", presets.LOG_TAG, "-n", "60", "--no-pager"])
+    if args.action == "list":
+        found, broken = presets.read()
+        if broken:
+            sys.exit(f"{presets.FILE} can't be read. Open it with: deskai presets")
+        for preset in found:
+            print(f"{preset['name']}: {', '.join(preset['keywords'])} ({len(preset['steps'])} steps)")
+        if not found:
+            print("No presets yet. Make one with: deskai presets")
+        return
+    window = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets_window.py")
+    os.execv(sys.executable, [sys.executable, window])
+
+
 def cmd_hook(args):
     # Codex passes its payload as an argument; Claude Code and Gemini CLI on stdin.
     payload = args.payload if args.payload is not None else sys.stdin.read()
@@ -472,6 +489,10 @@ def main():
     p = sub.add_parser("session", help="the desk snapshot that comes back after a logout")
     p.add_argument("action", nargs="?", default="show", choices=["show", "now", "restore"])
     p.set_defaults(func=cmd_session)
+
+    p = sub.add_parser("presets", help="your own routines: open the window, list them, or see what their commands said")
+    p.add_argument("action", nargs="?", default="open", choices=["open", "list", "log"])
+    p.set_defaults(func=cmd_presets)
 
     p = sub.add_parser("hook", help="called by Claude Code / Codex / Gemini CLI hooks (not for typing)")
     p.add_argument("agent", choices=sorted(hooks.PARSERS))

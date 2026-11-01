@@ -16,9 +16,12 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   you there.
 - **Command bar.** Press `Super+/` or click the sparkle and type what you want: "set up my project",
   "restart the server", "close my project", "how long did I focus today?". It can only do what's on a
-  fixed list, never run commands. Plain requests, in English or Indonesian, are done instantly with no AI:
+  fixed list, and neither it nor the AI ever comes up with a command to run. Plain requests, in English or Indonesian, are done instantly with no AI:
   switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists,
   which projects have work not committed or pushed.
+- **My Presets.** Your own routines, the kind nothing could guess: open this app, do that by hand, switch to that mode, run
+  this command. Write the steps in the My Presets window, pick the words that start them, like "setup discord", and type
+  those words in the command bar. It takes no AI, and a near miss asks you first.
 - **Servers on the dock.** The dev servers and database in your projects get a status dot, including the
   ones you started yourself in a terminal. If one DeskAI started stops, you see why, and one click restarts
   it or opens its log. Closing a project asks before stopping anything DeskAI didn't start, your database
@@ -97,7 +100,8 @@ With **Claude**, these are sent to it, through your Claude Code login or your AP
 - the titles of the windows you use, and the notifications held back during a focus mode (password
   managers are left out, and you can add more apps under `llm.exclude_apps` in `~/.config/deskai/modes.json`);
 - when you use the command bar: what you typed, your modes, the names of your projects, servers and
-  installed apps, and today's focus time. No file contents or full paths.
+  installed apps, and today's focus time. No file contents or full paths. Your presets are never sent, and a preset's
+  keyword, typed as it is, runs without reaching it.
 
 Using an API key costs money, charged by Anthropic.
 
@@ -150,8 +154,8 @@ bug reports, and removing DeskAI deletes it.
 ## What it changes on your computer
 
 - **A background service and a command**: `deskaid.service` for your user, `~/.local/bin/deskai`, and, unless you
-  installed the `.deb`, a copy of the app in `~/.local/share/deskai` and a DeskAI Setup launcher. Removing DeskAI takes
-  them away.
+  installed the `.deb`, a copy of the app in `~/.local/share/deskai` and launchers for DeskAI Setup and My Presets. Removing
+  DeskAI takes them away.
 - **The local AI**, only if you let setup download it: Ollama and its model in `~/.local/share/deskai/ollama`, and two services
   for your user, `deskai-ollama.service` and, while it downloads, `deskai-local-ai.service`. Your own Ollama, if you have
   one, is used and left alone, with only the model added to it. Removing DeskAI takes away what it downloaded.
@@ -166,6 +170,11 @@ bug reports, and removing DeskAI deletes it.
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs
   don't come back twice. Removing DeskAI puts it back if Ptyxis hasn't made a new one.
+- **Presets** are in `~/.config/deskai/presets.json`, and only do what you wrote. A command in one runs in bash with your
+  account, from your home folder, so it can do anything you can, and DeskAI can't tell whether it's safe. It shows you each
+  command before it first runs, and again if it changes, and notes the ones you've allowed in
+  `~/.local/state/deskai/presets-seen.json`. What a command says goes in the journal, for `deskai presets log`. The AI can't
+  write, change or start a preset.
 - **Clearing caches** only happens when you press the button on the card. It empties the caches of npm, pip, yarn
   and Composer and your thumbnails, and prunes Docker's build cache: all things their tools fill again.
 - **Starting and stopping system services** from the command bar goes through GNOME's password prompt.
@@ -195,6 +204,7 @@ deskai status        # mode, window, inbox
 deskai stats         # today's focus recap
 deskai senders       # who always gets through, and who stays held
 deskai session       # what would come back after a logout
+deskai presets       # your own routines: write them, or add list or log
 deskai routine       # the workday routine
 deskai hooks install # let AI agents report to the dock
 ```
@@ -206,7 +216,7 @@ file it can't read, the old one is kept next to it as `modes.json.broken-…`.
 ## Remove
 
 Uninstall the package in App Center, or run `sudo apt remove deskai`: that removes DeskAI for everyone logged in, and your
-other docks come back. Or open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package. Your modes and stats
+other docks come back. Or open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package. Your modes, presets and stats
 stay, unless you tick the box in DeskAI Setup to delete them too. Anyone else who uses this computer and isn't logged in at
 that moment keeps what was set up for them: they can open DeskAI Setup before the package goes, and if it's gone already, their
 other docks are still off, and `gnome-extensions enable ubuntu-dock@ubuntu.com` turns Ubuntu Dock back on.
@@ -215,7 +225,7 @@ other docks are still off, and `gnome-extensions enable ubuntu-dock@ubuntu.com` 
 
 ```sh
 ./install.sh            # runs right from this clone
-./uninstall.sh          # add --purge to delete your modes and stats too
+./uninstall.sh          # add --purge to delete your modes, presets and stats too
 dev/check.sh            # everything a change has to pass
 dev/nested.sh           # a throwaway GNOME Shell with its own HOME, for testing
 dev/smoke.sh            # tries the dock in that shell, on its own

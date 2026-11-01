@@ -81,6 +81,9 @@ spotify.desktop — Spotify"""
 SERVERS = [("deskai-app-dev.service", "vite :5173", "npm run dev", 5173, "up"),
            ("deskai-app-php.service", "server :8000", "php -S 127.0.0.1:8000", 8000, "down")]
 COMMANDS = [  # (what's typed, what a right answer does: the action's type and what its fields must contain)
+    ("buka preset", ("presets_window", {})),
+    ("preset pribadi", ("presets_window", {})),
+    ("bikin preset baru", ("presets_window", {})),
     ("siapin project gudang", ("setup_project", {"project": "/projects/sistem-gudang"})),
     ("set up gudnag", ("setup_project", {"project": "/projects/sistem-gudang"})),
     ("gua mau kerja di toko online, siapin dong", ("setup_project", {"project": "/projects/toko-online"})),

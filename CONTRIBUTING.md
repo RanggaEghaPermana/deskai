@@ -17,7 +17,9 @@ DeskAI helps you stay on what you're doing, tells you when something needs you, 
 A feature belongs if it does one of those three. Working on a project counts, so the command bar can start and stop what
 a project runs and say what's in its way: servers, containers, ports, room on the disk.
 
-It isn't a system administration tool, a chat with an AI, a launcher for everything, or a plugin system.
+It isn't a system administration tool, a chat with an AI, a launcher for everything, or a plugin system. What's personal to
+you goes in a preset, which is a list you write yourself. A new kind of step only belongs if a command or a step done by
+hand can't do the job.
 
 ## What DeskAI has to stay
 
@@ -25,7 +27,9 @@ A change that breaks one of these doesn't get merged, even if it works.
 
 1. **It works without AI.** AI can make a feature better, but nothing may need it.
 2. **It can only do what's on a list.** The command bar and the AI pick from a fixed list of actions, and never run a
-   command of their own. Adding to what the AI can pick is a decision about what DeskAI is, so it starts with an issue.
+   command of their own. Adding to what the AI can pick is a decision about what DeskAI is, so it starts with an issue. The
+   commands in your presets are yours: you write them, you see them before they first run, and the AI can't write, change
+   or start a preset.
 3. **Nothing leaves your computer that the README doesn't list.** Anything new that does goes under "What leaves your
    computer", in the same pull request.
 4. **It only does what it was asked.** Anything that can't be undone asks first.

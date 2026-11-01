@@ -302,7 +302,7 @@ class PuttingItBack(unittest.TestCase):
         self.assertEqual(installer.installed_version(), "")
 
     def files(self):
-        for name in ("COMMAND", "LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+        for name in ("COMMAND", "LAUNCHER", "PRESETS_LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             patcher = mock.patch.object(installer, name, self.root / "gone" / name)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -512,7 +512,7 @@ class PlainFailures(unittest.TestCase):
         with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
             self.assertTrue(installer.run_steps(steps, lambda *_: None))
         self.assertEqual(ran, ["service", "local_ai", "extension", "files", "polkit", "settings"])
-        for name in ("LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+        for name in ("LAUNCHER", "PRESETS_LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             self.patch(installer, name, self.root / "gone" / name)
         dict(installer.uninstall_steps())["files"]()
         self.assertFalse(command.exists())

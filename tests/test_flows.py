@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "daemon"))
 import brain  # noqa: E402
 import deskaid  # noqa: E402
 import learned  # noqa: E402
+import presets  # noqa: E402
 import senders  # noqa: E402
 import servers  # noqa: E402
 
@@ -58,6 +59,8 @@ class Fake(deskaid.Brain):
         self.docks_changed_timer = 0
         self.config_told = None
         self.routine_running = None
+        self.presets = presets.Store(folder / "presets.json")
+        self.preset_run = self.preset_asking = self.preset_meant = None
 
     def card(self, spec):
         self.cards.append(spec)

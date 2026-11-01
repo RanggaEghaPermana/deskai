@@ -28,6 +28,8 @@ function markupLabel(markup, styleClass) {
     const label = new St.Label({style_class: styleClass});
     label.clutter_text.set_markup(markup);
     label.clutter_text.line_wrap = true;
+    // A word too long for the card breaks instead of running off it: a command you're asked about has to show all of it.
+    label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
     label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
     return label;
 }

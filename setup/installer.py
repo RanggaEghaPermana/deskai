@@ -71,6 +71,7 @@ METAINFO = f"{APP_ID}.Setup.metainfo.xml"
 METAINFO_INSTALLED = Path("/usr/share/metainfo") / METAINFO  # where the .deb keeps it: a clone and a download have it in packaging/
 LANGUAGE_ATTRIBUTE = "{http://www.w3.org/XML/1998/namespace}lang"
 LAUNCHER = DATA / "applications" / f"{APP_ID}.Setup.desktop"
+PRESETS_LAUNCHER = DATA / "applications" / f"{APP_ID}.Presets.desktop"
 ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
 
 # What the AI choices mean in modes.json's llm.backend.
@@ -534,7 +535,7 @@ exec {python} {script} "$@"
 
 
 def _write_launcher(app_dir, python):
-    """The setup window in the app grid, to update or remove later. The .deb ships its own."""
+    """The setup window in the app grid, to update or remove later, and the one for presets. The .deb ships its own."""
     LAUNCHER.parent.mkdir(parents=True, exist_ok=True)
     LAUNCHER.write_text(f"""[Desktop Entry]
 Type=Application
@@ -544,6 +545,18 @@ Exec={python} {app_dir}/setup/deskai_setup.py
 Icon={APP_ID}
 Terminal=false
 Categories=Settings;GNOME;GTK;
+StartupNotify=true
+""")
+    PRESETS_LAUNCHER.write_text(f"""[Desktop Entry]
+Type=Application
+Name=My Presets
+Name[id]=Preset Pribadi
+Comment=Your own routines, started by words you choose
+Comment[id]=Kebiasaan lu sendiri, dimulai dengan kata yang lu pilih
+Exec={python} {app_dir}/daemon/presets_window.py
+Icon={APP_ID}
+Terminal=false
+Categories=Utility;GNOME;GTK;
 StartupNotify=true
 """)
     ICON.parent.mkdir(parents=True, exist_ok=True)
@@ -690,7 +703,7 @@ def _wait_until_off(*uuids, timeout=EXTENSION_OFF_WAIT_S):
 
 
 def uninstall_steps(purge=False):
-    """[(id, function)]: what removing DeskAI does. Keeps your modes and stats unless purge."""
+    """[(id, function)]: what removing DeskAI does. Keeps your modes, presets and stats unless purge."""
 
     def extension():
         record = install_record()
@@ -723,7 +736,7 @@ def uninstall_steps(purge=False):
         localai.remove()
 
     def files():
-        for path in (COMMAND, LAUNCHER, ICON):
+        for path in (COMMAND, LAUNCHER, PRESETS_LAUNCHER, ICON):
             path.unlink(missing_ok=True)
         for link in (EXTENSION_LINK, LOGIN_LINK):
             if link.is_symlink():
@@ -786,7 +799,7 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--dev", action="store_true")
     parser.add_argument("--uninstall", action="store_true")
-    parser.add_argument("--purge", action="store_true", help="with --uninstall: your modes and stats too")
+    parser.add_argument("--purge", action="store_true", help="with --uninstall: your modes, presets and stats too")
     args = parser.parse_args()
 
     failed = []

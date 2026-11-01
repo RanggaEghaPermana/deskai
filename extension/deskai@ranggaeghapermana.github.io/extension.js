@@ -1598,7 +1598,17 @@ export default class DeskAIExtension extends Extension {
                 this._menuItem(menu, this._t('deleteMode', {mode: label}), () => this._deleteMode(key));
             menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             this._menuItem(menu, this._t('newMode'), () => this._openModeDialog(null));
+            this._menuItem(menu, this._t('presets'), () => this._openPresets());
         });
+    }
+
+    // The daemon starts it, as it does everything that runs.
+    _openPresets() {
+        if (!this._brainOnline) {
+            this._showCard({id: 'command', kind: 'command', title: this._t('commandOffline'), timeout: 8});
+            return;
+        }
+        this._emitSignal('CardAction', '(ss)', ['presets', 'presets:open']);
     }
 
     _openAppPicker() {
@@ -2628,6 +2638,9 @@ export default class DeskAIExtension extends Extension {
         const create = new PopupMenu.PopupMenuItem(this._t('newMode'));
         create.connect('activate', () => this._debounce('menu-action', 0, () => this._openModeDialog(null)));
         menu.addMenuItem(create);
+        const presets = new PopupMenu.PopupMenuItem(this._t('presets'));
+        presets.connect('activate', () => this._openPresets());
+        menu.addMenuItem(presets);
 
         const edit = new PopupMenu.PopupMenuItem(this._t('editJson'));
         edit.connect('activate', () => {

@@ -21,9 +21,10 @@ SHELLS = {"bash", "sh", "dash", "zsh", "fish"}
 COMMAND_LINES = {"spawn_command_line_async", "spawn_command_line_sync", "create_from_commandline"}  # one string, parsed and run
 SHELL_IN_THE_EXTENSIONS = r"""spawn_?command_?line|create_from_commandline|['"](?:ba|da|z|fi)?sh['"],\s*['"]-\w*c['"]"""
 # Where a shell gets text to run on purpose, and which text: a server's command, from its project's files or your Claude
-# Code sessions, and the line for a new terminal. Never the model's words, so adding to this gets the same look as THE_MODEL_CAN.
+# Code sessions, the line for a new terminal, and a command you wrote in a preset. Never the model's words, so adding to this
+# gets the same look as THE_MODEL_CAN.
 SHELL_ON_PURPOSE = [("daemon/routine.py", "start_server", "step['command']"), ("daemon/routine.py", "start_server", "step['command']"),
-                    ("daemon/routine.py", "terminal_args", "inner")]
+                    ("daemon/routine.py", "terminal_args", "inner"), ("daemon/presets.py", "run_command", "command")]
 RAW_FIELDS = {"error", "exception", "traceback"}
 ON_A_CARD = {"_say", "_command_card", "card"}
 PROGRAMS_EVERYWHERE = {"bash", "gnome-session-quit", "systemctl", "systemd-run"}  # on any desktop DeskAI runs on

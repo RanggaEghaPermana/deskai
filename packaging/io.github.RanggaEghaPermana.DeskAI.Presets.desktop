@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=My Presets
+Name[id]=Preset Pribadi
+Comment=Your own routines, started by words you choose
+Comment[id]=Kebiasaan lu sendiri, dimulai dengan kata yang lu pilih
+Exec=deskai-presets
+Icon=io.github.RanggaEghaPermana.DeskAI
+Terminal=false
+Categories=Utility;GNOME;GTK;
+Keywords=preset;routine;template;
+StartupNotify=true
