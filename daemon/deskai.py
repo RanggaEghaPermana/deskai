@@ -221,10 +221,16 @@ def cmd_hook(args):
 
 def cmd_hooks(args):
     names = args.only or list(hooks.AGENTS)
+    failed = False
     for name in names:
         label, present, installed, install, remove, where = hooks.AGENTS[name]
         if args.action == "status":
-            state = "installed" if installed() else ("not installed" if present() else "not on this computer")
+            try:
+                state = "installed" if installed() else ("not installed" if present() else "not on this computer")
+            except (OSError, ValueError) as e:
+                print(f"{label:<12} can't tell: {hooks.said(e)}")
+                failed = True
+                continue
             print(f"{label:<12} {state}  ({where})")
             continue
         if args.action == "install" and not present():
@@ -234,13 +240,16 @@ def cmd_hooks(args):
         try:
             changed = install() if args.action == "install" else remove()
         except (OSError, ValueError) as e:
-            print(f"{label:<12} failed: {e}")
+            print(f"{label:<12} failed: {hooks.said(e)}")
+            failed = True
             continue
         verb = "installed" if args.action == "install" else "removed"
         print(f"{label:<12} {verb if changed else 'already ' + verb}  ({where})")
     if args.action == "install":
         print("\nAgent sessions already running pick the hooks up when reopened. "
               f"Backups of the original files: *{hooks.BACKUP_SUFFIX}")
+    if failed:
+        sys.exit(1)
 
 
 def print_plan(plan):
@@ -374,6 +383,17 @@ def cmd_session(args):
                         lambda mode: call("SetMode", "(s)", (mode,)))
 
 
+def print_agents():
+    for name, (label, present, installed, *_rest) in hooks.AGENTS.items():
+        try:
+            if present():
+                print(f"✓ {label} tells the dock when it's done" if installed()
+                      else f"- {label} doesn't report to the dock (optional: deskai hooks install --only {name})")
+        except (OSError, ValueError) as e:
+            print(f"✗ Can't tell whether {label} reports to the dock")
+            print(f"    → {hooks.said(e)}")
+
+
 def cmd_doctor(_args):
     config = brain.Config()
     config.refresh()
@@ -400,10 +420,7 @@ def cmd_doctor(_args):
         print(f"{'✓' if ok else '✗'} {label}")
         if not ok:
             print(f"    → {fix}")
-    for name, (label, present, installed, *_rest) in hooks.AGENTS.items():
-        if present():
-            print(f"✓ {label} tells the dock when it's done" if installed()
-                  else f"- {label} doesn't report to the dock (optional: deskai hooks install --only {name})")
+    print_agents()
 
 
 def main():

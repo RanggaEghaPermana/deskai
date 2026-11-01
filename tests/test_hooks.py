@@ -1,10 +1,13 @@
-"""`deskai hook`: what AI agents run to tell the dock they're done or need you. There's no dock while the screen
-is locked, and what they say then has to wait for it. Run with: python3 -m unittest discover tests"""
+"""`deskai hook`, `deskai hooks` and what `deskai doctor` says about agents. There's no dock while the screen is locked, and
+what agents say then has to wait for it. Their settings are their own files and can hold anything: Setup goes by what the
+command says, and people send doctor's output with a bug. Run with: python3 -m unittest discover tests"""
 
 import io
 import json
+import os
 import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -13,6 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "daemon"))
 
+import deskai  # noqa: E402
 import hooks  # noqa: E402
 
 NEEDS_YOU = json.dumps({"hook_event_name": "Notification", "notification_type": "permission_prompt", "session_id": "s1",
@@ -77,6 +81,146 @@ class WithNoDock(unittest.TestCase):
             with redirect_stdout(out):
                 hooks.run(agent, payload, no_dock)
             self.assertEqual(out.getvalue(), printed)
+
+
+# What's in the file, and what has to be said about it. Valid JSON goes as far as the shape of what's in it.
+BROKEN = (
+    (b"{bad json", "isn't valid JSON (line 1, column 2)"),
+    (b"[1, 2]", "isn't a JSON object"),
+    (b'{"hooks": {"Stop": [1]}}', "isn't laid out the way DeskAI expects"),
+    (b'{"hooks": {"Stop": [{"hooks": [1]}]}}', "isn't laid out the way DeskAI expects"),
+    (b"\xff\xfe", "isn't text"),
+)
+PYTHON_TALKING = ("Traceback", "[Errno", "codec", "char 1", "AttributeError", "object has no attribute", "bukan")
+
+
+class AgentFiles(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.claude = self.root / ".claude" / "settings.json"
+        self.gemini = self.root / ".gemini" / "settings.json"
+        self.codex = self.root / ".codex" / "config.toml"
+        for path in (self.claude, self.gemini, self.codex):
+            path.parent.mkdir()
+        for name, value in (("CLAUDE_SETTINGS", self.claude), ("GEMINI_SETTINGS", self.gemini), ("CODEX_CONFIG", self.codex)):
+            patcher = mock.patch.object(hooks, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def command(self, action):
+        """(exit code, what it printed), from the command itself."""
+        with redirect_stdout(io.StringIO()) as out:
+            try:
+                deskai.cmd_hooks(types.SimpleNamespace(only=None, action=action))
+            except SystemExit as e:
+                return e.code, out.getvalue()
+        return 0, out.getvalue()
+
+    def doctor(self):
+        with redirect_stdout(io.StringIO()) as out:
+            deskai.print_agents()
+        return out.getvalue()
+
+    def assert_plain(self, said):
+        for words in PYTHON_TALKING:
+            self.assertNotIn(words, said)
+
+    def test_broken_settings_are_said_by_everything_that_reads_them(self):
+        for content, why in BROKEN:
+            with self.subTest(content):
+                self.claude.write_bytes(content)
+                for action, line in (("status", "can't tell"), ("install", "failed"), ("remove", "failed")):
+                    code, said = self.command(action)
+                    self.assertEqual(code, 1, action)
+                    self.assertIn(f"Claude Code  {line}: {self.claude} {why}", said)
+                    self.assert_plain(said)
+                said = self.doctor()
+                self.assertIn(f"✗ Can't tell whether Claude Code reports to the dock\n    → {self.claude} {why}\n", said)
+                self.assert_plain(said)
+                self.assertEqual(self.claude.read_bytes(), content, "a file it can't use is left as it is")
+                self.assertFalse(self.claude.with_name(self.claude.name + hooks.BACKUP_SUFFIX).exists())
+
+    def test_the_other_agents_still_get_done(self):
+        for content, _why in BROKEN:
+            with self.subTest(content):
+                self.claude.write_bytes(content)
+                self.gemini.write_text("{}")
+                self.assertIn(f"Gemini CLI   installed  ({hooks.AGENTS['gemini'][5]})", self.command("install")[1])
+                self.assertIn("deskai", self.gemini.read_text())
+                self.assertEqual(self.claude.read_bytes(), content)
+                self.assertIn("✓ Gemini CLI tells the dock", self.doctor())
+                self.assertIn(f"Gemini CLI   removed  ({hooks.AGENTS['gemini'][5]})", self.command("remove")[1])
+                self.assertNotIn("deskai", self.gemini.read_text())
+
+    def test_codex_too(self):
+        self.codex.write_bytes(b"\xff\xfe")
+        for action, line in (("status", "can't tell"), ("install", "failed"), ("remove", "failed")):
+            code, said = self.command(action)
+            self.assertEqual(code, 1, action)
+            self.assertIn(f"Codex        {line}: {self.codex} isn't text", said)
+        self.assertIn(f"    → {self.codex} isn't text\n", self.doctor())
+
+    def test_codex_with_its_own_notify(self):
+        self.codex.write_text('notify = ["my-own-notifier"]\n')
+        code, said = self.command("install")
+        self.assertEqual(code, 1)
+        self.assertIn("already has its own `notify`", said)
+        self.assertIn("my-own-notifier", self.codex.read_text())
+        self.assertEqual(self.command("remove")[0], 0, "nothing of DeskAI's to take out")
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read anything")
+    def test_a_file_you_cant_read(self):
+        self.claude.write_text("{}")
+        self.claude.chmod(0)
+        self.addCleanup(self.claude.chmod, 0o600)
+        for action, line in (("status", "can't tell"), ("install", "failed"), ("remove", "failed")):
+            code, said = self.command(action)
+            self.assertEqual(code, 1, action)
+            self.assertIn(f"Claude Code  {line}: {self.claude}: Permission denied", said)
+            self.assert_plain(said)
+        self.assertIn(f"    → {self.claude}: Permission denied\n", self.doctor())
+
+    def test_a_folder_only_root_can_read_on_python_3_12(self):
+        # 3.12 raises here, and 3.14 says the file isn't there.
+        self.claude.write_text("{}")
+        with mock.patch.object(Path, "exists", side_effect=PermissionError(13, "Permission denied", str(self.claude))):
+            said = self.command("status")[1]
+        self.assertIn(f"{self.claude}: Permission denied", said)
+        self.assert_plain(said)
+
+    def test_writing_that_fails_is_said_in_words_too(self):
+        self.claude.write_text("{}")
+        with mock.patch.object(hooks.brain, "write_json_atomic", side_effect=PermissionError(13, "Permission denied", str(self.claude))):
+            code, said = self.command("install")
+        self.assertEqual(code, 1)
+        self.assertIn(f"failed: {self.claude}: Permission denied", said)
+        self.assert_plain(said)
+
+    def test_all_is_well(self):
+        self.claude.write_text('{"theme": "dark"}')
+        self.gemini.write_text("{}")
+        self.assertEqual(self.command("status")[0], 0)
+        self.assertEqual(self.command("install")[0], 0)
+        self.assertIn('"theme": "dark"', self.claude.read_text())
+        said = self.doctor()
+        self.assertIn("✓ Claude Code tells the dock", said)
+        self.assertNotIn("✗", said)
+        self.assertEqual(self.command("remove")[0], 0)
+        self.assertNotIn("deskai", self.claude.read_text())
+
+    def test_an_empty_file_is_as_good_as_none(self):
+        self.claude.write_text("")
+        self.assertEqual(self.command("status")[0], 0)
+        self.assertEqual(self.command("install")[0], 0)
+        self.assertIn("deskai", self.claude.read_text())
+
+    def test_what_an_error_says(self):
+        self.assertEqual(hooks.said(PermissionError(13, "Permission denied", "/a")), "/a: Permission denied")
+        self.assertEqual(hooks.said(OSError(28, "No space left on device")), "No space left on device")
+        self.assertEqual(hooks.said(ValueError("in words")), "in words")
+        self.assertEqual(hooks.said(OSError("no number")), "no number")
 
 
 if __name__ == "__main__":

@@ -199,12 +199,48 @@ def _backup(path):
     return backup
 
 
+def said(error):
+    """An error in words, without Python's [Errno 13]."""
+    if isinstance(error, OSError) and error.strerror:
+        return f"{error.filename}: {error.strerror}" if error.filename else error.strerror
+    return str(error)
+
+
+def _read(path):
+    """An agent's own file, which can hold anything, so what's wrong with it is said in words. "" when it isn't there."""
+    try:
+        return path.read_text() if path.exists() else ""
+    except UnicodeDecodeError as e:
+        raise ValueError(f"{path} isn't text") from e
+
+
+def _read_settings(path):
+    text = _read(path)
+    try:
+        settings = json.loads(text) if text else {}
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} isn't valid JSON (line {e.lineno}, column {e.colno})") from e
+    if not isinstance(settings, dict):
+        raise ValueError(f"{path} isn't a JSON object")
+    return settings
+
+
+def _checked(path, use, settings):
+    """use(settings), for settings that are valid JSON but might not be what the agent's are laid out like."""
+    try:
+        return use(settings)
+    except (AttributeError, TypeError) as e:
+        raise ValueError(f"{path} isn't laid out the way DeskAI expects") from e
+
+
+def _json_has_hooks(path):
+    return _checked(path, _has_hooks, _read_settings(path))
+
+
 def _edit_json(path, edit):
-    data = json.loads(path.read_text()) if path.exists() else {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} bukan object JSON")
+    data = _read_settings(path)
     before = json.dumps(data, sort_keys=True)
-    edit(data)
+    _checked(path, edit, data)
     if json.dumps(data, sort_keys=True) == before:
         return False
     _backup(path)
@@ -239,7 +275,7 @@ def install_gemini():
 
 
 def _codex_lines():
-    return CODEX_CONFIG.read_text().splitlines(keepends=True) if CODEX_CONFIG.exists() else []
+    return _read(CODEX_CONFIG).splitlines(keepends=True)
 
 
 def _codex_notify(lines):
@@ -294,11 +330,11 @@ def _remove_json(path):
 AGENTS = {
     # name: (label, is it here?, installed?, install, remove, where)
     "claude": ("Claude Code", lambda: CLAUDE_SETTINGS.parent.exists() or shutil.which("claude"),
-               lambda: CLAUDE_SETTINGS.exists() and _has_hooks(json.loads(CLAUDE_SETTINGS.read_text())),
+               lambda: _json_has_hooks(CLAUDE_SETTINGS),
                install_claude, lambda: _remove_json(CLAUDE_SETTINGS), CLAUDE_SETTINGS),
     "codex": ("Codex", lambda: CODEX_CONFIG.parent.exists() or shutil.which("codex"),
               _codex_installed, install_codex, remove_codex, CODEX_CONFIG),
     "gemini": ("Gemini CLI", lambda: GEMINI_SETTINGS.parent.exists() or shutil.which("gemini"),
-               lambda: GEMINI_SETTINGS.exists() and _has_hooks(json.loads(GEMINI_SETTINGS.read_text())),
+               lambda: _json_has_hooks(GEMINI_SETTINGS),
                install_gemini, lambda: _remove_json(GEMINI_SETTINGS), GEMINI_SETTINGS),
 }
