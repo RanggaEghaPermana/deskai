@@ -17,20 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Unit tests
-        run: python3 -m unittest discover -s tests
-      - name: The extensions' JavaScript parses
-        run: |
-          for file in extension/*/*.js; do
-            cp "$file" /tmp/check.mjs
-            node --check /tmp/check.mjs || { echo "in $file"; exit 1; }
-          done
-      - name: App metadata is valid
-        run: appstreamcli validate --no-net packaging/*.metainfo.xml
-      - name: No commit credits an AI
+      - name: Everything a change has to pass
         run: |
           git config --global --add safe.directory "$PWD"
-          for commit in $(git log -100 --format=%H); do
-            git log -1 --format=%B "$commit" > /tmp/message
-            sh dev/hooks/commit-msg /tmp/message || { git log -1 --format='%h %s' "$commit"; exit 1; }
-          done
+          dev/check.sh

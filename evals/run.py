@@ -2,8 +2,10 @@
 """Scores the AI pipeline on set cases, the way the daemon really uses it: lists first, then the model.
 
     python3 evals/run.py [--model qwen3:1.7b] [--language id] [--min 0.85]
+    python3 evals/run.py --no-model [--min-right 92]
 
-Needs Ollama running with the model. Run it before and after changing a prompt or a list.
+Needs Ollama running with the model. Run it before and after changing a prompt or a list. With --no-model
+it scores only what the lists decide, the same on any computer, and needs nothing else.
 """
 
 import argparse
@@ -91,9 +93,12 @@ def command_cases(config, llm, rows):
     for unit, label, command, port, state in cases.SERVERS:
         watch.items[unit] = {"unit": unit, "kind": "server", "label": label, "command": command, "cwd": "/projects/x", "port": port,
                              "state": state, "misses": 0, "started": 0, "since": 0}
-    desk = commands.desk(config, "building", watch, True, known_projects=cases.PROJECTS, focus=cases.FOCUS, apps=cases.APPS)
+    desk = commands.desk(config, "building", watch, True, known_projects=cases.PROJECTS, focus=cases.FOCUS, apps=cases.APPS) if llm else ""
     labels = [(key, mode["label"]) for key, mode in config.modes()]
     for text, (kind, fields) in cases.COMMANDS:
+        if not llm and not commands.quick(text, labels, watch, cases.PROJECTS):
+            continue  # for the model to decide
+
         def decide():
             quick = commands.quick(text, labels, watch, cases.PROJECTS)
             if quick:
@@ -103,19 +108,32 @@ def command_cases(config, llm, rows):
         scored("command", text, decide, lambda r, kind=kind, fields=fields: (command_right(r, kind, fields), r.get("by", "-"), str(r)), rows)
 
 
+def same_on_any_computer():
+    """Takes out what the lists look up on this computer: its services, its apps and its Compose projects."""
+    commands.dev_service_unit = lambda _name: None
+    commands._is_an_app = lambda _name: False
+    commands.compose.projects = lambda _folders=(): {}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default=brain.LLM_DEFAULTS["ollama_model"])
     parser.add_argument("--language", default="id", choices=["en", "id"])
     parser.add_argument("--min", type=float, default=0.0, help="fail below this share of right answers")
+    parser.add_argument("--no-model", action="store_true", help="only what the lists decide: needs no Ollama")
+    parser.add_argument("--min-right", type=int, default=0, help="fail with fewer right answers than this")
     args = parser.parse_args()
     config = brain.Config(ROOT / "extension" / UUID / "modes.default.json")
     config.refresh()
     config.data = {**config.data, "language": args.language}
-    llm = brain.LLM({**brain.LLM_DEFAULTS, "backend": "ollama", "ollama_model": args.model})
-    problem = llm.problem()
-    if problem:
-        sys.exit(problem)
+    if args.no_model:
+        llm = None
+        same_on_any_computer()
+    else:
+        llm = brain.LLM({**brain.LLM_DEFAULTS, "backend": "ollama", "ollama_model": args.model})
+        problem = llm.problem()
+        if problem:
+            sys.exit(problem)
     rows = []
     windows(config, llm, rows)
     notifications(rows)
@@ -128,9 +146,10 @@ def main():
         print(f"{section:<8} {sum(r['right'] for r in part)}/{len(part)} right · {by['list'] + by['asks']} without the model"
               f"{f' ({by_asks} of them by asking you)' if (by_asks := by['asks']) else ''}"
               f" · model median {model_times[len(model_times) // 2]:.1f}s")
-    score = sum(r["right"] for r in rows) / len(rows)
-    print(f"total    {sum(r['right'] for r in rows)}/{len(rows)} = {score:.0%}")
-    sys.exit(1 if score < args.min else 0)
+    right = sum(r["right"] for r in rows)
+    score = right / len(rows)
+    print(f"total    {right}/{len(rows)} = {score:.0%}")
+    sys.exit(1 if score < args.min or right < args.min_right else 0)
 
 
 if __name__ == "__main__":

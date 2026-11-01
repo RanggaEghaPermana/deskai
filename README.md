@@ -186,10 +186,12 @@ step leaves your other docks off: `gnome-extensions enable ubuntu-dock@ubuntu.co
 ```sh
 ./install.sh            # runs right from this clone
 ./uninstall.sh          # add --purge to delete your modes and stats too
+dev/check.sh            # everything a change has to pass
 dev/nested.sh           # a throwaway GNOME Shell with its own HOME, for testing
+dev/smoke.sh            # tries the dock in that shell, on its own
 packaging/build-deb.sh  # builds dist/deskai_<version>_all.deb
 python3 -m unittest discover tests
-python3 evals/run.py    # scores the AI pipeline on set cases (needs Ollama)
+python3 evals/run.py    # scores the AI pipeline on set cases (needs Ollama, or add --no-model)
 ```
 
 `extension/` holds the GNOME Shell extensions, `daemon/` is the background service (`deskaid`) and the
@@ -203,8 +205,8 @@ happened, and the output of `deskai doctor`. Check the output for anything priva
 
 ## Contributing
 
-Pull requests are welcome. Contributions are accepted under the same license as the project. Please
-test changes in `dev/nested.sh`, and say which GNOME version you tested on.
+Pull requests are welcome, and [CONTRIBUTING.md](CONTRIBUTING.md) says what they need. Contributions are accepted
+under the same license as the project.
 
 ## Terms and license
 

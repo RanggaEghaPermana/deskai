@@ -3,13 +3,19 @@
 # so it can be tested without touching the real session.
 #   dev/nested.sh            start (foreground)
 #   source dev/run/env       in another shell to talk to it
-#   EXTRA_EXTENSIONS="uuid …" also load some of your installed extensions
+#   EXTRA_EXTENSIONS="uuid …" also load DeskAI's other extension, or some of your installed ones
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UUID="deskai@ranggaeghapermana.github.io"
 RUN="$ROOT/dev/run"
 SIZE="${1:-1600x900}"
+
+# The shell's Wayland socket goes in here, and a socket's path can't be longer than 107 characters.
+if [ "${#RUN}" -gt 89 ]; then
+  echo "$ROOT is too deep for a test shell: its Wayland socket's path would be too long. Clone it somewhere shorter." >&2
+  exit 1
+fi
 
 rm -rf "$RUN"
 mkdir -p "$RUN/home" "$RUN/runtime"
@@ -35,7 +41,11 @@ ln -s "$ROOT/extension/$UUID" "$XDG_DATA_HOME/gnome-shell/extensions/$UUID"
 ln -s "$ROOT/dev/testhelper@deskai.dev" "$XDG_DATA_HOME/gnome-shell/extensions/testhelper@deskai.dev"
 ENABLED="\"$UUID\", \"testhelper@deskai.dev\""
 for extra in ${EXTRA_EXTENSIONS:-}; do
-  ln -s "$REAL_HOME/.local/share/gnome-shell/extensions/$extra" "$XDG_DATA_HOME/gnome-shell/extensions/$extra"
+  if [ -d "$ROOT/extension/$extra" ]; then
+    ln -s "$ROOT/extension/$extra" "$XDG_DATA_HOME/gnome-shell/extensions/$extra"
+  else
+    ln -s "$REAL_HOME/.local/share/gnome-shell/extensions/$extra" "$XDG_DATA_HOME/gnome-shell/extensions/$extra"
+  fi
   ENABLED="$ENABLED, \"$extra\""
 done
 export ENABLED
