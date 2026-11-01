@@ -2619,8 +2619,22 @@ export default class DeskAIExtension extends Extension {
     // ---- focus sensing --------------------------------------------------
 
     _watchFocus() {
-        global.display.connectObject('notify::focus-window', () => this._onFocusWindowChanged(), this);
+        global.display.connectObject(
+            'notify::focus-window', () => this._onFocusWindowChanged(),
+            'window-created', (_display, win) => this._letClipboardToolIn(win),
+            this);
         this._onFocusWindowChanged();
+    }
+
+    // wl-paste and wl-copy only reach the clipboard once a tiny window of theirs has the keyboard. GNOME refuses
+    // it under an always-on-top window over the middle of the screen, even a minimized one, and they wait forever.
+    _letClipboardToolIn(win) {
+        const shown = win.connect('shown', () => {
+            win.disconnect(shown);
+            const {width, height} = win.get_frame_rect();
+            if (win.get_title() === 'wl-clipboard' && width <= 1 && height <= 1 && !win.has_focus())
+                win.activate(0); // 0 means now: a timestamp could be older than your last key press, and be refused
+        });
     }
 
     _onFocusWindowChanged() {
@@ -2705,6 +2719,11 @@ export default class DeskAIExtension extends Extension {
         // GNOME's "Screencast recorded" (no picture, unlike a screenshot's): the dock's card
         // for the recording comes a moment later and takes its place.
         if (source.iconName === 'screenshooter-symbolic' && !notification.gicon && notification.body) {
+            this._quiet.add(notification);
+            return;
+        }
+        // GNOME's "“wl-clipboard” is ready", for a window that _letClipboardToolIn focuses right away.
+        if (notification.forFeedback && /\bwl-clipboard\b/.test(notification.body ?? '')) {
             this._quiet.add(notification);
             return;
         }

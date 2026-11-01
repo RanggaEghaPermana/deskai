@@ -684,7 +684,7 @@ def title_match(old, new):
 def pair_windows(old_windows, new_windows):
     """Saved windows with the app's windows now: by title first, then in the order they opened."""
     pairs, left = [], sorted(new_windows, key=lambda w: w["id"])
-    todo = list(old_windows)
+    todo = sorted(old_windows, key=lambda w: w.get("id", 0))  # a snapshot doesn't list them in that order
     for score in (2, 1):
         for old in list(todo):
             new = next((n for n in left if title_match(old["title"], n["title"]) >= score), None)
@@ -843,7 +843,12 @@ def place_windows(dock, saved, placed, timeout=None):
             by_title = {id(w): i for i, w in mine}
             for old, new in pair_windows([w for _i, w in mine], theirs):
                 i = by_title[id(old)]
-                dock.place(new["id"], place_spec(old))
+                spec = place_spec(old)
+                # Only the same window gets this back. On another it stays over your desk, and GNOME won't
+                # focus what opens under it, so wl-paste waits forever and pasting a picture hangs.
+                if not title_match(old["title"], new["title"]):
+                    spec.pop("above", None)
+                dock.place(new["id"], spec)
                 placed[i] = new["id"]
                 del wanted[i]
         if wanted:

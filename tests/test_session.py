@@ -172,5 +172,36 @@ class Restore(unittest.TestCase):
         self.assertEqual(dock.place.call_args.args[0], 101)
 
 
+class PlacingWindows(unittest.TestCase):
+    """An app's windows after a login: a small one always on top of its main one, as Discord's was."""
+
+    SMALL = {"id": 55, "app": "chat", "title": "A friend", "rect": [1, 2, 3, 4], "above": True}
+    MAIN = {"id": 52, "app": "chat", "title": "A friend - Chat", "rect": [5, 6, 7, 8], "above": False}
+
+    def place(self, saved, windows):
+        dock = mock.Mock()
+        dock.windows.return_value = windows
+        session.place_windows(dock, saved, {}, timeout=5)
+        return {call.args[0]: call.args[1] for call in dock.place.call_args_list}
+
+    def test_without_titles_to_go_by_the_oldest_window_gets_the_oldest_place(self):
+        # The snapshot lists the small one first, though the main window opened first, in both logins.
+        pairs = session.pair_windows([self.SMALL, self.MAIN], [{"id": 5, "title": "Loading"}])
+        self.assertEqual([(old["id"], new["id"]) for old, new in pairs], [(52, 5)])
+
+    def test_titles_come_before_the_order(self):
+        pairs = session.pair_windows([self.SMALL, self.MAIN], [{"id": 5, "title": "A friend"}, {"id": 9, "title": "A friend - Chat"}])
+        self.assertEqual(sorted((old["id"], new["id"]) for old, new in pairs), [(52, 9), (55, 5)])
+
+    def test_always_on_top_comes_back_on_the_same_window(self):
+        placed = self.place([self.SMALL], [{"id": 5, "app": "chat", "title": "A friend"}])
+        self.assertTrue(placed[5]["above"])
+
+    def test_always_on_top_doesnt_go_on_another_window(self):
+        placed = self.place([self.SMALL], [{"id": 5, "app": "chat", "title": "Loading"}])
+        self.assertNotIn("above", placed[5])
+        self.assertEqual(placed[5]["rect"], [1, 2, 3, 4])
+
+
 if __name__ == "__main__":
     unittest.main()

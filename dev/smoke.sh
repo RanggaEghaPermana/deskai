@@ -226,6 +226,44 @@ else
 fi
 try_everything "animations off" false
 
+# wl-paste and wl-copy need a window of theirs focused, which GNOME refuses under an always-on-top window.
+if [ "$windows" != "2" ]; then
+  skipped "the clipboard tools: no two windows to try them on"
+elif ! command -v wl-paste >/dev/null; then
+  skipped "the clipboard tools: wl-clipboard isn't installed"
+else
+  ev "(() => {
+    [_T.top, _T.front] = _T.wins();
+    Main.messageTray.connect('source-added', (_tray, source) => source.connect('notification-added', (_source, n) => {
+      if (/wl-clipboard/.test(n.body ?? ''))
+        _T.quiet = _T.ext._quiet.has(n);
+    }));
+    _T.ext._desk._apply(_T.top, {max_h: true, max_v: true, above: true, minimized: true});
+  })()" >/dev/null
+
+  # The tools' tiny window opens in the middle of the screen. Only over the window in front does GNOME say it refused.
+  try_clipboard() {
+    ev "_T.ext._desk._apply(_T.front, $2); Main.activateWindow(_T.front)" >/dev/null
+    sleep 0.7
+    printf 'pasted' | timeout 5 wl-copy
+    expect "always on top, $1: wl-copy gets through" "$?" 0
+    sleep 0.2
+    expect "always on top, $1: wl-paste gets through" "$(timeout 5 wl-paste --no-newline)" pasted
+    sleep 0.2
+    expect "always on top, $1: it keeps the focus" "$(val "global.display.focus_window === _T.front")" true
+    expect "always on top, $1: the other stays on top" "$(val "_T.top.is_above()")" true
+  }
+  try_clipboard "from a small window" "{max_h: false, max_v: false, rect: [0, 40, 300, 200]}"
+  try_clipboard "from a maximized window" "{max_h: true, max_v: true}"
+
+  quiet="$(val "_T.quiet ?? 'none'")"
+  if [ "$quiet" = none ]; then
+    skipped "GNOME's notification about the clipboard tools: this GNOME didn't send one"
+  else
+    expect "GNOME's notification about the clipboard tools doesn't show" "$quiet" true
+  fi
+fi
+
 logged="$(grep -E "$ERRORS" "$LOG" | sed -E 's/^.*(JS ERROR|Gjs-CRITICAL|GNOME Shell-CRITICAL)( \*\*: [0-9:.]+:)?/\1/' | sort | uniq -c | cut -c1-240 | head -n 14)"
 if [ -z "$logged" ]; then
   passed "nothing logged an error"
