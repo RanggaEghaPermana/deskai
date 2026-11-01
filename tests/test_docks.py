@@ -1,6 +1,7 @@
 """DeskAI's dock taking the place of the others. Run with: python3 -m unittest discover tests"""
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -65,6 +66,13 @@ class Docks(unittest.TestCase):
         (self.modes / "ubuntu.json").write_text(json.dumps({"enabledExtensions": list(uuids)}))
 
 
+class TheDocksOwnList(unittest.TestCase):
+    def test_its_the_same_list(self):
+        source = (Path(__file__).resolve().parents[1] / "extension" / "deskai@ranggaeghapermana.github.io" / "docks.js").read_text()
+        listed = source.split("new Set([")[1].split("])")[0]
+        self.assertEqual(sorted(re.findall(r"'([^']+)'", listed)), sorted(docks.OTHERS))
+
+
 class TurningOff(Docks):
     def test_a_dock_the_session_itself_turns_on(self):
         self.session_starts(UBUNTU)
@@ -109,7 +117,7 @@ class TurningOff(Docks):
         self.install(LITE)
         settings = FakeSettings(disabled=[LITE])
         self.assertEqual(docks.turn_off_others(settings), [])
-        self.assertEqual(json.loads(self.record.read_text()), {})
+        self.assertFalse(self.record.exists())
 
     def test_a_dock_installed_but_never_turned_on_isnt_mentioned(self):
         self.install(DASH)
@@ -128,20 +136,46 @@ class TurningOff(Docks):
         self.assertEqual(docks.turn_off_others(settings), [])
         self.assertEqual((settings.enabled, settings.disabled), ([DOCKER], []))
 
-    def test_only_once(self):
+    def test_one_that_comes_back_on_goes_off_again(self):
         self.session_starts(UBUNTU)
         settings = FakeSettings()
         docks.turn_off_others(settings)
-        settings.set_strv("disabled-extensions", [])  # you turned it back on yourself
-        self.assertEqual(docks.turn_off_others(settings), [])
-        self.assertEqual(settings.disabled, [])
+        settings.set_strv("disabled-extensions", [])  # the Extensions app, an update, a reset
+        self.assertEqual(docks.turn_off_others(settings), ["Ubuntu Dock"])
+        self.assertEqual(settings.disabled, [UBUNTU])
 
-    def test_a_dock_installed_after_the_first_time_is_your_choice(self):
-        docks.turn_off_others(FakeSettings())
+    def test_a_dock_installed_later_goes_off_too(self):
+        self.session_starts(UBUNTU)
+        settings = FakeSettings()
+        docks.turn_off_others(settings)
+        self.install(DASH)
+        settings.set_strv("enabled-extensions", [DASH])
+        self.assertEqual(docks.turn_off_others(settings), ["Dash to Dock"])
+        self.assertEqual(json.loads(self.record.read_text()), {UBUNTU: False, DASH: True})
+
+    def test_with_nothing_on_it_changes_nothing(self):
+        self.session_starts(UBUNTU)
+        settings = FakeSettings()
+        docks.turn_off_others(settings)
+        with mock.patch.object(settings, "set_strv") as writes:
+            self.assertEqual(docks.turn_off_others(settings), [])
+        writes.assert_not_called()  # GNOME goes through its extensions each time this list is written
+
+    def test_what_you_had_before_deskai_is_what_counts(self):
         self.install(DASH)
         settings = FakeSettings(enabled=[DASH])
-        self.assertEqual(docks.turn_off_others(settings), [])
-        self.assertEqual(settings.enabled, [DASH])
+        docks.turn_off_others(settings)
+        settings.set_strv("disabled-extensions", [])
+        docks.turn_off_others(settings)
+        self.assertEqual(json.loads(self.record.read_text()), {DASH: True})
+
+    def test_a_broken_record_doesnt_stop_it(self):
+        self.session_starts(UBUNTU)
+        self.record.parent.mkdir(parents=True)
+        self.record.write_text("{")
+        settings = FakeSettings()
+        self.assertEqual(docks.turn_off_others(settings), ["Ubuntu Dock"])
+        self.assertEqual(json.loads(self.record.read_text()), {UBUNTU: False})
 
     def test_a_broken_session_mode_file_doesnt_stop_it(self):
         self.install(DASH)
@@ -159,6 +193,15 @@ class Restoring(Docks):
     def off(self, settings):
         docks.turn_off_others(settings)
         return settings
+
+    def test_one_that_came_on_later_goes_back_too(self):
+        self.session_starts(UBUNTU)
+        settings = self.off(FakeSettings())
+        self.install(DASH)
+        settings.set_strv("enabled-extensions", [DASH])
+        docks.turn_off_others(settings)
+        docks.restore(settings)
+        self.assertEqual((settings.enabled, settings.disabled), ([DASH], []))
 
     def test_everything_goes_back(self):
         self.session_starts(UBUNTU)

@@ -28,6 +28,7 @@ import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
 import {isValidConfig} from './config.js';
 import {ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
+import {OneDock} from './docks.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
 import {INBOX_DEFAULTS, Inbox, RANK, sourceAppId} from './inbox.js';
 import {MOTION, Motion} from './motion.js';
@@ -228,6 +229,16 @@ let keptWhileLocked = null;
 
 export default class DeskAIExtension extends Extension {
     enable() {
+        // GNOME restarts the extensions after one it turns off, and when two of those overlap, this can get called twice
+        // in a row. A second dock would sit on the first for good.
+        if (this._on) {
+            try {
+                this.disable();
+            } catch (e) { // a start that failed partway leaves things half there: this one shouldn't fail for it too
+                logError(e, 'DeskAI: clearing away the last start');
+            }
+        }
+        this._on = true;
         // Without Ubuntu Dock, GNOME 46 starts a session in the overview. Later versions keep their dash.
         if (SHELL_MAJOR < 50)
             this._beTheOnlyDock();
@@ -289,6 +300,9 @@ export default class DeskAIExtension extends Extension {
 
         this._motion = new Motion();
         this._syncMotion();
+        this._oneDock = new OneDock(name => this._showCard({
+            id: 'one-dock', kind: 'command', title: 'DeskAI', text: this._t('otherDockStaysOff', {name}), actions: [], timeout: 12,
+        }));
         this._pickUpAfterLock();
     }
 
@@ -347,6 +361,11 @@ export default class DeskAIExtension extends Extension {
     }
 
     disable() {
+        if (!this._on)
+            return;
+        this._on = false;
+        this._oneDock?.destroy();
+        this._oneDock = null;
         this._giveBackDash();
         this._motion?.disable();
         this._motion = null;

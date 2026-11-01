@@ -157,7 +157,19 @@ class Ollama(Fixture):
             with self.assertRaises(brain.LLMError) as caught:
                 self.llm.ask("s", "p", SCHEMA)
         self.assertEqual(caught.exception.hint, "llm_ollama_model")
-        self.assertEqual(caught.exception.params["model"], "qwen3:1.7b")
+
+    def test_still_downloading_isnt_a_problem_with_ollama(self):
+        missing = urllib.error.HTTPError("u", 404, "not found", {}, io.BytesIO(b""))
+        self.addCleanup(missing.close)
+        for error in (urllib.error.URLError("refused"), missing):
+            with self.subTest(error), mock.patch.object(brain.localai, "percent", return_value=40), \
+                    mock.patch.object(brain.urllib.request, "urlopen", side_effect=error), self.assertRaises(brain.LLMError) as caught:
+                self.llm.ask("s", "p", SCHEMA)
+            self.assertEqual((caught.exception.hint, caught.exception.params), ("llm_local_ai_getting", {"percent": 40}))
+
+    def test_doctor_says_its_still_downloading(self):
+        with mock.patch.object(brain.localai, "percent", return_value=40), mock.patch.object(self.llm, "_ollama_has_model", return_value=False):
+            self.assertIn("40%", self.llm.problem())
 
     def test_no_fallback_loop(self):
         with mock.patch.object(brain.urllib.request, "urlopen", side_effect=urllib.error.URLError("refused")) as urlopen:

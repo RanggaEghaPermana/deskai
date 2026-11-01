@@ -23,6 +23,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from xml.etree import ElementTree
 
 import gi
 
@@ -33,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "daemon"))
 
 import docks  # noqa: E402
+import localai  # noqa: E402
 import personalize  # noqa: E402
 
 UUID = "deskai@ranggaeghapermana.github.io"
@@ -65,6 +67,9 @@ ENV_FILE = CONFIG_DIR / "env"
 MODES_FILE = CONFIG_DIR / "modes.json"
 ROUTINE_FILE = CONFIG_DIR / "routine.json"
 APP_ID = "io.github.RanggaEghaPermana.DeskAI"
+METAINFO = f"{APP_ID}.Setup.metainfo.xml"
+METAINFO_INSTALLED = Path("/usr/share/metainfo") / METAINFO  # where the .deb keeps it: a clone and a download have it in packaging/
+LANGUAGE_ATTRIBUTE = "{http://www.w3.org/XML/1998/namespace}lang"
 LAUNCHER = DATA / "applications" / f"{APP_ID}.Setup.desktop"
 ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
 
@@ -79,7 +84,7 @@ PACKAGES = {
 }
 
 
-# What goes wrong, in the words of apt, pkexec, pip, venv, Ollama, systemctl and Python, and the sentence in the setup
+# What goes wrong, in the words of apt, pkexec, pip, venv, systemctl and Python, and the sentence in the setup
 # window's STRINGS that says it plainly. The first that matches wins, and none has anything to fill in. Python's words can follow
 # the desktop's language once GTK is loaded, so these go by its error numbers: 28 and 122 are a full disk and a used-up quota,
 # 1, 13 and 30 are not being allowed and a read-only disk, and 2 is something missing.
@@ -89,8 +94,6 @@ TROUBLES = (
     (re.compile(r"could not get lock|is another process using it", re.I), "trouble_package_busy"),
     (re.compile(r"unable to locate package|has no installation candidate", re.I), "trouble_package_missing"),
     (re.compile(r"\[Errno (28|122)\]|no space left|enough free space|quota exceeded", re.I), "trouble_no_room"),
-    (re.compile(r"could not connect to ollama|ollama server not responding", re.I), "trouble_ollama_off"),
-    (re.compile(r"pull model manifest: file does not exist", re.I), "trouble_model_missing"),
     (re.compile(r"temporary failure (in name )?resol|could not resolve|could not connect to|dial tcp|no such host"
                 r"|network is unreachable|connection refused|connection timed out|read timed out", re.I), "trouble_no_connection"),
     (re.compile(r"ensurepip", re.I), "trouble_venv"),
@@ -103,8 +106,7 @@ TROUBLES = (
 # from turning on, a settings file that can't be read shouldn't leave DeskAI half removed, since trying again won't help, and
 # DeskAI works without AI, so Ollama being off or out of reach shouldn't stop an install or leave an update half done.
 CAN_FAIL = {"hooks", "ollama"}
-PROGRESS_BAR = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")  # how Ollama draws one, in what it says on stderr
-SAID_KEEPS = 4000     # characters of what a tool said: Ollama's bar repeats for a whole download, and the error comes last
+SAID_KEEPS = 4000     # characters of what a tool said: the error comes last
 LOG_KEEPS = 64 * 1024
 EXTENSION_OFF_WAIT_S = 8
 
@@ -126,7 +128,7 @@ def _known_trouble(said):
 def _said(result):
     """What a tool said. Both its outputs, since venv says why it can't work on stdout."""
     said = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    return PROGRESS_BAR.sub("", said).strip()[-SAID_KEEPS:] or f"exit code {result.returncode}"
+    return said.strip()[-SAID_KEEPS:] or f"exit code {result.returncode}"
 
 
 def _tool_failed(key, result, **fields):
@@ -223,19 +225,6 @@ def find_claude():
     return ""
 
 
-def find_ollama():
-    for candidate in [shutil.which("ollama"), HOME / ".local/bin/ollama"]:
-        if candidate and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return ""
-
-
-def ollama_model():
-    """The local model the default settings use."""
-    defaults = read_json(ROOT / "extension" / UUID / "modes.default.json") or {}
-    return (defaults.get("llm") or {}).get("ollama_model", "qwen3:1.7b")
-
-
 def detected_agents():
     """The AI coding agents on this computer, by name."""
     return [label for label, (folder, exe) in AGENT_DIRS.items() if (HOME / folder).exists() or shutil.which(exe)]
@@ -318,6 +307,45 @@ def installed_version():
     return install_record().get("version", "")
 
 
+def _version_parts(text):
+    return tuple(int(part) for part in re.findall(r"\d+", text))
+
+
+def newer(version_, than):
+    """Whether one version comes after another. An unknown one comes before everything."""
+    return _version_parts(version_) > _version_parts(than)
+
+
+def update_from():
+    """The version this one would replace, or None if there's nothing to update. Only a finished install says which it is:
+    one that was interrupted has to go through the whole of setup, to ask what it never got to ask."""
+    there = installed_version()
+    return there if there and there != version() else None
+
+
+def whats_new(since, language):
+    """[(version, [what's new in it])] for the releases after `since`, newest first, in your language where they have
+    it. Empty if the list can't be read: it shouldn't stand in the way of an update."""
+    root = None
+    for path in (ROOT / "packaging" / METAINFO, METAINFO_INSTALLED):
+        try:
+            root = ElementTree.parse(path).getroot()
+            break
+        except (OSError, ElementTree.ParseError):
+            continue
+    if root is None:
+        return []
+    releases = []
+    for release in root.findall("./releases/release"):
+        items = release.findall("./description/ul/li")
+        chosen = [item for item in items if item.get(LANGUAGE_ATTRIBUTE) == language] or \
+                 [item for item in items if item.get(LANGUAGE_ATTRIBUTE) is None]
+        if newer(release.get("version", ""), since):
+            releases.append((release.get("version", ""), [" ".join("".join(item.itertext()).split()) for item in chosen]))
+    releases.sort(key=lambda found: _version_parts(found[0]), reverse=True)
+    return releases
+
+
 def read_modes():
     """What's in modes.json, or {} if it isn't an object: gone, or broken."""
     modes = read_json(MODES_FILE)
@@ -331,7 +359,7 @@ def current_choices():
     backend = llm.get("backend", "") if isinstance(llm, dict) else ""
     ai = {v: k for k, v in BACKENDS.items()}.get(backend, "")
     if backend == "auto":
-        ai = "api" if has_api_key() else "claude" if find_claude() else "ollama" if find_ollama() else "none"
+        ai = "api" if has_api_key() else "claude" if find_claude() else "ollama" if localai.find_ollama() else "none"
     routine = read_json(ROUTINE_FILE) or {}
     return {"language": modes.get("language", ""), "ai": ai, "routine": routine.get("enabled", False)}
 
@@ -354,6 +382,7 @@ class Options:
     routine: bool = False
     dev: bool = False            # run from this clone, with no copy
     keep_config: bool = False    # leave the AI, language and routine settings as they are
+    update: bool = False         # what's running keeps running until the next login, when the new dock and service come up together
     log: list = field(default_factory=list)
 
 
@@ -452,18 +481,6 @@ def _make_venv(python):
         raise _tool_failed("trouble_anthropic", result)
 
 
-def _pull_ollama_model(model):
-    """Downloads the local model, if it isn't here yet."""
-    ollama = find_ollama()
-    if not ollama:
-        raise SetupError("trouble_no_ollama", "no ollama on PATH or in ~/.local/bin")
-    if model in run(ollama, "list").stdout:
-        return
-    result = run(ollama, "pull", model, timeout=3600)
-    if result.returncode != 0:
-        raise _tool_failed("trouble_model", result, model=model)
-
-
 def _service_path():
     """systemd user services don't get your shell's PATH, and the brain needs `claude`."""
     claude = find_claude()
@@ -472,7 +489,7 @@ def _service_path():
     return ":".join(dict.fromkeys(d for d in dirs if d))
 
 
-def _write_service(app_dir, python):
+def _write_service(app_dir, python, restart=True):
     UNIT.parent.mkdir(parents=True, exist_ok=True)
     deskaid = app_dir / "daemon" / "deskaid.py"
     UNIT.write_text(f"""[Unit]
@@ -491,7 +508,7 @@ RestartSec=5
 [Install]
 WantedBy=graphical-session.target
 """)
-    for command in (("daemon-reload",), ("enable", SERVICE), ("restart", SERVICE)):
+    for command in (("daemon-reload",), ("enable", SERVICE), ("restart" if restart else "start", SERVICE)):
         result = run("systemctl", "--user", *command)
         if result.returncode != 0:
             raise _tool_failed("trouble_service", result)
@@ -558,16 +575,38 @@ def has_polkit_rule():
     return visible(POLKIT_RULE) or visible(POLKIT_GENERATED)
 
 
+def dock_is_running():
+    """Whether GNOME has the dock loaded, in this session. If it can't be asked, it's taken not to."""
+    try:
+        return "State: ACTIVE" in run("gnome-extensions", "info", UUID, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def replace_docks_for_next_login():
+    """Just before the login that brings the dock up: the other docks go now, or both would be there for a moment
+    at that login. Returns whether any did, so they can come back if you don't log out after all."""
+    if dock_is_running():
+        return False
+    return bool(docks.turn_off_others())
+
+
 def _enable_extension():
     """Turns the extensions on for the next login: GNOME only reads new extensions when it starts. Returns what it found
-    changed, for removing DeskAI to put back. An update leaves DeskAI Login as you left it, since you can turn that off."""
+    changed, for removing DeskAI to put back. An update leaves DeskAI Login as you left it, since you can turn that off.
+    Each list is only written if it's different: GNOME goes through its extensions each time one is, and two at once can overlap."""
     settings = Gio.Settings.new("org.gnome.shell")
     ours = (UUID,) if installed_version() else (UUID, LOGIN_UUID)
     enabled = settings.get_strv("enabled-extensions")
-    settings.set_strv("enabled-extensions", [*enabled, *(u for u in ours if u not in enabled)])
-    settings.set_strv("disabled-extensions", [u for u in settings.get_strv("disabled-extensions") if u not in ours])
+    missing = [u for u in ours if u not in enabled]
+    if missing:
+        settings.set_strv("enabled-extensions", [*enabled, *missing])
+    disabled = settings.get_strv("disabled-extensions")
+    if any(u in disabled for u in ours):
+        settings.set_strv("disabled-extensions", [u for u in disabled if u not in ours])
     found = {"extensions_were_off": settings.get_boolean("disable-user-extensions")}
-    settings.set_boolean("disable-user-extensions", False)
+    if found["extensions_were_off"]:
+        settings.set_boolean("disable-user-extensions", False)
     # Ubuntu fills the screen with this before the desktop appears: gray by default, and a flash at login.
     login_screen = _login_screen()
     found["login_color_was_unset"] = bool(login_screen and login_screen.get_user_value("background-color") is None)
@@ -598,18 +637,22 @@ def install_steps(options):
             _make_venv(python)
 
     def local_model():
-        if options.ai == "ollama":
-            _pull_ollama_model(ollama_model())
+        # Only starts it: the download goes on in the background, after this window and across a logout.
+        if options.ai == "ollama" and not options.keep_config and not localai.want(python, state["app_dir"]):
+            raise SetupError("trouble_service", f"systemctl couldn't start {localai.GETTER}")
 
     def settings():
         if not options.keep_config:
             _write_config(state["app_dir"], options)
+            # With Claude's login on "auto", DeskAI's Ollama is what it falls back on, so that one keeps running.
+            if options.ai != "ollama":
+                localai.stop(server=options.ai != "claude")
 
     def service():
         # An existing venv stays in use: it may hold the SDK this install relies on.
         chosen = str(VENV / "bin" / "python") if (VENV / "bin" / "python").exists() else python
         _write_command(state["app_dir"], chosen)
-        _write_service(state["app_dir"], chosen)
+        _write_service(state["app_dir"], chosen, restart=not options.update)
 
     def hooks():
         if options.keep_config:
@@ -676,6 +719,9 @@ def uninstall_steps(purge=False):
         UNIT.unlink(missing_ok=True)
         run("systemctl", "--user", "daemon-reload")
 
+    def local_ai():
+        localai.remove()
+
     def files():
         for path in (COMMAND, LAUNCHER, ICON):
             path.unlink(missing_ok=True)
@@ -710,7 +756,7 @@ def uninstall_steps(purge=False):
 
     # The service goes first: with it still running, the dock going and coming back looks like a new install to it, and it
     # turns off the docks this has just given back.
-    return [("service", service), ("extension", extension), ("hooks", hooks), ("files", files),
+    return [("service", service), ("local_ai", local_ai), ("extension", extension), ("hooks", hooks), ("files", files),
             ("polkit", polkit), ("settings", settings)]
 
 
@@ -758,6 +804,10 @@ def main():
             print(f"{'✓' if check.ok else '✗' if check.required else '-'} {check.id}  {check.detail}")
         return
     if args.uninstall:
+        # Uninstalling the package runs this for everyone logged in, and this may be someone who never set DeskAI up, or
+        # already removed it. There's nothing of theirs to put back, and no note of what they had.
+        if not is_installed():
+            return
         run_steps(uninstall_steps(args.purge), show, keep_going=True)
         sys.exit(1 if failed else 0)
     if not args.dev:

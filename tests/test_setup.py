@@ -48,13 +48,6 @@ PIP_NOTHING_THERE = ("ERROR: Could not find a version that satisfies the require
                      "ERROR: No matching distribution found for anthropic\n")
 PIP_NO_ROOM = "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device\n"
 PIP_NOT_ALLOWED = "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: '/usr/lib/python3/x'\n"
-OLLAMA_BAR = ("\x1b[?2026h\x1b[?25l\x1b[1Gpulling manifest \u280b \x1b[K\x1b[?25h\x1b[?2026l"  # measured, as all of Ollama's
-              "\x1b[?2026h\x1b[?25l\x1b[1Gpulling manifest \x1b[K\x1b[?25h\x1b[?2026l\n")
-OLLAMA_OFF = "Error: could not connect to ollama server, run 'ollama serve' to start it\n"
-OLLAMA_NO_MODEL = OLLAMA_BAR + "Error: pull model manifest: file does not exist\n"
-OLLAMA_OFFLINE = OLLAMA_BAR + ('Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3/manifests/1.7b": dial tcp: lookup '
-                               "registry.ollama.ai on 127.0.0.53:53: read udp 127.0.0.1:44053->127.0.0.53:53: read: connection refused\n")
-OLLAMA_BAD_DOWNLOAD = OLLAMA_BAR + "Error: digest mismatch, file must be downloaded again: want sha256:aa, got sha256:bb\n"
 NO_BUS = ("Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined "  # measured
           "(consider using --machine=<user>@.host --user to connect to bus of other user)\n")
 UNIT_NOT_FOUND = "Failed to restart deskaid.service: Unit deskaid.service not found.\n"  # measured
@@ -472,25 +465,17 @@ class PlainFailures(unittest.TestCase):
             with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
                 self.check(lambda: installer._make_venv("python3"), key, said)
 
-    def test_downloading_the_local_model(self):
-        self.patch(installer, "find_ollama", return_value="/usr/bin/ollama")
-        for said, key, words, fields in ((OLLAMA_OFF, "trouble_ollama_off", "could not connect", {}),
-                                         (OLLAMA_NO_MODEL, "trouble_model_missing", "file does not exist", {}),
-                                         (OLLAMA_OFFLINE, "trouble_no_connection", "dial tcp", {}),
-                                         (OLLAMA_BAD_DOWNLOAD, "trouble_model", "digest mismatch", {"model": "qwen3:1.7b"})):
-            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
-                self.check(lambda: installer._pull_ollama_model("qwen3:1.7b"), key, words, **fields)
-        self.assertNotIn("\x1b", self.log.read_text(), "no progress bar in the log")
-
-    def test_ollama_isnt_installed(self):
-        self.patch(installer, "find_ollama", return_value="")
-        self.check(lambda: installer._pull_ollama_model("qwen3:1.7b"), "trouble_no_ollama", "no ollama")
-
-    def test_a_long_download_keeps_what_it_said_last(self):
-        self.patch(installer, "find_ollama", return_value="/usr/bin/ollama")
-        with mock.patch.object(installer, "run", return_value=failed(1, stderr=OLLAMA_BAR * 100000 + OLLAMA_OFF)):
-            error = self.check(lambda: installer._pull_ollama_model("x"), "trouble_ollama_off", "could not connect")
+    def test_a_long_output_keeps_what_it_said_last(self):
+        self.patch(installer, "package_manager", return_value="apt-get")
+        self.patch(installer.shutil, "which", return_value="/usr/bin/pkexec")
+        with mock.patch.object(installer, "run", return_value=failed(100, stderr="Reading package lists...\n" * 100000 + APT_BUSY)):
+            error = self.check(lambda: installer.install_package("x"), "trouble_package_busy", "is another process using it")
         self.assertLessEqual(len(str(error)), installer.SAID_KEEPS)
+
+    def test_the_local_ai_service_that_wont_start(self):
+        self.patch(installer.localai, "want", return_value=False)
+        step = dict(installer.install_steps(installer.Options(ai="ollama")))["ollama"]
+        self.check(step, "trouble_service", installer.localai.GETTER)
 
     def test_starting_the_service(self):
         self.patch(installer, "UNIT", self.root / "deskaid.service")
@@ -526,7 +511,7 @@ class PlainFailures(unittest.TestCase):
         steps, ran = self.rest_of_the_steps(installer.uninstall_steps())
         with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
             self.assertTrue(installer.run_steps(steps, lambda *_: None))
-        self.assertEqual(ran, ["service", "extension", "files", "polkit", "settings"])
+        self.assertEqual(ran, ["service", "local_ai", "extension", "files", "polkit", "settings"])
         for name in ("LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             self.patch(installer, name, self.root / "gone" / name)
         dict(installer.uninstall_steps())["files"]()
@@ -603,11 +588,18 @@ class PlainFailures(unittest.TestCase):
             raise OSError(13, "Permission denied", "/home/you/x")
         ran = []
         with mock.patch.object(installer, "uninstall_steps", return_value=[("extension", step), ("files", lambda: ran.append("files"))]), \
+                mock.patch.object(installer, "is_installed", return_value=True), \
                 mock.patch.object(sys, "argv", ["installer.py", "--uninstall"]), redirect_stdout(io.StringIO()), \
                 self.assertRaises(SystemExit) as exit_code:
             installer.main()
         self.assertEqual(exit_code.exception.code, 1)
         self.assertEqual(ran, ["files"])
+
+    def test_the_package_going_changes_nothing_for_someone_who_never_set_it_up(self):
+        with mock.patch.object(installer, "uninstall_steps") as steps, mock.patch.object(installer, "is_installed", return_value=False), \
+                mock.patch.object(sys, "argv", ["installer.py", "--uninstall"]):
+            installer.main()
+        steps.assert_not_called()
 
     def test_an_update_with_no_connection_keeps_the_sdk_it_has(self):
         venv = self.root / "venv"
@@ -624,12 +616,6 @@ class PlainFailures(unittest.TestCase):
             return failed(1, stderr="Could not resolve host") if "install" in args else failed(1)
         with mock.patch.object(installer, "run", side_effect=no_sdk), self.assertRaises(installer.SetupError):
             installer._make_venv("python3")
-
-    def test_a_model_thats_here_isnt_downloaded_again(self):
-        self.patch(installer, "find_ollama", lambda: "ollama")
-        with mock.patch.object(installer, "run", return_value=mock.Mock(returncode=0, stdout="NAME\nsmall:1b  abc  1 GB\n", stderr="")) as run:
-            installer._pull_ollama_model("small:1b")
-        self.assertEqual([call.args[1] for call in run.call_args_list], ["list"])
 
     def test_ollama_being_off_doesnt_stop_an_install(self):
         self.assertIn("ollama", installer.CAN_FAIL)
@@ -744,6 +730,8 @@ class WindowSaysIt(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.window = mock.MagicMock()
         self.window.lang = "id"
+        self.window.installed = False
+        self.window.update_from = None
         self.window.t = lambda key, **params: deskai_setup.SetupWindow.t(self.window, key, **params)
         self.window.trouble = lambda error: deskai_setup.SetupWindow.trouble(self.window, error)
         self.window.log_note = lambda error: deskai_setup.SetupWindow.log_note(self.window, error)
@@ -848,6 +836,420 @@ class WindowSaysIt(unittest.TestCase):
         finished = mock.Mock(return_value=None)
         self.setup_window.in_background(lambda: "done", finished)
         finished.assert_called_once_with("done", None)
+
+
+class WhatsNew(unittest.TestCase):
+    METAINFO = """<component><releases>
+      <release version="0.10.0"><description><ul><li>ten</li><li xml:lang="id">sepuluh</li><li>and <code>more</code></li><li xml:lang="id">dan lagi</li></ul></description></release>
+      <release version="0.9.0"><description><ul><li>nine</li></ul></description></release>
+      <release version="0.1.0"/>
+    </releases></component>"""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        (self.root / "packaging").mkdir()
+        (self.root / "packaging" / installer.METAINFO).write_text(self.METAINFO)
+        for name, value in (("ROOT", self.root), ("METAINFO_INSTALLED", self.root / "nothing"), ("INSTALLED", self.root / "installed.json")):
+            patcher = mock.patch.object(installer, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_what_came_after_yours_newest_first(self):
+        self.assertEqual(installer.whats_new("0.1.0", "en"), [("0.10.0", ["ten", "and more"]), ("0.9.0", ["nine"])])
+        self.assertEqual(installer.whats_new("0.9.0", "en"), [("0.10.0", ["ten", "and more"])])
+
+    def test_in_your_language_where_it_has_it(self):
+        self.assertEqual(installer.whats_new("0.1.0", "id"), [("0.10.0", ["sepuluh", "dan lagi"]), ("0.9.0", ["nine"])])
+
+    def test_going_back_to_an_older_version_has_no_news(self):
+        self.assertEqual(installer.whats_new("0.11.0", "en"), [])
+
+    def test_a_list_that_cant_be_read_doesnt_stop_an_update(self):
+        (self.root / "packaging" / installer.METAINFO).write_text("<component>")
+        self.assertEqual(installer.whats_new("0.1.0", "en"), [])
+        (self.root / "packaging" / installer.METAINFO).unlink()
+        self.assertEqual(installer.whats_new("0.1.0", "en"), [])
+
+    def test_the_deb_keeps_it_elsewhere(self):
+        (self.root / "nothing").write_text(self.METAINFO)
+        (self.root / "packaging" / installer.METAINFO).unlink()
+        self.assertEqual(installer.whats_new("0.9.0", "en"), [("0.10.0", ["ten", "and more"])])
+
+    def test_the_real_one_says_the_same_things_in_both_languages(self):
+        patcher = mock.patch.object(installer, "ROOT", ROOT)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        current = (ROOT / "VERSION").read_text().strip()
+        previous = "0.5.0"
+        english, indonesian = installer.whats_new(previous, "en"), installer.whats_new(previous, "id")
+        self.assertEqual(english[0][0], current, "the release being made has its notes")
+        self.assertEqual(len(english[0][1]), len(indonesian[0][1]))
+        self.assertNotEqual(english[0][1], indonesian[0][1])
+
+    def test_which_version_comes_after_which(self):
+        self.assertTrue(installer.newer("0.10.0", "0.9.0"))
+        self.assertTrue(installer.newer("0.6.0", ""))
+        self.assertFalse(installer.newer("0.5.0", "0.5.0"))
+        self.assertFalse(installer.newer("", "0.1.0"))
+
+    def test_an_update_is_a_newer_version_than_the_one_set_up(self):
+        with mock.patch.object(installer, "version", return_value="0.6.0"):
+            installer.INSTALLED.write_text('{"version": "0.5.0"}')
+            self.assertEqual(installer.update_from(), "0.5.0")
+            installer.INSTALLED.write_text('{"version": "0.6.0"}')
+            self.assertIsNone(installer.update_from())
+
+    def test_nothing_to_update_before_the_first_install(self):
+        self.assertIsNone(installer.update_from())
+
+    def test_an_install_that_never_finished_isnt_an_update(self):
+        with mock.patch.object(installer, "is_installed", return_value=True):  # its first step leaves the dock's link there
+            self.assertIsNone(installer.update_from())
+
+
+class Updating(unittest.TestCase):
+    """One click, and everything you chose stays as it is."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+
+    def patch(self, *args, **kwargs):
+        patcher = mock.patch.object(*args, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def test_what_is_running_keeps_running_until_the_next_login(self):
+        self.patch(installer, "UNIT", self.root / "deskaid.service")
+        with mock.patch.object(installer, "run", return_value=failed(0)) as run:
+            installer._write_service(self.root, "python3", restart=False)
+        self.assertEqual([call.args[2] for call in run.call_args_list], ["daemon-reload", "enable", "start"])
+
+    def test_changing_your_choices_does_restart_it(self):
+        self.patch(installer, "UNIT", self.root / "deskaid.service")
+        with mock.patch.object(installer, "run", return_value=failed(0)) as run:
+            installer._write_service(self.root, "python3")
+        self.assertEqual([call.args[2] for call in run.call_args_list], ["daemon-reload", "enable", "restart"])
+
+    def test_it_doesnt_touch_your_settings_or_the_local_ai(self):
+        steps = dict(installer.install_steps(installer.Options(ai="ollama", keep_config=True, update=True)))
+        with mock.patch.object(installer, "_write_config") as written, mock.patch.object(installer.localai, "want") as want, \
+                mock.patch.object(installer.localai, "stop") as stop:
+            steps["settings"]()
+            steps["ollama"]()
+        written.assert_not_called()
+        want.assert_not_called()
+        stop.assert_not_called()
+
+    def test_choosing_the_local_ai_starts_getting_it(self):
+        steps = dict(installer.install_steps(installer.Options(ai="ollama")))
+        with mock.patch.object(installer.localai, "want", return_value=True) as want:
+            steps["ollama"]()
+        want.assert_called_once()
+
+    def test_choosing_no_ai_stops_it(self):
+        steps = dict(installer.install_steps(installer.Options(ai="none")))
+        with mock.patch.object(installer, "_write_config"), mock.patch.object(installer.localai, "stop") as stop:
+            steps["settings"]()
+        stop.assert_called_once_with(server=True)
+
+    def test_claude_still_has_it_to_fall_back_on(self):
+        steps = dict(installer.install_steps(installer.Options(ai="claude")))
+        with mock.patch.object(installer, "_write_config"), mock.patch.object(installer.localai, "stop") as stop:
+            steps["settings"]()
+        stop.assert_called_once_with(server=False)
+
+    def test_the_extension_lists_are_only_written_if_theyre_different(self):
+        shell = PuttingItBack.Settings({"enabled-extensions": [installer.UUID, installer.LOGIN_UUID], "disabled-extensions": ["other@x"]})
+        with mock.patch.object(installer.Gio.Settings, "new", return_value=shell), mock.patch.object(installer.Gio.Settings, "sync"), \
+                mock.patch.object(installer, "_login_screen", return_value=None), mock.patch.object(installer, "installed_version", return_value="0.5.0"), \
+                mock.patch.object(shell, "set_strv") as writes:
+            installer._enable_extension()
+        writes.assert_not_called()
+
+
+class BeforeTheNextLogin(unittest.TestCase):
+    def test_the_other_docks_go_if_the_dock_isnt_up_yet(self):
+        with mock.patch.object(installer, "dock_is_running", return_value=False), mock.patch.object(installer.docks, "turn_off_others", return_value=["Ubuntu Dock"]) as off:
+            self.assertTrue(installer.replace_docks_for_next_login())
+        off.assert_called_once_with()
+
+    def test_with_the_dock_up_they_went_already(self):
+        with mock.patch.object(installer, "dock_is_running", return_value=True), mock.patch.object(installer.docks, "turn_off_others") as off:
+            self.assertFalse(installer.replace_docks_for_next_login())
+        off.assert_not_called()
+
+    def test_asking_whether_the_dock_is_up(self):
+        for said, up in (("  State: ACTIVE\n", True), ("  State: INITIALIZED\n", False), ("", False)):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(0, stdout=said)):
+                self.assertEqual(installer.dock_is_running(), up)
+        with mock.patch.object(installer, "run", side_effect=FileNotFoundError(2, "No such file", "gnome-extensions")):
+            self.assertFalse(installer.dock_is_running())
+
+
+class TheWayThrough(unittest.TestCase):
+    """Which pages come up and what their buttons say, with the window's real logic and nothing on the screen."""
+
+    def setUp(self):
+        import deskai_setup
+        self.setup_window = deskai_setup
+        self.window = mock.MagicMock()
+        self.window.lang = "en"
+        self.window.t = lambda key, **params: deskai_setup.SetupWindow.t(self.window, key, **params)
+        self.window.forward_label = lambda page: deskai_setup.SetupWindow.forward_label(self.window, page)
+        self.window.set_primary = lambda text, action: setattr(self, "primary", (text, action))
+        self.window.flow = deskai_setup.FLOW
+        self.window.update_from = None
+        self.window.installed = False
+
+    def show(self, page):
+        self.setup_window.SetupWindow.show_page(self.window, page)
+        return self.primary[0]
+
+    def test_the_first_install(self):
+        self.assertEqual([self.show(page) for page in self.setup_window.FLOW], ["Get started", "Continue", "Continue", "Install"])
+        self.window.step_label.set_label.assert_called_with("Step 3 of 3")
+
+    def test_changing_your_choices(self):
+        self.window.installed = True
+        self.assertEqual([self.show(page) for page in self.setup_window.FLOW], ["Change my choices", "Continue", "Continue", "Save"])
+
+    def test_an_update_is_one_button(self):
+        self.window.installed = True
+        self.window.update_from = "0.5.0"
+        self.window.flow = ["whatsnew"]
+        self.assertEqual(self.show("whatsnew"), "Update")
+        self.assertEqual(self.primary[1], self.window.start_update)
+        self.window.back.set_visible.assert_called_with(False)
+        self.window.step_label.set_label.assert_called_with("")
+
+    def test_one_that_brought_something_to_choose_stops_for_it(self):
+        self.window.installed = True
+        self.window.update_from = "0.5.0"
+        self.window.flow = ["whatsnew", "ai"]
+        self.assertEqual(self.show("whatsnew"), "Continue")
+        self.assertEqual(self.show("ai"), "Update")
+        self.assertEqual(self.primary[1], self.window.start_install)
+        self.window.back.set_visible.assert_called_with(True)
+
+    def test_changing_your_choices_on_the_way_to_an_update(self):
+        self.window.installed = True
+        self.window.update_from = "0.5.0"
+        self.assertEqual([self.show(page) for page in self.setup_window.FLOW], ["Change my choices", "Continue", "Continue", "Update"])
+
+    def test_and_back_to_the_list(self):
+        self.window.update_from = "0.5.0"
+        self.window.page = "welcome"
+        self.window.update_flow = ["whatsnew"]
+        self.setup_window.SetupWindow.go_back(self.window)
+        self.window.show_page.assert_called_once_with("whatsnew")
+        self.assertEqual(self.window.flow, ["whatsnew"])
+
+    def asked(self, since, ai):
+        self.window.update_from = since
+        return self.setup_window.SetupWindow.asked_on_update(self.window, ai)
+
+    def test_only_someone_with_no_ai_is_asked_about_the_local_one(self):
+        self.assertEqual(self.asked("0.5.0", "none"), ["ai"])
+        self.assertEqual(self.asked("0.5.0", "ollama"), [])
+        self.assertEqual(self.asked("0.5.0", "claude"), [])
+
+    def test_and_only_once(self):
+        self.assertEqual(self.asked("0.6.0", "none"), [])
+
+    def test_a_first_install_has_no_update_to_ask_about(self):
+        self.assertEqual(self.asked(None, "none"), [])
+
+    def usual(self, **offer):
+        self.window.local_ai = {"download": 0, "why_not": "", **offer}
+        return self.setup_window.SetupWindow.usual_ai(self.window)
+
+    def test_the_local_ai_is_the_usual_one(self):
+        with mock.patch.object(self.setup_window.Gio.NetworkMonitor, "get_default", return_value=mock.Mock(get_network_metered=lambda: False)):
+            self.assertEqual(self.usual(download=2_900_000_000), "ollama")
+
+    def test_unless_its_a_big_download_on_a_metered_connection(self):
+        with mock.patch.object(self.setup_window.Gio.NetworkMonitor, "get_default", return_value=mock.Mock(get_network_metered=lambda: True)):
+            self.assertEqual(self.usual(download=2_900_000_000), "none")
+            self.assertEqual(self.usual(download=0), "ollama")
+
+    def test_or_it_cant_be_had_here(self):
+        self.assertEqual(self.usual(why_not="ai_small_memory"), "none")
+
+    def test_an_update_keeps_what_is_running_whichever_way_you_got_there(self):
+        self.window.update_from = "0.5.0"
+        self.window.hooks = self.window.routine = False
+        self.window.agents, self.window.ai, self.window.api_key = [], "none", ""
+        with mock.patch.object(installer, "hooks_installed", return_value=False), mock.patch.object(installer, "install_steps", return_value=[]) as steps:
+            self.setup_window.SetupWindow.start_install(self.window)
+        self.assertTrue(steps.call_args.args[0].update)
+        self.assertFalse(steps.call_args.args[0].keep_config, "you chose something on the way")
+
+    def test_changing_your_choices_with_no_update_restarts_it(self):
+        self.window.hooks = self.window.routine = False
+        self.window.agents, self.window.ai, self.window.api_key = [], "none", ""
+        with mock.patch.object(installer, "hooks_installed", return_value=False), mock.patch.object(installer, "install_steps", return_value=[]) as steps:
+            self.setup_window.SetupWindow.start_install(self.window)
+        self.assertFalse(steps.call_args.args[0].update)
+
+    def test_the_update_button_only_goes_once(self):
+        with mock.patch.object(self.setup_window, "in_background") as work:
+            self.setup_window.SetupWindow.start_update(self.window)
+        self.window.primary.set_sensitive.assert_called_once_with(False)
+        work.assert_called_once()
+
+    def test_a_computer_that_cant_run_it_says_why_instead(self):
+        self.setup_window.SetupWindow.update_checked(self.window, [installer.Check("gnome", False, required=True)], None)
+        self.window.show_page.assert_called_once_with("check")
+        self.window.run_work.assert_not_called()
+
+    def test_an_update_only_does_what_it_has_to(self):
+        self.window.ai = "ollama"
+        self.setup_window.SetupWindow.update_checked(self.window, [installer.Check("atspi", False)], None)
+        steps = [step_id for step_id, _fn in self.window.run_work.call_args.args[0]]
+        self.assertEqual(steps, ["app", "settings", "service", "finish"])
+
+    def test_with_an_api_key_its_package_stays_up_to_date(self):
+        self.window.ai = "api"
+        self.setup_window.SetupWindow.update_checked(self.window, [], None)
+        self.assertIn("ai", [step_id for step_id, _fn in self.window.run_work.call_args.args[0]])
+
+    def test_closing_the_window_before_gnome_has_logged_you_out(self):
+        self.window.docks_timer = 7
+        self.window.still_logged_in = lambda: self.setup_window.SetupWindow.still_logged_in(self.window)
+        with mock.patch.object(self.setup_window.GLib, "source_remove") as removed, mock.patch.object(installer.docks, "restore") as restore:
+            self.setup_window.SetupWindow.give_docks_back(self.window)
+        removed.assert_called_once_with(7)
+        restore.assert_called_once_with()
+        self.assertEqual(self.window.docks_timer, 0)
+
+    def test_closing_it_with_nothing_waiting(self):
+        self.window.docks_timer = 0
+        with mock.patch.object(installer.docks, "restore") as restore:
+            self.setup_window.SetupWindow.give_docks_back(self.window)
+        restore.assert_not_called()
+
+    def test_logging_out_doesnt_ask_again(self):
+        with mock.patch.object(installer, "replace_docks_for_next_login", return_value=False), mock.patch.object(self.setup_window.subprocess, "Popen") as popen:
+            self.setup_window.SetupWindow.log_out(self.window)
+        self.assertEqual(popen.call_args.args[0], ["gnome-session-quit", "--logout", "--no-prompt"])
+
+    def test_if_you_dont_log_out_after_all_the_other_docks_come_back(self):
+        with mock.patch.object(installer, "replace_docks_for_next_login", return_value=True), mock.patch.object(self.setup_window.subprocess, "Popen"), \
+                mock.patch.object(self.setup_window.GLib, "timeout_add_seconds") as timer, mock.patch.object(installer.docks, "restore") as restore:
+            self.setup_window.SetupWindow.log_out(self.window)
+            self.assertEqual(timer.call_args.args[1], self.window.still_logged_in)
+            restore.assert_not_called()
+            self.assertFalse(self.setup_window.SetupWindow.still_logged_in(self.window))
+        restore.assert_called_once_with()
+
+    def test_logging_out_doesnt_depend_on_the_docks(self):
+        with mock.patch.object(installer, "replace_docks_for_next_login", side_effect=OSError(28, "No space left")), \
+                mock.patch.object(self.setup_window.subprocess, "Popen") as popen, redirect_stderr(io.StringIO()):
+            self.setup_window.SetupWindow.log_out(self.window)
+        popen.assert_called_once()
+
+    def test_sizes_the_way_each_language_writes_them(self):
+        self.assertEqual(self.setup_window.in_gigabytes("en", 2_884_640_015), "2.9 GB")
+        self.assertEqual(self.setup_window.in_gigabytes("id", 2_884_640_015), "2,9 GB")
+        self.assertEqual(self.setup_window.in_gigabytes("id", 412_000_000), "412 MB")
+
+
+class ThePackage(unittest.TestCase):
+    """The scripts that reach whoever's at the desktop, with what they call faked."""
+
+    SESSIONS = {"c1": "Name=gdm\nClass=greeter\nType=wayland\nActive=yes\n", "2": "Name=someone\nClass=user\nType=wayland\nActive=yes\n",
+                "3": "Name=away\nClass=user\nType=wayland\nActive=no\n", "4": "Name=remote\nClass=user\nType=tty\nActive=yes\n"}
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        sessions = "".join(f"{name} 1000 x seat0\n" for name in self.SESSIONS)
+        (self.root / "list").write_text(sessions)
+        for name, info in self.SESSIONS.items():
+            (self.root / f"show-{name}").write_text(info)
+        stubs = {
+            "loginctl": f'#!/bin/sh\nif [ "$1" = list-sessions ]; then cat "{self.root}/list"; else cat "{self.root}/show-$2"; fi\n',
+            "id": '#!/bin/sh\necho 1000\n',
+            "runuser": f'#!/bin/sh\necho "$@" >> "{self.root}/ran"\n',
+        }
+        for name, text in stubs.items():
+            (bin_dir / name).write_text(text)
+            (bin_dir / name).chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        self.script = ROOT / "packaging" / "deskai-sessions.sh"
+
+    def run_in_sessions(self, who="desktop"):
+        subprocess.run(["sh", "-c", f'. "{self.script}"; in_sessions {who} the-command with-args'], env=self.env, check=True)
+        ran = self.root / "ran"
+        return ran.read_text().splitlines() if ran.exists() else []
+
+    def test_only_the_person_at_the_desktop(self):
+        ran = self.run_in_sessions()
+        self.assertEqual(len(ran), 1, ran)
+        self.assertIn("-u someone --", ran[0])
+        self.assertIn("XDG_RUNTIME_DIR=/run/user/1000", ran[0])
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", ran[0])
+        self.assertTrue(ran[0].endswith("the-command with-args"))
+
+    def test_removal_reaches_everyone_logged_in_once_each(self):
+        (self.root / "list").write_text("c1 1000 x seat0\n2 1000 x seat0\n3 1000 x -\n4 1000 x -\n5 1000 x -\n")
+        (self.root / "show-5").write_text(self.SESSIONS["2"])
+        ran = self.run_in_sessions("everyone")
+        self.assertEqual([line.split(" -- ")[0] for line in ran], ["-u someone", "-u away", "-u remote"])
+
+    def test_nobody_there_is_fine(self):
+        (self.root / "list").write_text("")
+        self.assertEqual(self.run_in_sessions(), [])
+
+    def test_a_command_that_fails_stops_nothing(self):
+        (self.root / "bin" / "runuser").write_text("#!/bin/sh\nexit 3\n")
+        self.assertEqual(self.run_in_sessions(), [])
+
+    def test_with_no_way_to_ask_nothing_happens(self):
+        (self.root / "bin" / "loginctl").unlink()
+        subprocess.run(["sh", "-c", f'PATH="{self.root}/bin:/usr/bin:/bin"; command -v loginctl >/dev/null && exit 0; . "{self.script}"; in_sessions desktop x'],
+                       env=self.env, check=True)
+
+    def maintainer_script(self, name, *args):
+        """Runs the script with its fixed paths pointed at this repository's own files."""
+        text = (ROOT / "packaging" / name).read_text().replace("/usr/share/deskai/packaging/deskai-sessions.sh", str(self.script)) \
+            .replace("/usr/share/deskai/VERSION", str(ROOT / "VERSION"))
+        path = self.root / name
+        path.write_text(text)
+        subprocess.run(["sh", str(path), *args], env=self.env, check=True)
+        ran = self.root / "ran"
+        said = ran.read_text() if ran.exists() else ""
+        ran.unlink(missing_ok=True)
+        return said
+
+    def test_setup_opens_after_installing_and_after_an_update(self):
+        self.assertIn("/usr/bin/deskai-setup", self.maintainer_script("postinst", "configure"))
+        self.assertIn("/usr/bin/deskai-setup", self.maintainer_script("postinst", "configure", "0.5.0"))
+
+    def test_but_not_after_reinstalling_the_same_version(self):
+        self.assertEqual(self.maintainer_script("postinst", "configure", (ROOT / "VERSION").read_text().strip()), "")
+
+    def test_nor_when_a_failed_upgrade_is_being_undone(self):
+        self.assertEqual(self.maintainer_script("postinst", "abort-upgrade", "0.5.0"), "")
+
+    def test_uninstalling_removes_it_for_the_person_at_the_desktop(self):
+        self.assertIn("installer.py --uninstall", self.maintainer_script("prerm", "remove"))
+
+    def test_upgrading_doesnt(self):
+        self.assertEqual(self.maintainer_script("prerm", "upgrade", "0.7.0"), "")
+
+    def test_the_build_ships_them(self):
+        build = (ROOT / "packaging" / "build-deb.sh").read_text()
+        self.assertIn('packaging/postinst" "$ROOT/packaging/prerm" "$PKG/DEBIAN/"', build)
+        self.assertIn("deskai-sessions.sh", build)
+        self.assertIn("zstd", build, "the local AI's archive needs it")
 
 
 class Spinner(unittest.TestCase):

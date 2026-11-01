@@ -1,9 +1,9 @@
 """DeskAI's dock as your only dock.
 
-The first time the dock is really there, the other docks and taskbars go off, so you never end
-up with none. They're only turned off, in GNOME's own settings, never uninstalled. What was
-turned off is written down, so removing DeskAI can put it back, and it only happens once: a dock
-you turn back on or install afterwards is your choice.
+While the dock is really there, the other docks and taskbars stay off, so you never have two on top of each other
+and never end up with none. They're only turned off, in GNOME's own settings, never uninstalled. What was turned off
+is written down, so removing DeskAI can put it back. This goes on for as long as DeskAI is here: one that comes back on,
+from an update or a reset, goes off again, and the dock itself refuses to have one turned on (docks.js in the extension).
 """
 
 import json
@@ -20,6 +20,7 @@ SYSTEM_EXTENSIONS = Path("/usr/share/gnome-shell/extensions")
 SESSION_MODES = Path("/usr/share/gnome-shell/modes")  # how Ubuntu turns on its own dock
 RECORD = Path(GLib.get_user_state_dir()) / "deskai" / "docks-off.json"  # {uuid: was it in your own list}
 
+# The dock has the same list, in docks.js, and a test keeps them the same.
 OTHERS = {
     "ubuntu-dock@ubuntu.com": "Ubuntu Dock",
     "dash-to-dock@micxgx.gmail.com": "Dash to Dock",
@@ -55,37 +56,44 @@ def _installed(uuid):
     return (USER_EXTENSIONS / uuid).is_dir() or (SYSTEM_EXTENSIONS / uuid).is_dir()
 
 
+def _recorded():
+    try:
+        off = json.loads(RECORD.read_text())
+    except (OSError, ValueError):
+        return {}
+    return off if isinstance(off, dict) else {}
+
+
 def turn_off_others(settings=None):
-    """The first time: turns the other docks off, and returns their names."""
+    """Turns off whichever other docks are on, and returns their names. It can run at any time: with none on it does nothing."""
     settings = settings or shell_settings()
-    if not settings or RECORD.exists():
+    if not settings:
         return []
     enabled = settings.get_strv("enabled-extensions")
     disabled = settings.get_strv("disabled-extensions")
     from_session = _session_extensions()
     off = {uuid: uuid in enabled for uuid in OTHERS
            if uuid not in disabled and (uuid in enabled or uuid in from_session) and _installed(uuid)}
+    if not off:
+        return []
 
+    # The first word on each is what counts: what you had before DeskAI was here.
     RECORD.parent.mkdir(parents=True, exist_ok=True)
-    RECORD.write_text(json.dumps(off) + "\n")
+    RECORD.write_text(json.dumps({**off, **_recorded()}) + "\n")
     # GNOME's disabled list beats everything else, even the extensions a session turns on itself. It's the only one
     # changed: GNOME turns extensions off in steps, and a second change in the meantime can turn one back on halfway.
-    if off:
-        settings.set_strv("disabled-extensions", [*disabled, *off])
-        Gio.Settings.sync()
+    settings.set_strv("disabled-extensions", [*disabled, *off])
+    Gio.Settings.sync()
     return [OTHERS[uuid] for uuid in off]
 
 
 def restore(settings=None):
-    """Puts back what turn_off_others changed, and lets it happen again after a reinstall."""
+    """Puts back what turn_off_others changed."""
     settings = settings or shell_settings()
     if not settings:
         return
-    try:
-        off = json.loads(RECORD.read_text())
-    except (OSError, ValueError):
-        return
-    if isinstance(off, dict):
+    off = _recorded()
+    if off:
         enabled = settings.get_strv("enabled-extensions")
         # Only what an older version took out of your own list has to go back in.
         missing = [uuid for uuid, yours in off.items() if yours and uuid not in enabled]

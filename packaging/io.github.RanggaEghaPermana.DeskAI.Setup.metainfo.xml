@@ -17,7 +17,7 @@
       <li>A status dot for your dev servers and database, with a restart and their log</li>
       <li>After a logout, your windows, terminals and dev servers come back as they were</li>
     </ul>
-    <p>After installing, open DeskAI Setup and follow the steps.</p>
+    <p>After installing, DeskAI Setup opens by itself and takes you through the rest.</p>
   </description>
   <launchable type="desktop-id">io.github.RanggaEghaPermana.DeskAI.Setup.desktop</launchable>
   <url type="homepage">https://github.com/RanggaEghaPermana/deskai</url>
@@ -26,17 +26,45 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.0" date="2026-11-01">
+      <description>
+        <p>Easier to set up and to keep up to date, and one dock only.</p>
+        <p xml:lang="id">Lebih gampang dipasang dan di-update, dan dock-nya cuma satu.</p>
+        <ul>
+          <li>Updating takes one click: a list of what's new and one button, and everything you chose stays as it is.</li>
+          <li xml:lang="id">Update cukup sekali klik: daftar yang baru dan satu tombol, dan semua pilihan kamu tetap.</li>
+          <li>DeskAI Setup opens by itself once the package is installed.</li>
+          <li xml:lang="id">DeskAI Setup kebuka sendiri begitu paketnya terpasang.</li>
+          <li>Setup can download the local AI for you, Ollama and its model, in the background. It says how big it is first, and you can say no.</li>
+          <li xml:lang="id">Setup bisa download AI lokal buat kamu, Ollama dan modelnya, di belakang. Ukurannya dikasih tau dulu, dan kamu bisa nolak.</li>
+          <li>DeskAI stays your only dock. Another dock that comes back on goes off again, and removing DeskAI brings them back.</li>
+          <li xml:lang="id">DeskAI tetap jadi satu-satunya dock. Dock lain yang nyala lagi langsung dimatiin, dan kalau DeskAI dihapus, dock itu balik lagi.</li>
+          <li>Fixed: two docks on top of each other until the next login, after turning on Ubuntu Dock in the Extensions app.</li>
+          <li xml:lang="id">Diperbaiki: dua dock numpuk sampai login berikutnya, setelah Ubuntu Dock dinyalain dari app Extensions.</li>
+          <li>Uninstalling the package also removes DeskAI for whoever's logged in, so nobody ends up with no dock.</li>
+          <li xml:lang="id">Uninstall paketnya sekalian menghapus DeskAI buat yang lagi login, jadi nggak ada yang kehilangan dock.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-01">
       <description>
         <p>Steadier, and it keeps out of what it wasn't asked to touch.</p>
+        <p xml:lang="id">Lebih stabil, dan nggak nyentuh yang nggak diminta.</p>
         <ul>
           <li>Apps DeskAI opened keep running when its background service restarts or crashes.</li>
+          <li xml:lang="id">App yang dibuka DeskAI tetap jalan kalau layanan latarnya restart atau crash.</li>
           <li>Locking the screen no longer empties the inbox, and what AI agents say meanwhile waits for you.</li>
+          <li xml:lang="id">Ngunci layar nggak lagi ngosongin inbox, dan kabar dari AI agent selama dikunci nunggu kamu balik.</li>
           <li>The command bar understands being told not to, asks before stopping everything, and reads a mistyped project name right away.</li>
+          <li xml:lang="id">Kolom perintah ngerti kalau dilarang, nanya dulu sebelum nyetop semuanya, dan langsung ngerti nama project yang salah ketik.</li>
           <li>Closing a project asks before stopping a database DeskAI didn't start, and everyday words no longer close a project that has them in its name.</li>
+          <li xml:lang="id">Nutup project nanya dulu sebelum nyetop database yang bukan dinyalain DeskAI, dan kata sehari-hari nggak lagi nutup project yang namanya mirip.</li>
           <li>Fewer false alarms about distractions, and a guess takes more than a site's name.</li>
+          <li xml:lang="id">Lebih jarang salah nuduh ke-distract, dan nebak butuh lebih dari sekadar nama situs.</li>
           <li>A mistake in modes.json gets a card saying where it is, the last version that worked stays in use, and a file that can't be read is copied before anything saves over it.</li>
+          <li xml:lang="id">Salah tulis di modes.json dikasih tau lewat kartu, versi terakhir yang bener tetap dipakai, dan file yang nggak kebaca disalin dulu sebelum ditimpa.</li>
           <li>Hooks in AI agents are off unless you turn them on, and removing DeskAI puts their settings and what else it changed back as they were.</li>
+          <li xml:lang="id">Hook di AI agent mati kecuali kamu nyalain, dan menghapus DeskAI ngembaliin pengaturannya dan yang lain kayak semula.</li>
         </ul>
       </description>
     </release>

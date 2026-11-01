@@ -16,6 +16,7 @@ from pathlib import Path
 from gi.repository import Gio, GLib
 
 import launcher
+import localai
 import sites
 
 log = logging.getLogger("deskai")
@@ -500,7 +501,17 @@ CARD_STRINGS = {
         "llm_none": "No AI is set up. You can pick one in DeskAI Setup.",
         "llm_claude_stopped": "Claude isn't available right now: signed out, plan ended or limit reached. Sign in again, or pick another AI in DeskAI Setup.",
         "llm_ollama_down": "Ollama isn't answering. Start it, or pick another AI in DeskAI Setup.",
-        "llm_ollama_model": "The local model isn't downloaded yet. Run: ollama pull {model}",
+        "llm_ollama_model": "The local model isn't downloaded yet. DeskAI Setup can get it for you.",
+        "llm_local_ai_getting": "The local AI is still downloading: {percent}%. Plain requests work without it.",
+        "local_ai_ready": "The local AI is ready. Press Super+/ and ask it something.",
+        "local_ai_failed": "Couldn't get the local AI: {why}.",
+        "try_again": "Try again",
+        "trouble_no_connection": "it can't reach the internet",
+        "trouble_download": "the download didn't work",
+        "trouble_bad_download": "the download came out damaged",
+        "trouble_cant_write": "it wasn't allowed to write in its own folder",
+        "trouble_ollama_off": "Ollama isn't running",
+        "trouble_model_missing": "Ollama doesn't have this model",
         "llm_edit_needs_claude": "The local model can't do that yet. If you meant changing your modes, that needs Claude.",
         "command_needs_ai": "That needs AI, which is off. You can turn it on in DeskAI Setup.",
         "command_failed": "Couldn't do that: {why}",
@@ -694,7 +705,17 @@ CARD_STRINGS = {
         "llm_none": "Belum ada AI yang dipilih. Bisa dipilih di DeskAI Setup.",
         "llm_claude_stopped": "Claude lagi nggak bisa dipake: belum login, langganan habis, atau kena limit. Login lagi, atau pilih AI lain di DeskAI Setup.",
         "llm_ollama_down": "Ollama-nya nggak nyaut. Nyalain dulu, atau pilih AI lain di DeskAI Setup.",
-        "llm_ollama_model": "Model lokalnya belum ke-download. Jalanin: ollama pull {model}",
+        "llm_ollama_model": "Model lokalnya belum ke-download. DeskAI Setup bisa ngambilin.",
+        "llm_local_ai_getting": "AI lokalnya masih ke-download: {percent}%. Perintah biasa tetap jalan tanpa itu.",
+        "local_ai_ready": "AI lokalnya udah siap. Tekan Super+/ terus tanya aja.",
+        "local_ai_failed": "Gagal ngambil AI lokal: {why}.",
+        "try_again": "Coba lagi",
+        "trouble_no_connection": "nggak bisa nyambung ke internet",
+        "trouble_download": "download-nya nggak berhasil",
+        "trouble_bad_download": "hasil download-nya rusak",
+        "trouble_cant_write": "nggak diizinin nulis di folder-nya sendiri",
+        "trouble_ollama_off": "Ollama lagi nggak jalan",
+        "trouble_model_missing": "Ollama nggak punya model ini",
         "llm_edit_needs_claude": "Model lokal belum bisa ngerjain itu. Kalau maksudnya ngubah mode, itu butuh Claude.",
         "command_needs_ai": "Itu butuh AI, dan AI-nya lagi mati. Bisa dinyalain di DeskAI Setup.",
         "command_failed": "Nggak bisa: {why}",
@@ -1011,14 +1032,17 @@ class LLM:
         """What's keeping it from working, if anything, for `deskai doctor`."""
         if self.backend == "none":
             return ("no AI found. Sign in to Claude Code, set ANTHROPIC_API_KEY in ~/.config/deskai/env, "
-                    f"or install Ollama and run: ollama pull {self.ollama_model}")
+                    "or let DeskAI Setup download the local one")
         if self.backend == "claude-cli" and not self._cli_signed_in():
             return "Claude Code isn't signed in. Run: claude"
         if self.backend == "ollama":
+            getting = localai.percent()
+            if getting is not None and not self._ollama_has_model():
+                return f"still downloading: {getting}%"
             if self._ollama_models() is None:
                 return "Ollama isn't running"
             if not self._ollama_has_model():
-                return f"the model isn't downloaded. Run: ollama pull {self.ollama_model}"
+                return f"the model isn't downloaded. Open DeskAI Setup, or run: ollama pull {self.ollama_model}"
         return None
 
     def ask(self, system, prompt, schema, *, effort=None, max_tokens=2048, timeout=90, examples=""):
@@ -1058,12 +1082,16 @@ class LLM:
                 reply = json.load(response)
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                raise LLMError(f"{self.ollama_model} isn't downloaded", hint="llm_ollama_model",
-                               model=self.ollama_model) from e
+                raise self._still_coming() or LLMError(f"{self.ollama_model} isn't downloaded", hint="llm_ollama_model") from e
             raise LLMError(f"Ollama error {e.code}") from e
         except OSError as e:  # refused, or too slow to answer
-            raise LLMError(f"Ollama isn't answering: {e}", hint="llm_ollama_down") from e
+            raise self._still_coming() or LLMError(f"Ollama isn't answering: {e}", hint="llm_ollama_down") from e
         return json.loads(reply["message"]["content"])
+
+    def _still_coming(self):
+        """Setup is getting it in the background: that's why it isn't here, and nothing's wrong."""
+        getting = localai.percent()
+        return None if getting is None else LLMError("the local AI is still downloading", hint="llm_local_ai_getting", percent=getting)
 
     def _ask_api(self, system, prompt, schema, effort, max_tokens, timeout):
         anthropic = self._anthropic

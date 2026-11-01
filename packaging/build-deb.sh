@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds dist/deskai_<version>_all.deb. It holds the app and the setup window; each user then
-# opens DeskAI Setup, which does the per-user part (no root needed).
+# Builds dist/deskai_<version>_all.deb. It holds the app and the setup window, which opens by itself
+# after installing and does the per-user part (no root needed).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -21,6 +21,9 @@ fi
 mkdir -p "$APP" "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications" "$PKG/usr/share/metainfo" \
          "$PKG/usr/share/icons/hicolor/scalable/apps" "$PKG/usr/share/doc/deskai"
 git -C "$ROOT" archive HEAD daemon extension setup VERSION | tar -x -C "$APP"
+mkdir -p "$APP/packaging"
+cp "$ROOT/packaging/deskai-sessions.sh" "$APP/packaging/"
+cp "$ROOT/packaging/postinst" "$ROOT/packaging/prerm" "$PKG/DEBIAN/"
 cp "$ROOT/setup/$APP_ID.svg" "$PKG/usr/share/icons/hicolor/scalable/apps/"
 cp "$ROOT/packaging/$APP_ID.Setup.desktop" "$PKG/usr/share/applications/"
 cp "$ROOT/packaging/$APP_ID.Setup.metainfo.xml" "$PKG/usr/share/metainfo/"
@@ -41,6 +44,7 @@ COPYRIGHT
 chmod 755 "$PKG/usr/bin/deskai-setup"
 find "$PKG" -type d -exec chmod 755 {} +
 find "$APP" -type f -exec chmod 644 {} +
+chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/prerm"
 
 cat > "$PKG/DEBIAN/control" <<CONTROL
 Package: deskai
@@ -50,7 +54,7 @@ Priority: optional
 Architecture: all
 Maintainer: Rangga Egha Permana <RanggaEghaPermana@users.noreply.github.com>
 Homepage: https://github.com/RanggaEghaPermana/deskai
-Depends: gnome-shell (>= 46~), gnome-shell (<< 52~), gnome-shell (<< 47~) | gnome-shell (>= 50~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd
+Depends: gnome-shell (>= 46~), gnome-shell (<< 52~), gnome-shell (<< 47~) | gnome-shell (>= 50~), python3, python3-gi, python3-venv, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-atspi-2.0, systemd, zstd
 Recommends: ptyxis
 Installed-Size: $(du -sk "$PKG/usr" | cut -f1)
 Description: Dock for GNOME with focus modes, an inbox and desk restore
@@ -58,7 +62,7 @@ Description: Dock for GNOME with focus modes, an inbox and desk restore
  allowed sites and notification rules, and an inbox for WhatsApp messages and
  AI agents. After a logout, your windows, terminals and servers come back.
  .
- After installing, open DeskAI Setup from the app grid and follow the steps.
+ DeskAI Setup opens by itself after installing, and takes you through the rest.
 CONTROL
 
 mkdir -p "$ROOT/dist"

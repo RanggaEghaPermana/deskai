@@ -216,7 +216,25 @@ class PlainWords(unittest.TestCase):
         self.assertEqual(raw_on_a_card(caught.format('self._say("x")')), [])
 
 
+def repeated_keys(source):
+    """The keys said twice in a dict written out: only the last one counts, and nothing says so."""
+    found = []
+    for table in ast.walk(ast.parse(source)):
+        if isinstance(table, ast.Dict):
+            keys = [key.value for key in table.keys if isinstance(key, ast.Constant)]
+            found += sorted({key for key in keys if keys.count(key) > 1})
+    return found
+
+
 class BothLanguages(unittest.TestCase):
+    def test_no_string_is_said_twice(self):
+        for name in ("daemon/brain.py", "setup/deskai_setup.py"):
+            self.assertEqual(repeated_keys((ROOT / name).read_text()), [], name)
+
+    def test_what_counts_as_said_twice(self):
+        self.assertEqual(repeated_keys('{"a": 1, "b": 2, "a": 3}'), ["a"])
+        self.assertEqual(repeated_keys('{"a": 1, "b": 2}'), [])
+
     def check(self, table):
         self.assertEqual(sorted(table["en"]), sorted(table["id"]), "the same strings in English and Indonesian")
         for key, text in table["en"].items():
@@ -383,7 +401,8 @@ class SetupInPlainWords(unittest.TestCase):
             self.assertEqual(fields(self.strings["en"][key]), set(), f"{key}: any tool can say this, so there's nothing to fill it with")
 
     def test_every_sentence_gets_used(self):
-        used = set(re.findall(r"trouble_\w+", self.source + (ROOT / "setup" / "deskai_setup.py").read_text().split("LANGUAGES =")[1]))
+        used = set(re.findall(r"trouble_\w+", self.source + (ROOT / "daemon" / "localai.py").read_text()
+                              + (ROOT / "setup" / "deskai_setup.py").read_text().split("LANGUAGES =")[1]))
         self.assertEqual(self.troubles - used, set())
         self.assertEqual(used - self.troubles, set())
 

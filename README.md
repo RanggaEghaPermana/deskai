@@ -60,7 +60,7 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 | Desktop | **GNOME 46, 50 or 51** on Wayland (Ubuntu 24.04 or 26.04, for example). Other GNOME versions and other desktops such as KDE aren't supported. |
 | Needed | Python 3, PyGObject, GTK 4, libadwaita, systemd. The `.deb` and the setup window take care of these. |
 | Recommended | **Ptyxis** and **Google Chrome**: terminals and browser tabs come back after a logout with these. |
-| Optional | **Claude Code**, an Anthropic API key or **[Ollama](https://ollama.com)** for the smart features. Everything else works without AI. |
+| Optional | The AI: **[Ollama](https://ollama.com)**, which setup can download for you, **Claude Code** or an Anthropic API key. Everything else works without it. |
 
 It's used daily on Ubuntu 26.04. On Ubuntu 24.04 it has been run in a test session in a virtual machine, not yet on a
 full desktop, and GNOME 51 has only been checked against its source. Ubuntu 24.04 doesn't package Ptyxis, so without it
@@ -72,11 +72,12 @@ terminals don't come back after a logout there.
 
 1. **[Download DeskAI](https://github.com/RanggaEghaPermana/deskai/releases/latest/download/deskai_all.deb)** (a `.deb`, under 200 KB).
 2. Double-click it and choose Install, or run `sudo apt install ./deskai_all.deb`.
-3. Open **DeskAI Setup** from the app grid and follow the steps.
+3. **DeskAI Setup** opens by itself. Follow the steps, and if it doesn't open, it's in the app grid.
 4. Log out and back in once. The dock is there from then on.
 
-To update, install the newer `.deb` the same way, open DeskAI Setup, choose Update, and log out and back in. It doesn't
-look for updates by itself.
+To update, install the newer `.deb` the same way. DeskAI Setup opens with a list of what's new and an **Update** button, and
+everything you chose stays as it is. Log out and back in once, and that's it. A release only asks you something if it
+brought something new to choose. It doesn't look for updates by itself.
 
 ### Other distributions with GNOME 46, 50 or 51
 
@@ -87,7 +88,9 @@ The setup window copies what it needs, so you can delete the download afterwards
 
 ## What leaves your computer
 
-With AI **off**, or with **Ollama**, nothing does: the model runs on your computer.
+With AI **off**, or with **Ollama**, nothing does: the model runs on your computer. If you let setup download the local AI,
+that's the one time it goes out for something: Ollama from `github.com`, and the model from `registry.ollama.ai`. They get a
+download request and nothing about you.
 
 With **Claude**, these are sent to it, through your Claude Code login or your API key:
 
@@ -100,15 +103,19 @@ Using an API key costs money, charged by Anthropic.
 
 ## Choosing the AI
 
-DeskAI Setup offers Claude Code's login, an API key, Ollama, or no AI. With Claude Code's login, if Claude
-stops working (signed out, plan ended, limit reached) and Ollama has the model, DeskAI carries on with it
-and tries Claude again every hour.
+DeskAI Setup offers Ollama, Claude Code's login, an API key, or no AI, with Ollama already picked. If it isn't on your
+computer, setup says how big the download is, about 2.9 GB, and gets it in the background if you leave it picked. You
+can use your computer meanwhile, logging out doesn't lose what's done, and the dock says when it's ready. Pick **No AI**
+and nothing downloads. It's picked for you instead if the connection is metered, and if you move to a metered one later the
+download waits, unless that's the connection you chose it on. Ollama can't be picked if the computer is short of memory
+or disk. With Claude Code's login, if Claude stops working (signed out, plan ended, limit reached) and
+Ollama has the model, DeskAI carries on with it and tries Claude again every hour.
 
 Ollama is free and private. It only powers the command bar, loading the model when you type and letting it go a
 couple of minutes later: small local models judge real windows and notifications badly (see `evals/real.py`), so
 with Ollama those are decided by the lists and what DeskAI has learned from you, and for notifications that aren't
 plainly urgent, your answer about the sender. It also can't rewrite your modes, though allowing or blocking something
-works without it. The default model, `qwen3:1.7b`, downloads 1.4 GB
+works without it. The default model, `qwen3:1.7b`, takes 1.4 GB
 and needs about 2 GB of free memory while thinking. On a laptop CPU it answers in about 5 seconds, or 25 when it has
 to load first, so it only gets what the lists have no shape for, like a question. A request to set up, close or open
 something that the lists can't place gets told so right away. Pick another with `llm.ollama_model` in
@@ -145,6 +152,9 @@ bug reports, and removing DeskAI deletes it.
 - **A background service and a command**: `deskaid.service` for your user, `~/.local/bin/deskai`, and, unless you
   installed the `.deb`, a copy of the app in `~/.local/share/deskai` and a DeskAI Setup launcher. Removing DeskAI takes
   them away.
+- **The local AI**, only if you let setup download it: Ollama and its model in `~/.local/share/deskai/ollama`, and two services
+  for your user, `deskai-ollama.service` and, while it downloads, `deskai-local-ai.service`. Your own Ollama, if you have
+  one, is used and left alone, with only the model added to it. Removing DeskAI takes away what it downloaded.
 - **GNOME's switch for user extensions**, if you had it off, since the dock can't run without it. Removing DeskAI turns
   it off again.
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
@@ -164,10 +174,11 @@ bug reports, and removing DeskAI deletes it.
 - **A second extension, DeskAI Login**, holds back GNOME's login animation until your extensions have
   loaded, so the desktop can appear a moment later. Turn it off in the Extensions app if you'd rather see
   it sooner. On GNOME 46 and 51 it stays out of the way, since sessions start in the overview there.
-- **Other docks go off** the first time DeskAI's dock appears: Ubuntu Dock, Dash to Dock, Dash to Panel and the like.
-  They're only turned off, not uninstalled, and removing DeskAI turns them back on. To keep one, turn it on again in
-  the Extensions app, and DeskAI leaves it alone. If the dock can't load, on a newer GNOME say, they come back by
-  themselves. Docks that are separate apps, such as Plank, aren't touched.
+- **Other docks stay off** for as long as DeskAI's dock is here: Ubuntu Dock, Dash to Dock, Dash to Panel and the like, so
+  you never get two on top of each other. They're only turned off, not uninstalled. The Extensions app can't turn one on
+  meanwhile, and one that comes back on some other way, from an update or a reset, goes off again a couple of seconds
+  later. A card says so each time. Removing DeskAI turns them back on. If the dock can't load, on a newer GNOME say, they
+  come back by themselves. Docks that are separate apps, such as Plank, aren't touched.
 - **The color before the desktop**, on Ubuntu: `com.ubuntu.login-screen background-color` is set to black, unless
   you already chose one, so there's no gray flash at login. Removing DeskAI puts it back.
 
@@ -194,9 +205,11 @@ file it can't read, the old one is kept next to it as `modes.json.broken-…`.
 
 ## Remove
 
-Open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package if you used the
-`.deb`. Your modes and stats stay unless you tick the box to delete them too. Uninstalling the package without that
-step leaves your other docks off: `gnome-extensions enable ubuntu-dock@ubuntu.com` turns Ubuntu Dock back on.
+Uninstall the package in App Center, or run `sudo apt remove deskai`: that removes DeskAI for everyone logged in, and your
+other docks come back. Or open **DeskAI Setup** and choose **Remove DeskAI**, then uninstall the package. Your modes and stats
+stay, unless you tick the box in DeskAI Setup to delete them too. Anyone else who uses this computer and isn't logged in at
+that moment keeps what was set up for them: they can open DeskAI Setup before the package goes, and if it's gone already, their
+other docks are still off, and `gnome-extensions enable ubuntu-dock@ubuntu.com` turns Ubuntu Dock back on.
 
 ## Development
 

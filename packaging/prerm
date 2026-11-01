@@ -1,0 +1,8 @@
+#!/bin/sh
+# Uninstalling the package does what DeskAI Setup's Remove does, for everyone logged in: with the dock's files gone and nobody
+# having put the other docks back, they'd be left with no dock at all. An upgrade isn't a removal.
+set -e
+[ "$1" = remove ] || exit 0
+. /usr/share/deskai/packaging/deskai-sessions.sh
+in_sessions everyone /usr/bin/python3 /usr/share/deskai/setup/installer.py --uninstall
+exit 0

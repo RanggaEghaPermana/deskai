@@ -42,7 +42,7 @@ else
 fi
 
 bad=""
-for file in dev/*.sh dev/hooks/* install.sh setup.sh uninstall.sh packaging/*.sh; do
+for file in dev/*.sh dev/hooks/* install.sh setup.sh uninstall.sh packaging/*.sh packaging/postinst packaging/prerm; do
   bash -n "$file" 2>/dev/null || bad="$bad $file"
 done
 if [ -z "$bad" ]; then passed "the shell scripts parse"; else broke "these shell scripts don't parse:$bad"; fi

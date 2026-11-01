@@ -34,6 +34,7 @@ import docks  # noqa: E402
 import guide  # noqa: E402
 import launcher  # noqa: E402
 import learned  # noqa: E402
+import localai  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
 import servers  # noqa: E402
@@ -51,6 +52,7 @@ SERVER_CHECK_EVERY = 10      # seconds between looks at the servers on the desk
 ROOM_CHECK_EVERY = 60        # seconds between looks at memory and disk space
 ROUTINE_STOP_WAIT_S = 3      # closing a project lets a setup still going finish the step it's on, if it's quick
 DOCKS_SETTLE_S = 3           # turning a dock off restarts the extensions GNOME loaded after it, this dock among them
+DOCKS_CHANGED_WAIT_S = 2     # GNOME changes two lists to turn an extension on, and a change meanwhile can leave one half on
 DOCK_WAIT_S = 60             # after starting, how long the dock gets to appear before the docks it replaced come back
 GUIDE_DELAY_S = 15           # the first-run guide waits for the desktop, and for anything else on offer
 GUIDE_TRIES = 8
@@ -214,6 +216,9 @@ class Brain:
         self.closing_terminals = []  # a closed project's terminals, waiting for your OK
         self.guide_step = None
         self.dock_seen = False
+        self.dock_up = False
+        self.docks_changed_timer = 0
+        self.shell_settings = None
         self.config_told = None
         self.routine_running = None  # the setup going on right now
         self.guide_tries = 0
@@ -245,6 +250,7 @@ class Brain:
         Gio.bus_watch_name_on_connection(
             self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE, self._on_dock_appeared, self._on_dock_vanished)
         GLib.timeout_add_seconds(TICK_SECONDS, self._tick)
+        self._watch_extensions()
         log.info("deskaid up · AI: %s", self.llm.describe())
 
     def shutdown(self):
@@ -266,7 +272,31 @@ class Brain:
         self.guide_tries = 0
         GLib.timeout_add_seconds(GUIDE_DELAY_S, self._maybe_guide)
         self.dock_seen = True
+        self.dock_up = True
         self._replace_other_docks()
+
+    def _watch_extensions(self):
+        """A dock can come back on at any time, from an update or a reset. Two on top of each other is what this prevents."""
+        try:
+            self.shell_settings = docks.shell_settings()
+        except GLib.Error as e:
+            log.warning("can't watch GNOME's extension settings: %s", e)
+            return
+        if self.shell_settings:
+            for key in ("enabled-extensions", "disabled-extensions"):
+                self.shell_settings.connect(f"changed::{key}", self._on_extensions_changed)
+                self.shell_settings.get_strv(key)  # it only says a key changed if it's been read
+
+    def _on_extensions_changed(self, _settings, _key):
+        if self.docks_changed_timer:
+            GLib.source_remove(self.docks_changed_timer)
+        self.docks_changed_timer = GLib.timeout_add_seconds(DOCKS_CHANGED_WAIT_S, self._after_extensions_changed)
+
+    def _after_extensions_changed(self):
+        self.docks_changed_timer = 0
+        if self.dock_up:  # with this dock gone, there's no other dock to be on top of
+            self._replace_other_docks()
+        return False
 
     def _replace_other_docks(self):
         try:
@@ -290,6 +320,7 @@ class Brain:
         return False
 
     def _on_dock_vanished(self, _conn, _name):
+        self.dock_up = False
         if self.mode is not None:
             log.info("dock vanished")
         self._account()
@@ -565,6 +596,8 @@ class Brain:
             self.senders.forget(app, title, whole_app=whole_app)
         elif action in ("review:work", "review:distraction", "review:skip") and self.review_item and card_id == self.review_item["id"]:
             self._answer_review(action)
+        elif action == "localai:try-again":
+            localai.try_again()
         elif action == "break:off":
             self._set_breaks(False)
             self._command_card(self._say("breaks_off"))
@@ -1675,6 +1708,18 @@ class Brain:
             self.card({"id": "config-problem", "kind": "command", "title": self._say("config_problem"),
                        "text": f"{self.config.problem_in_words()}\n{self._say(going_by)}", "actions": [], "timeout": 30})
 
+    def _say_how_the_local_ai_went(self):
+        """The download in the background has finished: the dock says so, once."""
+        news = localai.news() if self.dock_up else None
+        if not news:
+            return
+        localai.told()
+        if news["stage"] == "ready":
+            self._command_card(self._say("local_ai_ready"), timeout=20)
+        else:
+            self._command_card(self._say("local_ai_failed", why=self._say(news.get("trouble") or "trouble_download")), timeout=60,
+                               actions=[{"id": "localai:try-again", "label": self._say("try_again"), "primary": True}])
+
     def _llm_ready(self):
         return self.llm.available and time.monotonic() >= self.llm_paused_until
 
@@ -1882,6 +1927,7 @@ class Brain:
         self._safely(self._account, idle_ms)
         self._safely(self._tick_away, idle_ms)
         self._safely(self._tick_coach, idle_ms)
+        self._safely(self._say_how_the_local_ai_went)
 
         if self.mode is not None and time.monotonic() - self.last_server_check > SERVER_CHECK_EVERY:
             self._safely(self._check_servers)

@@ -54,6 +54,8 @@ class Fake(deskaid.Brain):
         self.drift_since = self.last_nudge = None
         self.servers_sent = None
         self.dock_seen = False
+        self.dock_up = False
+        self.docks_changed_timer = 0
         self.config_told = None
         self.routine_running = None
 
@@ -1056,6 +1058,52 @@ class TheOnlyDock(Base):
             self.brain._on_dock_appeared(None, "", "")
         self.assertTrue(self.brain.dock_seen)
 
+    def changed(self):
+        """GNOME's lists change twice, the way turning an extension on does, and the wait runs out."""
+        timers = []
+
+        def add(_seconds, fn):
+            timers.append(fn)
+            return len(timers)
+        with mock.patch.object(deskaid.GLib, "timeout_add_seconds", side_effect=add), mock.patch.object(deskaid.GLib, "source_remove") as removed:
+            self.brain._on_extensions_changed(None, "disabled-extensions")
+            self.brain._on_extensions_changed(None, "enabled-extensions")
+        removed.assert_called_once_with(1)  # the first wait is dropped: both changes get one look
+        return timers[-1]
+
+    def test_a_dock_that_comes_back_on_goes_off_again(self):
+        self.brain.dock_up = True
+        finish = self.changed()
+        with mock.patch.object(deskaid.docks, "turn_off_others", return_value=["Ubuntu Dock"]) as off, mock.patch.object(deskaid.GLib, "timeout_add_seconds") as said:
+            self.assertFalse(finish())
+        off.assert_called_once_with()
+        said.assert_called_once()  # a card says why it went off
+
+    def test_with_this_dock_gone_theres_nothing_to_be_on_top_of(self):
+        self.brain.dock_up = False
+        finish = self.changed()
+        with mock.patch.object(deskaid.docks, "turn_off_others") as off:
+            finish()
+        off.assert_not_called()
+
+    def test_the_dock_going_away_stops_the_watching(self):
+        self.brain.dock_up = True
+        self.brain.stats = mock.Mock()
+        with mock.patch.object(self.brain, "_account"):
+            self.brain._on_dock_vanished(None, "")
+        self.assertFalse(self.brain.dock_up)
+
+    def test_the_dock_coming_back_starts_it_again(self):
+        self.appeared([])
+        self.assertTrue(self.brain.dock_up)
+
+    def test_watching_needs_the_lists_to_have_been_read(self):
+        settings = mock.Mock()
+        with mock.patch.object(deskaid.docks, "shell_settings", return_value=settings):
+            self.brain._watch_extensions()
+        self.assertEqual([call.args[0] for call in settings.connect.call_args_list], ["changed::enabled-extensions", "changed::disabled-extensions"])
+        self.assertEqual([call.args[0] for call in settings.get_strv.call_args_list], ["enabled-extensions", "disabled-extensions"])
+
     def test_a_dock_that_never_comes_gives_the_others_back(self):
         with mock.patch.object(deskaid.docks, "restore") as restore:
             self.brain._dock_never_came()
@@ -1066,6 +1114,52 @@ class TheOnlyDock(Base):
         with mock.patch.object(deskaid.docks, "restore") as restore:
             self.brain._dock_never_came()
         restore.assert_not_called()
+
+
+class TheLocalAI(Base):
+    def say(self, **state):
+        self.brain.dock_up = True
+        with mock.patch.object(deskaid.localai, "news", return_value=state or None), mock.patch.object(deskaid.localai, "told") as told:
+            self.brain._say_how_the_local_ai_went()
+        return told
+
+    def test_ready(self):
+        told = self.say(stage="ready")
+        self.assertIn("udah siap", self.brain.cards[-1]["title"])
+        self.assertEqual(self.brain.cards[-1]["actions"], [])
+        told.assert_called_once_with()
+
+    def test_failed_says_why_and_offers_another_go(self):
+        self.assertEqual(self.brain._say("local_ai_failed", why="x"), "Gagal ngambil AI lokal: x.")
+        told = self.say(stage="failed", trouble="trouble_no_room")
+        self.assertEqual(self.brain.cards[-1]["actions"][0]["id"], "localai:try-again")
+        said = self.brain.cards[-1]["title"] + self.brain.cards[-1]["text"]
+        self.assertIn("disk-nya penuh", said)
+        told.assert_called_once_with()
+
+    def test_every_way_it_can_fail_has_something_to_say(self):
+        import localai
+        import re
+        for key in set(re.findall(r"trouble_\w+", Path(localai.__file__).read_text())):
+            for language in ("en", "id"):
+                self.assertIn(key, brain.CARD_STRINGS[language])
+
+    def test_the_button(self):
+        with mock.patch.object(deskaid.localai, "try_again") as again:
+            self.brain.on_card_action("command", "localai:try-again")
+        again.assert_called_once_with()
+
+    def test_nothing_new(self):
+        told = self.say()
+        self.assertEqual(self.brain.cards, [])
+        told.assert_not_called()
+
+    def test_it_waits_for_a_dock_to_say_it_on(self):
+        self.brain.dock_up = False
+        with mock.patch.object(deskaid.localai, "news", return_value={"stage": "ready"}), mock.patch.object(deskaid.localai, "told") as told:
+            self.brain._say_how_the_local_ai_went()
+        told.assert_not_called()
+        self.assertEqual(self.brain.cards, [])
 
 
 class ServerStatus(Base):

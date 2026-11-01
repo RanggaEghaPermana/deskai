@@ -1,0 +1,9 @@
+#!/bin/sh
+# Opens DeskAI Setup on the desktop of whoever's there, so nobody has to go looking for it after installing or updating.
+# Reinstalling the same version has nothing to show.
+set -e
+[ "$1" = configure ] || exit 0
+[ "${2:-}" != "$(cat /usr/share/deskai/VERSION)" ] || exit 0
+. /usr/share/deskai/packaging/deskai-sessions.sh
+in_sessions desktop systemd-run --user --no-block --collect --quiet /usr/bin/deskai-setup
+exit 0

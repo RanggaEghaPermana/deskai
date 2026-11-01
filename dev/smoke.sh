@@ -165,6 +165,27 @@ fi
 ev "_T.keepEval = false; _T.ext._closeCard(); 'ok'" >/dev/null
 sleep 0.5
 
+# GNOME can call enable() twice in a row when it restarts extensions that overlap: one dock, not one on top of another.
+ev "_T.oldDockGone = false; _T.ext._frame.connect('destroy', () => { _T.oldDockGone = true; }); _T.ext.enable(); 'ok'" >/dev/null
+sleep 0.3
+expect "enabling twice leaves one dock" "$(val "_T.oldDockGone && _T.ext._frame.get_parent() !== null")" true
+ev "_T.ext.disable(); _T.ext.disable(); 'ok'" >/dev/null
+expect "disabling twice is harmless" "$(val "_T.ext._frame === null")" true
+ev "_T.ext.enable(); 'ok'" >/dev/null
+sleep 0.5
+expect "and it comes back from that" "$(val "_T.ext._frame.get_parent() !== null")" true
+
+# The Extensions app can't turn another dock on, since GNOME can start it twice over and then never get rid of it:
+# seen on Ubuntu 26.04 with Ubuntu Dock, which stayed on the screen after turning it off, in state ERROR.
+other_dock="window-list@gnome-shell-extensions.gcampax.github.com"
+expect "another dock can't be turned on" "$(val "Main.extensionManager.enableExtension('$other_dock')")" false
+expect "and it isn't" "$(gsettings get org.gnome.shell enabled-extensions | grep -c "$other_dock")" 0
+ev "_T.ext._closeCard(); 'ok'" >/dev/null
+expect "other extensions can" "$(val "Main.extensionManager.enableExtension('$UUID')")" true
+ev "_T.ext.disable(); globalThis._T.freed = !String(Main.extensionManager.enableExtension).includes('OTHER_DOCKS'); _T.ext.enable(); 'ok'" >/dev/null
+expect "with the dock gone, GNOME is as it was" "$(val "_T.freed")" true
+sleep 0.5
+
 try_everything() {
   local how="$1" animated="$2" first second
 
