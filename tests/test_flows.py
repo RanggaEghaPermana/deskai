@@ -173,6 +173,86 @@ class Notifications(Base):
         claude.pool.submit.assert_called_once()
 
 
+class TheTick(Base):
+    """GLib drops a timer whose callback raises, and with it nudges, server checks and desk snapshots."""
+
+    PARTS = ("_refresh_config", "_idle_ms", "_account", "_tick_away", "_tick_coach", "_check_servers", "_check_room",
+             "_snapshot_desk")
+
+    def setUp(self):
+        super().setUp()
+        self.brain.stats = mock.Mock()
+        self.brain.cache = mock.Mock()
+        self.brain.tick_logged = {}
+        self.brain.away = False
+        # All of it due at once.
+        self.brain.last_server_check = self.brain.last_room_check = self.brain.last_snapshot = self.brain.last_save = -1e9
+        self.brain.last_tick = time.monotonic()
+        self.brain.last_review_try = time.monotonic()
+        self.ran = {}
+        for name in self.PARTS:
+            self.patch_part(name)
+
+    def patch_part(self, name, **kwargs):
+        patcher = mock.patch.object(self.brain, name, **kwargs)
+        self.ran[name] = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_part_that_fails_doesnt_stop_the_others_or_the_timer(self):
+        for broken in self.PARTS:
+            with self.subTest(broken), self.assertLogs("deskai", "ERROR"):
+                self.patch_part(broken, side_effect=TypeError("broken"))
+                self.brain.last_server_check = self.brain.last_room_check = self.brain.last_snapshot = -1e9
+                self.brain.tick_logged.clear()
+                self.assertIs(self.brain._tick(), True)
+                for name in self.PARTS:
+                    self.ran[name].assert_called()
+                self.patch_part(broken)
+
+    def test_saving_one_thing_failing_doesnt_stop_saving_the_other(self):
+        self.brain.stats.save.side_effect = OSError("No space left on device")
+        with self.assertLogs("deskai", "ERROR"):
+            self.assertIs(self.brain._tick(), True)
+        self.brain.cache.save.assert_called_once()
+
+    def test_a_real_timer_keeps_going(self):
+        self.patch_part("_tick_coach", side_effect=TypeError("broken"))
+        loop = deskaid.GLib.MainLoop()
+        with self.assertLogs("deskai", "ERROR"):
+            deskaid.GLib.timeout_add(1, self.brain._tick)
+            deskaid.GLib.timeout_add(60, loop.quit)
+            loop.run()
+        self.assertGreater(self.ran["_tick_coach"].call_count, 2)
+
+    def test_one_that_keeps_failing_doesnt_fill_the_journal(self):
+        self.patch_part("_tick_coach", side_effect=TypeError("broken"))
+        with self.assertLogs("deskai", "ERROR") as logs:
+            for _ in range(20):
+                self.brain._tick()
+        self.assertEqual(len(logs.records), 1)
+
+
+class AFullDisk(Base):
+    def test_a_write_that_fails_leaves_no_half_file(self):
+        target = self.folder / "state" / "x.json"
+        target.parent.mkdir()
+        target.write_text('{"old": true}')
+        with mock.patch.object(brain.json, "dump", side_effect=OSError("No space left on device")), self.assertRaises(OSError):
+            brain.write_json_atomic(target, {"new": True})
+        self.assertEqual([path.name for path in target.parent.iterdir()], ["x.json"])
+        self.assertEqual(json.loads(target.read_text()), {"old": True})
+
+    def test_stats_keep_going_and_try_again(self):
+        stats = deskaid.Stats(self.folder / "stats")
+        stats.add("building", "on_task", 5, "")
+        with mock.patch.object(brain, "write_json_atomic", side_effect=OSError("No space left on device")), \
+                self.assertLogs("deskai", "WARNING"):
+            stats.save()
+        self.assertTrue(stats.dirty)
+        stats.save()
+        self.assertFalse(stats.dirty)
+
+
 class Breaks(Base):
     def tick(self, seconds_later, idle_ms=0, mode="building"):
         self.brain.last_wall = time.time() - min(seconds_later, 5)

@@ -41,6 +41,7 @@ import system  # noqa: E402
 from brain import BRAIN_NAME, BUS_NAME, OBJECT_PATH, log  # noqa: E402
 
 TICK_SECONDS = 5
+TICK_LOG_EVERY_S = 3600      # how often a part of the tick that keeps failing gets a line in the journal
 ROUTINE_DELAY_S = 6          # after login or unlock, let the desktop settle before asking
 ROUTINE_SNOOZE_S = 45 * 60
 SNAPSHOT_EVERY = 30          # seconds between snapshots of the desk, for after a logout
@@ -158,7 +159,11 @@ class Stats:
             return
         top = sorted(self.data["distractions"].items(), key=lambda kv: -kv[1])[:50]
         self.data["distractions"] = dict(top)
-        brain.write_json_atomic(self.dir / f"{self.day}.json", self.data)
+        try:
+            brain.write_json_atomic(self.dir / f"{self.day}.json", self.data)
+        except OSError as e:  # a full disk: it stays in memory, and the next save tries again
+            log.warning("can't save today's stats: %s", e)
+            return
         self.dirty = False
 
 
@@ -224,6 +229,7 @@ class Brain:
         self.last_wall = time.time()
         self.last_tick = time.monotonic()
         self.last_save = time.monotonic()
+        self.tick_logged = {}     # the part of the tick that failed → when that last went in the journal
 
     # ---- wiring ---------------------------------------------------------
 
@@ -1775,10 +1781,21 @@ class Brain:
         if kind == "neutral" and act.source == "default" and act.app_id not in self.config.llm["exclude_apps"]:
             self.unsure.note(self.mode, act.app_id, act.app_name, act.title, elapsed)
 
-    def _tick(self):
-        self._refresh_config()
-        idle_ms = self._idle_ms()
-        self._account(idle_ms)
+    def _safely(self, part, *args):
+        """Runs one part of the tick, which loses only its own turn if it fails. GLib drops a timer whose callback
+        raises, and everything the tick does would stop with it while the daemon looks fine."""
+        try:
+            return part(*args)
+        except Exception as e:
+            name = getattr(part, "__name__", repr(part))
+            now = time.monotonic()
+            # One that keeps failing would otherwise write a traceback to the journal every few seconds.
+            if now - self.tick_logged.get(name, -TICK_LOG_EVERY_S) >= TICK_LOG_EVERY_S:
+                self.tick_logged[name] = now
+                log.exception("%s failed: %s", name, e)
+            return None
+
+    def _tick_away(self, idle_ms):
         # Back at a laptop left open (no unlock to notice): that's the start of the day too.
         if idle_ms > AWAY_AFTER_MS:
             self.away = True
@@ -1786,6 +1803,8 @@ class Brain:
             self.away = False
             self._maybe_offer_routine()
             self._maybe_review()
+
+    def _tick_coach(self, idle_ms):
         act = self.activity
         mode = self.config.mode(self.mode) if self.mode else None
         self._maybe_break(mode, idle_ms)
@@ -1797,21 +1816,28 @@ class Brain:
             else:
                 self._maybe_suggest(act)
 
+    def _tick(self):
+        self._safely(self._refresh_config)
+        idle_ms = self._safely(self._idle_ms) or 0
+        self._safely(self._account, idle_ms)
+        self._safely(self._tick_away, idle_ms)
+        self._safely(self._tick_coach, idle_ms)
+
         if self.mode is not None and time.monotonic() - self.last_server_check > SERVER_CHECK_EVERY:
-            self._check_servers()
+            self._safely(self._check_servers)
 
         if time.monotonic() - self.last_room_check > ROOM_CHECK_EVERY:
             self.last_room_check = time.monotonic()
-            self._check_room()
+            self._safely(self._check_room)
 
         if self.mode is not None and time.monotonic() - self.last_snapshot > SNAPSHOT_EVERY:
             self.last_snapshot = time.monotonic()
-            self._snapshot_desk()
+            self._safely(self._snapshot_desk)
 
         if time.monotonic() - self.last_save > SAVE_EVERY:
             self.last_save = time.monotonic()
-            self.stats.save()
-            self.cache.save()
+            self._safely(self.stats.save)
+            self._safely(self.cache.save)
         return True
 
     def _maybe_nudge(self, act, mode, idle_ms):
