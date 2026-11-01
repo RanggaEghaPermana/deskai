@@ -294,6 +294,106 @@ class GnomeVersions(unittest.TestCase):
         self.assertEqual(found, [], "see compat.js")
 
 
+def _for_the_log(name, parents):
+    """Whether a caught error is only going to installer.report() or to stderr. Any other use of it is how text gets out."""
+    node = name
+    while node in parents and not isinstance(node, ast.Call):
+        node = parents[node]
+    if not isinstance(node, ast.Call):
+        return False
+    called = getattr(node.func, "attr", getattr(node.func, "id", ""))
+    if called == "report":
+        return name in node.args
+    return called == "print" and any(word.arg == "file" and ast.unparse(word.value) == "sys.stderr" for word in node.keywords)
+
+
+def raw_in_setup(source):
+    """[line] for each error that's caught in Setup and used for anything but the log: that's text a person could read."""
+    found = []
+    for handler in ast.walk(ast.parse(source)):
+        if not (isinstance(handler, ast.ExceptHandler) and handler.name):
+            continue
+        parents = {child: node for statement in handler.body for node in ast.walk(statement) for child in ast.iter_child_nodes(node)}
+        found += [node.lineno for statement in handler.body for node in ast.walk(statement)
+                  if isinstance(node, ast.Name) and node.id == handler.name and not _for_the_log(node, parents)]
+    return found
+
+
+def setup_failures(source):
+    """[(line, key or None if it isn't written out, {fields given})] for each failure Setup raises, except in the two
+    functions that pass on a key they were given or looked up."""
+    tree = ast.parse(source)
+    passing_on = {node for helper in ast.walk(tree) if isinstance(helper, ast.FunctionDef) and helper.name in ("_tool_failed", "report")
+                  for node in ast.walk(helper)}
+    found = []
+    for call in ast.walk(tree):
+        if isinstance(call, ast.Call) and call not in passing_on and getattr(call.func, "id", "") in ("SetupError", "_tool_failed"):
+            key = call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
+            found.append((call.lineno, key, {word.arg for word in call.keywords}))
+    return found
+
+
+class SetupInPlainWords(unittest.TestCase):
+    RAW = re.compile(r"\[Errno|Traceback|\bE: |\bERROR\b|exit code|stderr|stdout")
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "setup"))
+        self.addCleanup(sys.path.remove, str(ROOT / "setup"))
+        import installer
+        self.installer = installer
+        self.strings = setup_strings()
+        self.source = (ROOT / "setup" / "installer.py").read_text()
+        self.troubles = {key for key in self.strings["en"] if key.startswith("trouble_")}
+
+    def test_no_error_is_turned_into_text(self):
+        found = [f"{path.relative_to(ROOT)}:{line}" for path in python_files() if path.parent.name == "setup"
+                 for line in raw_in_setup(path.read_text())]
+        self.assertEqual(found, [], "give it to installer.report(): the window says STRINGS, and the log gets the tool's words")
+
+    def test_what_counts_as_raw(self):
+        caught = 'try:\n    a()\nexcept OSError as e:\n    {}'
+        self.assertEqual(raw_in_setup(caught.format('error = str(e)')), [4])
+        self.assertEqual(raw_in_setup(caught.format('progress(step, "failed", str(e))')), [4])
+        self.assertEqual(raw_in_setup(caught.format('progress(step, "failed", f"{e}")')), [4])
+        self.assertEqual(raw_in_setup(caught.format('toast(title=e)')), [4])
+        self.assertEqual(raw_in_setup(caught.format('error = e')), [4])
+        self.assertEqual(raw_in_setup(caught.format('error = report(str(e))')), [4])
+        self.assertEqual(raw_in_setup(caught.format('print(f"failed: {e}")')), [4])
+        self.assertEqual(raw_in_setup(caught.format('error = installer.report(e)')), [])
+        self.assertEqual(raw_in_setup(caught.format('progress(step, "failed", report(e, step))')), [])
+        self.assertEqual(raw_in_setup(caught.format('print(f"Keeping: {e}", file=sys.stderr)')), [])
+        self.assertEqual(raw_in_setup(caught.format('pass')), [])
+
+    def test_every_failure_is_a_sentence_in_the_window(self):
+        found = setup_failures(self.source)
+        self.assertGreater(len(found), 5)
+        for line, key, given in found:
+            self.assertIn(key, self.troubles, f"setup/installer.py:{line}: a key in STRINGS, not a sentence or a tool's words")
+            self.assertEqual(fields(self.strings["en"][key]), given, f"setup/installer.py:{line}: what {key} needs filled in")
+
+    def test_what_counts_as_a_failure_with_a_sentence(self):
+        self.assertEqual(setup_failures('raise SetupError("trouble_no_key", "said")'), [(1, "trouble_no_key", set())])
+        self.assertEqual(setup_failures('raise _tool_failed("trouble_model", result, model=model)'), [(1, "trouble_model", {"model"})])
+        self.assertEqual(setup_failures('raise SetupError(result.stderr, "said")'), [(1, None, set())])
+        self.assertEqual(setup_failures('def _tool_failed(key, result):\n    return SetupError(key, "said")'), [])
+
+    def test_what_a_tool_says_leads_to_a_sentence_with_nothing_to_fill_in(self):
+        for words, key in self.installer.TROUBLES:
+            self.assertIn(key, self.troubles, words.pattern)
+            self.assertEqual(fields(self.strings["en"][key]), set(), f"{key}: any tool can say this, so there's nothing to fill it with")
+
+    def test_every_sentence_gets_used(self):
+        used = set(re.findall(r"trouble_\w+", self.source + (ROOT / "setup" / "deskai_setup.py").read_text().split("LANGUAGES =")[1]))
+        self.assertEqual(self.troubles - used, set())
+        self.assertEqual(used - self.troubles, set())
+
+    def test_the_sentences_themselves_are_plain(self):
+        for language, table in self.strings.items():
+            for key in self.troubles:
+                self.assertIsNone(self.RAW.search(table[key]), f"{language} {key}")
+                self.assertLessEqual(fields(table[key]), {"package", "model", "path"}, f"{language} {key}: no room for a raw error")
+
+
 class PythonVersions(unittest.TestCase):
     def test_everything_parses_on_the_oldest_python(self):
         # Ubuntu 24.04's.

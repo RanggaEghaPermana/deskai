@@ -1,9 +1,14 @@
 """What setup has to get right on each GNOME and Ubuntu it supports. Run with: python3 -m unittest discover tests"""
 
+import io
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +16,62 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "setup"))
 
 import installer  # noqa: E402
+
+# What the tools really say. Those marked as measured came from running them without changing anything: apt-get -s, a user
+# with no root, a network namespace with no network, an Ollama server turned off. The rest are the wording in the sources of
+# apt, pkexec, systemctl, pip and venv, with the blanks filled in, since seeing them would take changing something.
+APT_NOT_FOUND = "E: Unable to locate package gir1.2-atspi-2.0\n"  # measured
+APT_NOT_ROOT = ("E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)\n"  # measured
+                "E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), are you root?\n")
+APT_BUSY = ("E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 2841 (unattended-upgr)\n"
+            "N: Be aware that removing the lock file is not a solution and may break your system.\n"
+            "E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), is another process using it?\n")
+APT_NO_ROOM = "E: You don't have enough free space in /var/cache/apt/archives/.\n"
+APT_OFFLINE = ("E: Failed to fetch http://archive.ubuntu.com/ubuntu/pool/main/a/at-spi2-core/gir1.2-atspi-2.0_2.52.0_amd64.deb  "
+               "Temporary failure resolving 'archive.ubuntu.com'\n")
+APT_NO_CANDIDATE = "E: Package 'gir1.2-atspi-2.0' has no installation candidate\n"
+APT_DPKG_FAILED = "E: Sub-process /usr/bin/dpkg returned an error code (1)\n"
+PKEXEC_CLOSED = "Error executing command as another user: Request dismissed\n"
+PKEXEC_REFUSED = "Error executing command as another user: Not authorized\n\nThis incident has been reported.\n"
+PKEXEC_NO_AGENT = "Error executing command as another user: No authentication agent found.\n"
+NO_VENV = ("The virtual environment was not created successfully because ensurepip is not\navailable.  On Debian/Ubuntu systems, "
+           "you need to install the python3-venv\npackage using the following command.\n\n    apt install python3.12-venv\n\n"
+           "You may need to use sudo with that command.  After installing the python3-venv\npackage, recreate your virtual "
+           "environment.\n\nFailing command: /tmp/venv/bin/python3\n")
+VENV_NOT_THERE = "Error: [Errno 2] No such file or directory: '/proc/deskai-venv'\n"  # measured
+PIP_OFFLINE = ("WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by "  # measured
+               "'NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x7ede64a47380>: Failed to establish "
+               "a new connection: [Errno -3] Temporary failure in name resolution')': /simple/anthropic/\n"
+               "ERROR: Could not find a version that satisfies the requirement anthropic (from versions: none)\n"
+               "ERROR: No matching distribution found for anthropic\n")
+PIP_NOTHING_THERE = ("ERROR: Could not find a version that satisfies the requirement anthropic (from versions: none)\n"  # measured
+                     "ERROR: No matching distribution found for anthropic\n")
+PIP_NO_ROOM = "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device\n"
+PIP_NOT_ALLOWED = "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied: '/usr/lib/python3/x'\n"
+OLLAMA_BAR = ("\x1b[?2026h\x1b[?25l\x1b[1Gpulling manifest \u280b \x1b[K\x1b[?25h\x1b[?2026l"  # measured, as all of Ollama's
+              "\x1b[?2026h\x1b[?25l\x1b[1Gpulling manifest \x1b[K\x1b[?25h\x1b[?2026l\n")
+OLLAMA_OFF = "Error: could not connect to ollama server, run 'ollama serve' to start it\n"
+OLLAMA_NO_MODEL = OLLAMA_BAR + "Error: pull model manifest: file does not exist\n"
+OLLAMA_OFFLINE = OLLAMA_BAR + ('Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3/manifests/1.7b": dial tcp: lookup '
+                               "registry.ollama.ai on 127.0.0.53:53: read udp 127.0.0.1:44053->127.0.0.53:53: read: connection refused\n")
+OLLAMA_BAD_DOWNLOAD = OLLAMA_BAR + "Error: digest mismatch, file must be downloaded again: want sha256:aa, got sha256:bb\n"
+NO_BUS = ("Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined "  # measured
+          "(consider using --machine=<user>@.host --user to connect to bus of other user)\n")
+UNIT_NOT_FOUND = "Failed to restart deskaid.service: Unit deskaid.service not found.\n"  # measured
+UNIT_FAILED = ('Job for deskaid.service failed because the control process exited with error code.\nSee "systemctl --user status '
+               'deskaid.service" and "journalctl --user -xeu deskaid.service" for details.\n')
+HOOKS_NOT_ALL = ("Claude Code  failed: /home/you/.claude/settings.json isn't valid JSON (line 1, column 2)\n"  # measured
+                 "Codex        failed: /home/you/.codex/config.toml already has its own `notify`; DeskAI won't overwrite it\n"
+                 "Gemini CLI   installed  (/home/you/.gemini/settings.json)\n\n"
+                 "Agent sessions already running pick the hooks up when reopened. Backups of the original files: *.deskai-bak\n")
+HOOKS_NOT_ALLOWED = "Claude Code  failed: /home/you/.claude/settings.json: Permission denied\n"  # measured
+HOOKS_CRASHED = ('Traceback (most recent call last):\n  File "/usr/share/deskai/daemon/deskai.py", line 12, in <module>\n'
+                 "ModuleNotFoundError: No module named 'hooks'\n")
+RAW = ("[Errno", "Traceback", "Error:", "E: ", "ERROR", "/var/", "/usr/", "/tmp/", "journalctl", "\x1b")
+
+
+def failed(code, stdout="", stderr=""):
+    return subprocess.CompletedProcess([], code, stdout, stderr)
 
 
 class PrivateFiles(unittest.TestCase):
@@ -128,6 +189,403 @@ class DatabasePermission(unittest.TestCase):
         run = self.removal()
         self.assertEqual(run.call_args.args[:3], ("pkexec", "rm", "-f"))
         self.assertFalse(self.generated.exists())
+
+
+class PlainFailures(unittest.TestCase):
+    """Whatever a tool says, the window gets a sentence, and the log gets what it said."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.log = self.root / "state" / "deskai" / "setup.log"
+        self.patch(installer, "SETUP_LOG", self.log)
+        self.patch(installer, "VENV", self.root / "venv")
+        import deskai_setup
+        self.strings = deskai_setup.STRINGS
+
+    def patch(self, *args, **kwargs):
+        patcher = mock.patch.object(*args, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def check(self, step, key, said, **fields):
+        """Runs a step that fails as it would for someone: through run_steps, for what the window and the log get."""
+        reported = []
+        self.assertFalse(installer.run_steps([("step", step)], lambda _id, state, error: reported.append(error) if state == "failed" else None))
+        error = reported[0]
+        self.assertEqual((error.key, error.fields), (key, fields))
+        self.assertIn(said.strip(), self.log.read_text(), "the tool's own words stay in the log")
+        for language in ("en", "id"):
+            sentence = self.strings[language][key].format(**fields)
+            for raw in RAW:
+                self.assertNotIn(raw, sentence)
+            self.assertNotIn(said.strip(), sentence)
+        return error
+
+    def test_installing_a_package(self):
+        self.patch(installer, "package_manager", return_value="apt-get")
+        self.patch(installer.shutil, "which", return_value="/usr/bin/pkexec")
+        for code, said, key in ((100, APT_NOT_FOUND, "trouble_package_missing"), (100, APT_NO_CANDIDATE, "trouble_package_missing"),
+                                (100, APT_NOT_ROOT, "trouble_no_permission"), (100, APT_BUSY, "trouble_package_busy"),
+                                (100, APT_NO_ROOM, "trouble_no_room"), (100, APT_OFFLINE, "trouble_no_connection"),
+                                (126, PKEXEC_CLOSED, "trouble_dismissed"), (127, PKEXEC_REFUSED, "trouble_not_allowed"),
+                                (127, PKEXEC_NO_AGENT, "trouble_not_allowed")):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(code, stderr=said)):
+                self.check(lambda: installer.install_package("gir1.2-atspi-2.0"), key, said)
+
+    def test_a_package_that_failed_some_other_way(self):
+        self.patch(installer, "package_manager", return_value="apt-get")
+        self.patch(installer.shutil, "which", return_value="/usr/bin/pkexec")
+        with mock.patch.object(installer, "run", return_value=failed(100, stderr=APT_DPKG_FAILED)):
+            self.check(lambda: installer.install_package("at-spi2-core"), "trouble_package", APT_DPKG_FAILED, package="at-spi2-core")
+
+    def test_a_tool_that_says_nothing(self):
+        self.patch(installer, "package_manager", return_value="apt-get")
+        self.patch(installer.shutil, "which", return_value="/usr/bin/pkexec")
+        with mock.patch.object(installer, "run", return_value=failed(100)):
+            self.check(lambda: installer.install_package("x"), "trouble_package", "exit code 100", package="x")
+
+    def test_no_way_to_install_a_package(self):
+        self.patch(installer, "package_manager", return_value="")
+        self.check(lambda: installer.install_package("x"), "trouble_no_installer", "package manager: none", package="x")
+
+    def test_the_api_key(self):
+        self.check(lambda: installer._write_env("sk-ant-secret words"), "trouble_key_spaces", "the API key has spaces")
+        self.assertNotIn("sk-ant-secret", self.log.read_text(), "the key itself is never written down")
+        self.patch(installer, "has_api_key", return_value=False)
+        step = dict(installer.install_steps(installer.Options(ai="api")))["ai"]
+        self.check(step, "trouble_no_key", "no API key")
+
+    def test_making_the_virtual_environment(self):
+        for said, key in ((VENV_NOT_THERE, "trouble_not_there"), ("Error: Command returned non-zero exit status 1.\n", "trouble_venv")):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
+                self.check(lambda: installer._make_venv("python3"), key, said)
+
+    def test_it_says_why_on_stdout_when_python3_venv_is_missing(self):
+        with mock.patch.object(installer, "run", return_value=failed(1, stdout=NO_VENV, stderr="")):
+            self.check(lambda: installer._make_venv("python3"), "trouble_venv", NO_VENV)
+
+    def test_downloading_the_anthropic_package(self):
+        (self.root / "venv" / "bin").mkdir(parents=True)
+        (self.root / "venv" / "bin" / "python").touch()
+        for said, key in ((PIP_OFFLINE, "trouble_no_connection"), (PIP_NOTHING_THERE, "trouble_anthropic"),
+                          (PIP_NO_ROOM, "trouble_no_room"), (PIP_NOT_ALLOWED, "trouble_no_permission")):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
+                self.check(lambda: installer._make_venv("python3"), key, said)
+
+    def test_downloading_the_local_model(self):
+        self.patch(installer, "find_ollama", return_value="/usr/bin/ollama")
+        for said, key, words, fields in ((OLLAMA_OFF, "trouble_ollama_off", "could not connect", {}),
+                                         (OLLAMA_NO_MODEL, "trouble_model_missing", "file does not exist", {}),
+                                         (OLLAMA_OFFLINE, "trouble_no_connection", "dial tcp", {}),
+                                         (OLLAMA_BAD_DOWNLOAD, "trouble_model", "digest mismatch", {"model": "qwen3:1.7b"})):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
+                self.check(lambda: installer._pull_ollama_model("qwen3:1.7b"), key, words, **fields)
+        self.assertNotIn("\x1b", self.log.read_text(), "no progress bar in the log")
+
+    def test_ollama_isnt_installed(self):
+        self.patch(installer, "find_ollama", return_value="")
+        self.check(lambda: installer._pull_ollama_model("qwen3:1.7b"), "trouble_no_ollama", "no ollama")
+
+    def test_a_long_download_keeps_what_it_said_last(self):
+        self.patch(installer, "find_ollama", return_value="/usr/bin/ollama")
+        with mock.patch.object(installer, "run", return_value=failed(1, stderr=OLLAMA_BAR * 100000 + OLLAMA_OFF)):
+            error = self.check(lambda: installer._pull_ollama_model("x"), "trouble_ollama_off", "could not connect")
+        self.assertLessEqual(len(str(error)), installer.SAID_KEEPS)
+
+    def test_starting_the_service(self):
+        self.patch(installer, "UNIT", self.root / "deskaid.service")
+        for said, key in ((NO_BUS, "trouble_no_session"), (UNIT_NOT_FOUND, "trouble_service"), (UNIT_FAILED, "trouble_service")):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stderr=said)):
+                self.check(lambda: installer._write_service(self.root, "python3"), key, said)
+
+    def test_connecting_the_ai_agents(self):
+        for said in (HOOKS_NOT_ALL, HOOKS_NOT_ALLOWED, HOOKS_CRASHED):
+            with self.subTest(said), mock.patch.object(installer, "run", return_value=failed(1, stdout=said)):
+                self.check(lambda: installer._hooks("install"), "trouble_hooks", said)
+                self.check(lambda: installer._hooks("remove"), "trouble_hooks_left", said)
+
+    def rest_of_the_steps(self, steps):
+        """The real hooks step, among the rest of the real order, with those only noting that they ran."""
+        ran = []
+        steps = [(step_id, fn if step_id == "hooks" else mock.Mock(side_effect=lambda name=step_id: ran.append(name))) for step_id, fn in steps]
+        return steps, ran
+
+    def test_hooks_that_failed_dont_stop_an_install(self):
+        steps, ran = self.rest_of_the_steps(installer.install_steps(installer.Options(hooks=True)))
+        reported = []
+        with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
+            self.assertTrue(installer.run_steps(steps, lambda step_id, state, error: reported.append((step_id, error.key)) if state == "failed" else None))
+        self.assertEqual(reported, [("hooks", "trouble_hooks")])
+        self.assertEqual(ran[-1], "finish", "the dock still turns on")
+        self.assertIn("already has its own `notify`", self.log.read_text())
+
+    def test_hooks_that_failed_dont_leave_deskai_half_removed(self):
+        command = self.root / "deskai"
+        command.touch()
+        self.patch(installer, "COMMAND", command)
+        steps, ran = self.rest_of_the_steps(installer.uninstall_steps())
+        with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
+            self.assertTrue(installer.run_steps(steps, lambda *_: None))
+        self.assertEqual(ran, ["extension", "service", "files", "polkit", "settings"])
+        for name in ("LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+            self.patch(installer, name, self.root / "gone" / name)
+        dict(installer.uninstall_steps())["files"]()
+        self.assertFalse(command.exists())
+        self.assertIn("isn't valid JSON", self.log.read_text(), "what it said is still there to read")
+
+    def test_an_agents_file_that_isnt_text_doesnt_stop_the_window_opening(self):
+        settings = self.root / ".claude" / "settings.json"
+        settings.parent.mkdir()
+        settings.write_bytes(b"\xff\xfe")
+        self.patch(installer, "HOME", self.root)
+        self.assertFalse(installer.hooks_installed())
+
+    def test_only_the_extras_can_fail_without_stopping_the_rest(self):
+        self.assertEqual(installer.CAN_FAIL, {"hooks"})
+
+    def test_what_python_says(self):
+        for said, key in ((PermissionError(13, "Permission denied", "/home/you/.config"), "trouble_no_permission"),
+                          (PermissionError(13, "Izin ditolak", "/home/you/.config"), "trouble_no_permission"),  # GTK sets the language
+                          (OSError(1, "Operation not permitted"), "trouble_no_permission"),
+                          (OSError(30, "Read-only file system", "/home/you"), "trouble_no_permission"),
+                          (OSError(28, "No space left on device"), "trouble_no_room"),
+                          (OSError(28, "Tidak ada ruang"), "trouble_no_room"),
+                          (OSError(122, "Disk quota exceeded"), "trouble_no_room"),
+                          (FileNotFoundError(2, "No such file or directory", "systemctl"), "trouble_not_there"),
+                          (shutil.Error([("/a", "/b", "[Errno 28] No space left on device: '/b'")]), "trouble_no_room"),
+                          (shutil.Error([("/a", "/b", "[Errno 13] Permission denied: '/a'")]), "trouble_no_permission"),
+                          (subprocess.TimeoutExpired(["ollama", "pull", "x"], 3600), "trouble_too_long"),
+                          (ValueError("Expecting value: line 1 column 1 (char 0)"), "trouble_unknown"),
+                          (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"), "trouble_unknown"),
+                          (KeyError("a bug"), "trouble_unknown"),
+                          (installer.GLib.Error("the settings are gone"), "trouble_unknown")):
+            def step(error=said):
+                raise error
+            with self.subTest(said):
+                self.check(step, key, str(said))
+
+    def test_a_bug_is_written_down_with_where_it_happened(self):
+        def step():
+            raise KeyError("a bug")
+        self.check(step, "trouble_unknown", "a bug")
+        self.assertIn("Traceback", self.log.read_text())
+
+    def test_it_stops_at_the_first_failure(self):
+        ran = []
+
+        def broken():
+            raise OSError(28, "No space left on device")
+        steps = [("a", lambda: ran.append("a")), ("b", broken), ("c", lambda: ran.append("c"))]
+        self.assertFalse(installer.run_steps(steps, lambda *_: None))
+        self.assertEqual(ran, ["a"])
+        self.assertIn(" b trouble_no_room\n", self.log.read_text())
+
+    def test_only_you_can_read_the_log(self):
+        installer.report(OSError(28, "No space left on device"))
+        self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
+        self.log.chmod(0o644)
+        installer.report(OSError(28, "No space left on device"))
+        self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
+
+    def test_the_log_stays_small_and_keeps_the_latest(self):
+        for n in range(40):
+            installer.report(installer.SetupError("trouble_unknown", f"attempt {n}: " + "x" * installer.SAID_KEEPS))
+        text = self.log.read_text()
+        self.assertLessEqual(len(text), installer.LOG_KEEPS)
+        self.assertIn("attempt 39", text)
+        self.assertNotIn("attempt 0:", text)
+
+    def test_a_file_name_that_isnt_text_doesnt_cost_the_log(self):
+        error = installer.report(FileNotFoundError(2, "No such file or directory", "/home/you/caf\udce9"))
+        self.assertTrue(error.logged)
+        self.assertIn("/home/you/caf", self.log.read_text())
+
+    def test_when_the_log_cant_be_written_the_words_go_to_stderr(self):
+        with redirect_stderr(io.StringIO()) as stderr, mock.patch.object(installer, "_write_private", side_effect=OSError(28, "No space left on device")):
+            error = installer.report(OSError(28, "No space left on device"))
+        self.assertEqual(error.key, "trouble_no_room")
+        self.assertFalse(error.logged)
+        self.assertIn("No space left on device", stderr.getvalue())
+
+    def test_where_the_log_is_doesnt_show_your_username(self):
+        self.patch(installer, "SETUP_LOG", installer.HOME / ".local/state/deskai/setup.log")
+        self.assertEqual(installer.log_path(), "~/.local/state/deskai/setup.log")
+        self.patch(installer, "SETUP_LOG", Path("/somewhere/else/setup.log"))
+        self.assertEqual(installer.log_path(), "/somewhere/else/setup.log")
+
+    def test_removing_deskai_removes_the_log(self):
+        installer.report(OSError(28, "No space left on device"))
+        self.patch(installer, "COMMAND", self.root / "deskai")
+        dict(installer.uninstall_steps())["hooks"]()
+        self.assertFalse(self.log.exists())
+
+    def test_the_terminal_gets_the_tools_own_words(self):
+        def step():
+            raise installer._tool_failed("trouble_service", failed(1, stderr=UNIT_NOT_FOUND))
+        with mock.patch.object(installer, "uninstall_steps", return_value=[("service", step)]), \
+                mock.patch.object(sys, "argv", ["installer.py", "--uninstall"]), redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit) as exit_code:
+            installer.main()
+        self.assertEqual(exit_code.exception.code, 1)
+        self.assertEqual(out.getvalue(), f"✗ service: {UNIT_NOT_FOUND}")
+
+    def test_the_terminal_says_when_something_didnt_get_done_in_a_developer_install_too(self):
+        def step():
+            raise installer.SetupError("trouble_hooks", HOOKS_NOT_ALLOWED.strip())
+        with mock.patch.object(installer, "install_steps", return_value=[("hooks", step), ("finish", lambda: None)]), \
+                mock.patch.object(sys, "argv", ["installer.py", "--dev"]), redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit) as exit_code:
+            installer.main()
+        self.assertEqual(exit_code.exception.code, 1)
+        self.assertIn("Log out and back in", out.getvalue())
+
+    def test_the_terminal_says_when_something_didnt_get_done(self):
+        def step():
+            raise installer.SetupError("trouble_hooks_left", HOOKS_NOT_ALLOWED.strip())
+        with mock.patch.object(installer, "uninstall_steps", return_value=[("hooks", step), ("files", lambda: None)]), \
+                mock.patch.object(sys, "argv", ["installer.py", "--uninstall"]), redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit) as exit_code:
+            installer.main()
+        self.assertEqual(exit_code.exception.code, 1)
+        self.assertIn("✓ files", out.getvalue())
+
+
+class ToolsLanguage(unittest.TestCase):
+    """What a tool says has to be in the words TROUBLES knows, whatever language the desktop is in."""
+    SHOW = "import os; print(os.environ['LC_ALL'], os.environ.get('MINE', ''))"
+
+    def test_its_own(self):
+        with mock.patch.dict(os.environ, {"LC_ALL": "it_IT.UTF-8", "LANGUAGE": "it"}):
+            self.assertEqual(installer.run(sys.executable, "-c", self.SHOW).stdout.split(), ["C"])
+
+    def test_with_a_chosen_environment_too(self):
+        said = installer.run(sys.executable, "-c", self.SHOW, env={**os.environ, "MINE": "here"}).stdout.split()
+        self.assertEqual(said, ["C", "here"])
+
+
+class WindowSaysIt(unittest.TestCase):
+    """The window itself, with no display: what ends up on the labels and toasts, in the language chosen."""
+
+    def setUp(self):
+        import deskai_setup
+        self.setup_window = deskai_setup
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patches = [mock.patch.object(installer, "SETUP_LOG", Path(folder.name) / "setup.log"),
+                   mock.patch.object(deskai_setup.GLib, "idle_add", side_effect=lambda fn, *args: fn(*args)),
+                   mock.patch.object(deskai_setup.threading, "Thread", side_effect=lambda target, daemon: types.SimpleNamespace(start=target)),
+                   mock.patch.object(deskai_setup, "Adw"), mock.patch.object(deskai_setup, "Gtk"), mock.patch.object(deskai_setup, "new_spinner")]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.window = mock.MagicMock()
+        self.window.lang = "id"
+        self.window.t = lambda key, **params: deskai_setup.SetupWindow.t(self.window, key, **params)
+        self.window.trouble = lambda error: deskai_setup.SetupWindow.trouble(self.window, error)
+        self.window.log_note = lambda error: deskai_setup.SetupWindow.log_note(self.window, error)
+        self.window.why = lambda error: deskai_setup.SetupWindow.why(self.window, error)
+        self.window.done_text = lambda key: deskai_setup.SetupWindow.done_text(self.window, key)
+        self.window.work_list.get_first_child.return_value = None
+
+    def work(self, fn):
+        self.setup_window.SetupWindow.run_work(self.window, [("service", fn)], "title", mock.Mock(), mock.Mock())
+
+    def test_a_failed_step(self):
+        def step():
+            raise installer._tool_failed("trouble_service", failed(1, stderr=UNIT_FAILED))
+        self.work(step)
+        self.window.work_error.set_label.assert_called_once_with("Layanan latar DeskAI nggak mau nyala.")
+        said = self.window.work_log.set_label.call_args.args[0]
+        self.assertEqual(said, f"Detail buat laporan bug ada di {installer.log_path()}.")
+        self.window.work_log.set_visible.assert_called_with(True)
+        self.window.work_title.set_label.assert_called_with("Ada yang gagal")
+
+    def test_it_doesnt_point_at_a_log_it_couldnt_write(self):
+        def step():
+            raise OSError(28, "No space left on device")
+        with mock.patch.object(installer, "_write_private", side_effect=OSError(28, "No space left on device")), redirect_stderr(io.StringIO()):
+            self.work(step)
+        self.window.work_error.set_label.assert_called_once_with("Ruang disknya nggak cukup. Kosongin dulu, terus coba lagi.")
+        self.window.work_log.set_visible.assert_called_with(False)
+
+    def extras_failed(self, action, finished):
+        """Runs the window with a hooks step that fails, and then finishes the way it would."""
+        def step():
+            with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
+                installer._hooks(action)
+        self.setup_window.SetupWindow.run_work(self.window, [("hooks", step)], "title", lambda: finished(self.window), mock.Mock())
+
+    def test_the_done_page_says_what_the_extras_didnt_do(self):
+        self.extras_failed("install", self.setup_window.SetupWindow.install_finished)
+        said = self.window.done_status.set_description.call_args.args[0]
+        self.assertTrue(said.startswith("Logout terus login lagi"), said)
+        self.assertIn("Sebagian AI agent mungkin nggak ngabarin ke dock", said)
+        self.assertIn(installer.log_path(), said)
+        self.window.show_page.assert_called_with("done")
+
+    def test_so_does_the_one_after_removing(self):
+        with mock.patch.object(installer, "is_system_payload", return_value=False):
+            self.extras_failed("remove", self.setup_window.SetupWindow.remove_finished)
+        said = self.window.done_status.set_description.call_args.args[0]
+        self.assertTrue(said.startswith("Dock-nya udah mati"), said)
+        self.assertIn("Hook DeskAI mungkin masih ada", said)
+
+    def test_a_done_page_with_nothing_to_add(self):
+        self.setup_window.SetupWindow.run_work(self.window, [("hooks", lambda: None)], "title",
+                                               lambda: self.setup_window.SetupWindow.install_finished(self.window), mock.Mock())
+        self.window.done_status.set_description.assert_called_once_with(self.setup_window.STRINGS["id"]["done_text"])
+
+    def test_it_doesnt_point_at_a_log_thats_been_deleted(self):
+        def step():
+            raise installer.SetupError("trouble_hooks_left", "said")
+        self.setup_window.SetupWindow.run_work(self.window, [("hooks", step), ("settings", installer.SETUP_LOG.unlink)], "title",
+                                               lambda: self.setup_window.SetupWindow.remove_finished(self.window), mock.Mock())
+        said = self.window.done_status.set_description.call_args.args[0]
+        self.assertIn("Hook DeskAI mungkin masih ada", said)
+        self.assertNotIn(installer.log_path(), said)
+
+    def install_package(self, **how):
+        row = mock.Mock()
+        self.window.check_rows = {"atspi": (row, mock.Mock())}
+        with mock.patch.object(installer, "install_package", **how):
+            self.setup_window.SetupWindow.on_install_package(self.window, mock.Mock(), "atspi", "x")
+        self.window.run_checks.assert_called_once_with()
+        self.setup_window.Adw.Toast.assert_not_called()  # one line only, and it goes away
+        return row
+
+    def test_a_package_that_wouldnt_install(self):
+        row = self.install_package(side_effect=installer._tool_failed("trouble_package", failed(100, stderr=APT_BUSY), package="x"))
+        row.set_subtitle.assert_called_once_with("Ada program lain yang lagi masang software. Tunggu sampai selesai, terus coba lagi. "
+                                                 f"Detail buat laporan bug ada di {installer.log_path()}.")
+
+    def test_a_package_row_doesnt_point_at_a_log_it_couldnt_write(self):
+        with mock.patch.object(installer, "_write_private", side_effect=OSError(28, "No space left on device")), redirect_stderr(io.StringIO()):
+            row = self.install_package(side_effect=OSError(28, "No space left on device"))
+        row.set_subtitle.assert_called_once_with("Ruang disknya nggak cukup. Kosongin dulu, terus coba lagi.")
+
+    def test_a_package_that_installed_on_the_second_try(self):
+        row = self.install_package(return_value=None)
+        row.set_subtitle.assert_called_once_with("Baca tab terminal, biar tiap tab balik lagi setelah logout")
+
+    def test_a_check_that_blew_up(self):
+        self.window.check_rows = {}
+        self.window.page = "check"
+        self.setup_window.in_background(lambda: {}["bug"], lambda result, error: self.setup_window.SetupWindow.show_checks(self.window, result, error))
+        self.setup_window.Adw.Toast.assert_called_once_with(title="Ini masalah yang DeskAI nggak kenal.", timeout=8)
+
+    def test_a_bug_doesnt_leave_the_window_waiting(self):
+        finished = mock.Mock(return_value=None)
+        self.setup_window.in_background(lambda: {}["bug"], finished)
+        result, error = finished.call_args.args
+        self.assertIsNone(result)
+        self.assertEqual(error.key, "trouble_unknown")
+
+    def test_it_all_went_well(self):
+        finished = mock.Mock(return_value=None)
+        self.setup_window.in_background(lambda: "done", finished)
+        finished.assert_called_once_with("done", None)
 
 
 class Spinner(unittest.TestCase):

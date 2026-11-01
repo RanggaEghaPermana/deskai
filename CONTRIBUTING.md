@@ -5,7 +5,8 @@ Bug reports and pull requests are welcome. Contributions are accepted under the 
 ## Before you write code
 
 - **A bug:** open an [issue](https://github.com/RanggaEghaPermana/deskai/issues) with your distribution, what happened,
-  and the output of `deskai doctor`. Check the output for anything private before posting.
+  and the output of `deskai doctor`. If setup failed, add `~/.local/state/deskai/setup.log`. Check them for anything
+  private before posting.
 - **A new feature:** open an issue first and wait for a yes. A pull request of more than about 400 lines with no agreed
   issue gets closed, however good the code is, because it can't be reviewed well.
 - **A security problem:** don't open an issue. [Report it privately](https://github.com/RanggaEghaPermana/deskai/security/advisories/new).

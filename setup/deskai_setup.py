@@ -124,6 +124,31 @@ STRINGS = {
         "remove_purge": "Also delete my modes and stats",
         "cancel": "Cancel",
         "remove_confirm": "Remove",
+        "trouble_no_installer": "Install {package} with your package manager.",
+        "trouble_package": "Couldn't install {package}.",
+        "trouble_package_busy": "Another program is installing software right now. Wait for it to finish, then try again.",
+        "trouble_package_missing": "Your software sources don't have this package. Update them, then try again.",
+        "trouble_dismissed": "The password window was closed, so nothing changed.",
+        "trouble_not_allowed": "Couldn't get permission to do this on this computer.",
+        "trouble_no_key": "No API key entered.",
+        "trouble_key_spaces": "That API key has spaces in it.",
+        "trouble_venv": "Python couldn't make a virtual environment. On Ubuntu and Debian, install python3-venv and try again.",
+        "trouble_anthropic": "Couldn't download the anthropic package the API key needs.",
+        "trouble_no_ollama": "Ollama isn't installed. Get it from ollama.com and try again.",
+        "trouble_ollama_off": "Ollama isn't running. Start it and try again.",
+        "trouble_model": "Couldn't download the local AI model, {model}.",
+        "trouble_model_missing": "Ollama doesn't have this model. Choose another option under Smart features.",
+        "trouble_service": "DeskAI's background service wouldn't start.",
+        "trouble_no_session": "Couldn't reach your desktop session's services. Log out and back in, then try again.",
+        "trouble_hooks": "Some AI agents may not report to the dock, since their settings couldn't be changed.",
+        "trouble_hooks_left": "DeskAI's hooks may still be in some AI agents' settings, since those couldn't be changed.",
+        "trouble_no_connection": "Couldn't reach the internet. Check your connection and try again.",
+        "trouble_no_room": "There isn't enough room on the disk. Free some up and try again.",
+        "trouble_no_permission": "DeskAI wasn't allowed to change a file it needs.",
+        "trouble_too_long": "That took too long, so it was stopped. Try again.",
+        "trouble_not_there": "A file or program DeskAI needs is missing.",
+        "trouble_unknown": "This is a problem DeskAI doesn't recognize.",
+        "trouble_log": "Details for a bug report are in {path}.",
     },
     "id": {
         "window": "Setup DeskAI",
@@ -215,6 +240,31 @@ STRINGS = {
         "remove_purge": "Hapus juga mode dan statistik aku",
         "cancel": "Batal",
         "remove_confirm": "Hapus",
+        "trouble_no_installer": "Pasang {package} pakai package manager kamu.",
+        "trouble_package": "Gagal masang {package}.",
+        "trouble_package_busy": "Ada program lain yang lagi masang software. Tunggu sampai selesai, terus coba lagi.",
+        "trouble_package_missing": "Sumber software kamu nggak punya paket ini. Update dulu, terus coba lagi.",
+        "trouble_dismissed": "Jendela password-nya ditutup, jadi nggak ada yang berubah.",
+        "trouble_not_allowed": "Nggak dapet izin buat ngelakuin ini di komputer ini.",
+        "trouble_no_key": "API key belum diisi.",
+        "trouble_key_spaces": "API key itu ada spasinya.",
+        "trouble_venv": "Python nggak bisa bikin virtual environment. Di Ubuntu dan Debian, pasang python3-venv dulu, terus coba lagi.",
+        "trouble_anthropic": "Gagal download paket anthropic yang dibutuhin API key.",
+        "trouble_no_ollama": "Ollama belum terpasang. Ambil dari ollama.com, terus coba lagi.",
+        "trouble_ollama_off": "Ollama lagi nggak jalan. Nyalain dulu, terus coba lagi.",
+        "trouble_model": "Gagal download model AI lokal, {model}.",
+        "trouble_model_missing": "Ollama nggak punya model ini. Pilih opsi lain di Fitur pintar.",
+        "trouble_service": "Layanan latar DeskAI nggak mau nyala.",
+        "trouble_no_session": "Nggak bisa nyambung ke layanan sesi desktop kamu. Logout terus login lagi, baru coba lagi.",
+        "trouble_hooks": "Sebagian AI agent mungkin nggak ngabarin ke dock, karena pengaturannya nggak bisa diubah.",
+        "trouble_hooks_left": "Hook DeskAI mungkin masih ada di pengaturan sebagian AI agent, karena pengaturannya nggak bisa diubah.",
+        "trouble_no_connection": "Nggak bisa nyambung ke internet. Cek koneksi kamu, terus coba lagi.",
+        "trouble_no_room": "Ruang disknya nggak cukup. Kosongin dulu, terus coba lagi.",
+        "trouble_no_permission": "DeskAI nggak diizinin ngubah file yang dia butuhin.",
+        "trouble_too_long": "Kelamaan, jadi dihentiin. Coba lagi.",
+        "trouble_not_there": "Ada file atau program yang dibutuhin DeskAI, tapi nggak ada.",
+        "trouble_unknown": "Ini masalah yang DeskAI nggak kenal.",
+        "trouble_log": "Detail buat laporan bug ada di {path}.",
     },
 }
 LANGUAGES = ["en", "id"]
@@ -234,13 +284,13 @@ def label(text, *classes, **props):
 
 
 def in_background(work, finished):
-    """Runs work() on a thread, then finished(result or None, error or None) on the UI thread."""
+    """Runs work() on a thread, then finished(result or None, the SetupError or None) on the UI thread."""
     def run():
         result, error = None, None
         try:
             result = work()
-        except (installer.SetupError, OSError, subprocess.SubprocessError) as e:
-            error = str(e)
+        except Exception as e:  # anything: the window would wait for this thread forever
+            error = installer.report(e)
         GLib.idle_add(lambda: finished(result, error) and False)
     threading.Thread(target=run, daemon=True).start()
 
@@ -295,6 +345,21 @@ class SetupWindow(Adw.ApplicationWindow):
 
     def t(self, key, **params):
         return STRINGS[self.lang][key].format(**params)
+
+    def trouble(self, error):
+        """Why something failed, in plain words. The tool's own are in the log."""
+        return self.t(error.key, **error.fields)
+
+    def log_note(self, error):
+        """Where those are, if they're there: a full disk can't take them, and deleting your stats takes them too."""
+        return self.t("trouble_log", path=installer.log_path()) if error.logged and installer.SETUP_LOG.exists() else ""
+
+    def why(self, error):
+        return f"{self.trouble(error)} {self.log_note(error)}".strip()
+
+    def done_text(self, key):
+        """What the done page says, and what a step that could fail without stopping the rest didn't get done."""
+        return "\n\n".join([self.t(key), *map(self.why, self.left_undone)])
 
     # ---- pages ---------------------------------------------------------------------------
 
@@ -422,10 +487,11 @@ class SetupWindow(Adw.ApplicationWindow):
         self.work_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.work_list.add_css_class("boxed-list")
         self.work_error = label("", "error", visible=False, selectable=True)
+        self.work_log = label("", "dim-label", "caption", visible=False, selectable=True)
         title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         title.append(self.work_title)
         title.append(self.work_text)
-        return self.scrolled(title, self.work_list, self.work_error)
+        return self.scrolled(title, self.work_list, self.work_error, self.work_log)
 
     def done_page(self):
         self.done_status = Adw.StatusPage(icon_name="emblem-ok-symbolic", vexpand=True)
@@ -480,7 +546,9 @@ class SetupWindow(Adw.ApplicationWindow):
         self.primary.set_sensitive(False)
         in_background(installer.check_system, self.show_checks)
 
-    def show_checks(self, checks, _error):
+    def show_checks(self, checks, error):
+        if error:
+            self.toast.add_toast(Adw.Toast(title=self.trouble(error), timeout=8))
         self.checks = {check.id: check for check in checks or []}
         for check_id, (row, old) in self.check_rows.items():
             check = self.checks.get(check_id)
@@ -503,18 +571,19 @@ class SetupWindow(Adw.ApplicationWindow):
             return icon
         if check and check.package:
             button = Gtk.Button(label=self.t("install_package"), valign=Gtk.Align.CENTER)
-            button.connect("clicked", self.on_install_package, check.package)
+            button.connect("clicked", self.on_install_package, check_id, check.package)
             return button
         icon = Gtk.Image(icon_name="dialog-error-symbolic" if check and check.required else "dialog-information-symbolic")
         icon.add_css_class("error" if check and check.required else "dim-label")
         return icon
 
-    def on_install_package(self, button, package):
+    def on_install_package(self, button, check_id, package):
         button.set_sensitive(False)
+        row = self.check_rows[check_id][0]
 
         def done(_result, error):
-            if error:
-                self.toast.add_toast(Adw.Toast(title=error, timeout=8))
+            # On its row, where it stays and wraps: a toast cuts a sentence this long at one line, and goes away.
+            row.set_subtitle(self.why(error) if error else self.t(f"check_{check_id}_text"))
             self.run_checks()
         in_background(lambda: installer.install_package(package), done)
 
@@ -552,7 +621,7 @@ class SetupWindow(Adw.ApplicationWindow):
     def install_finished(self):
         self.installed = True
         self.done_status.set_title(self.t("done_title"))
-        self.done_status.set_description(self.t("done_text"))
+        self.done_status.set_description(self.done_text("done_text"))
         self.done_status.set_icon_name(ICON)
         self.show_page("done")
         self.set_primary(self.t("logout"), self.log_out)
@@ -595,7 +664,7 @@ class SetupWindow(Adw.ApplicationWindow):
     def remove_finished(self):
         self.installed = False
         self.done_status.set_title(self.t("removed_title"))
-        self.done_status.set_description(self.t("removed_deb") if installer.is_system_payload() else self.t("removed_text"))
+        self.done_status.set_description(self.done_text("removed_deb" if installer.is_system_payload() else "removed_text"))
         self.done_status.set_icon_name("user-trash-symbolic")
         self.show_page("done")
         self.set_primary(self.t("close"), self.close)
@@ -604,6 +673,8 @@ class SetupWindow(Adw.ApplicationWindow):
         self.work_title.set_label(title)
         self.work_text.set_label(self.t("work_wait"))
         self.work_error.set_visible(False)
+        self.work_log.set_visible(False)
+        self.left_undone = []
         while (child := self.work_list.get_first_child()):
             self.work_list.remove(child)
         rows = {}
@@ -615,6 +686,12 @@ class SetupWindow(Adw.ApplicationWindow):
         self.show_page("work")
         self.primary.set_visible(False)
         marks = {}
+
+        def show_trouble(error):
+            self.work_error.set_label(self.trouble(error))
+            self.work_error.set_visible(True)
+            self.work_log.set_label(self.log_note(error))
+            self.work_log.set_visible(bool(self.log_note(error)))
 
         def mark(step_id, state, error):
             row = rows[step_id]
@@ -628,8 +705,8 @@ class SetupWindow(Adw.ApplicationWindow):
             row.add_suffix(widget)
             marks[step_id] = widget
             if error:
-                self.work_error.set_label(error)
-                self.work_error.set_visible(True)
+                show_trouble(error)
+                self.left_undone.append(error)
             return False
 
         def work():
@@ -642,8 +719,7 @@ class SetupWindow(Adw.ApplicationWindow):
             self.work_title.set_label(self.t("work_failed"))
             self.work_text.set_label("")
             if error:
-                self.work_error.set_label(error)
-                self.work_error.set_visible(True)
+                show_trouble(error)
             self.set_primary(self.t("retry"), retry)
         in_background(work, done)
 

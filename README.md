@@ -133,11 +133,15 @@ The command bar shows what you last asked for, and `Up` and `Down` go through it
 Your focus time per day is in `~/.local/state/deskai/stats/`, with the titles of the windows that distracted you.
 Each day's file is deleted after 90 days.
 
+When a step of setup fails, what the tool said goes in `~/.local/state/deskai/setup.log`, readable only by you. It's for
+bug reports, and removing DeskAI deletes it.
+
 ## What it changes on your computer
 
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
   `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. Backups are kept
-  as `*.deskai-bak`, and removing DeskAI takes the entries out again.
+  as `*.deskai-bak`, and removing DeskAI takes the entries out again. A file DeskAI can't change is left as it is, and
+  setup says so.
 - **Resuming Claude Code.** Restoring your desk and the workday routine resume conversations with the
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs

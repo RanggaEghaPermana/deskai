@@ -18,7 +18,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import gi
@@ -47,6 +49,7 @@ CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
 STATE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
 POLKIT_GENERATED = CACHE / "deskai" / POLKIT_RULE.name  # what `deskai routine allow-db` writes for you to install
+SETUP_LOG = STATE / "deskai" / "setup.log"  # what went wrong, in the tools' own words
 
 SHARE = DATA / "deskai"
 APP_DIR = SHARE / "app"           # a copy of the app, when it isn't installed system-wide
@@ -73,8 +76,92 @@ PACKAGES = {
 }
 
 
+# What goes wrong, in the words of apt, pkexec, pip, venv, Ollama, systemctl and Python, and the sentence in the setup
+# window's STRINGS that says it plainly. The first that matches wins, and none has anything to fill in. Python's words can follow
+# the desktop's language once GTK is loaded, so these go by its error numbers: 28 and 122 are a full disk and a used-up quota,
+# 1, 13 and 30 are not being allowed and a read-only disk, and 2 is something missing.
+TROUBLES = (
+    (re.compile(r"request dismissed", re.I), "trouble_dismissed"),
+    (re.compile(r"not authorized|no authentication agent", re.I), "trouble_not_allowed"),
+    (re.compile(r"could not get lock|is another process using it", re.I), "trouble_package_busy"),
+    (re.compile(r"unable to locate package|has no installation candidate", re.I), "trouble_package_missing"),
+    (re.compile(r"\[Errno (28|122)\]|no space left|enough free space|quota exceeded", re.I), "trouble_no_room"),
+    (re.compile(r"could not connect to ollama|ollama server not responding", re.I), "trouble_ollama_off"),
+    (re.compile(r"pull model manifest: file does not exist", re.I), "trouble_model_missing"),
+    (re.compile(r"temporary failure (in name )?resol|could not resolve|could not connect to|dial tcp|no such host"
+                r"|network is unreachable|connection refused|connection timed out|read timed out", re.I), "trouble_no_connection"),
+    (re.compile(r"ensurepip", re.I), "trouble_venv"),
+    (re.compile(r"connect to (\S+ scope )?bus", re.I), "trouble_no_session"),
+    (re.compile(r"\[Errno (1|13|30)\]|permission denied|read-only file system|operation not permitted", re.I), "trouble_no_permission"),
+    (re.compile(r"timed out", re.I), "trouble_too_long"),
+    (re.compile(r"\[Errno 2\]", re.I), "trouble_not_there"),
+)
+# Extras: what goes wrong with these is said, but doesn't cost the rest. Codex having its own `notify` shouldn't keep the dock
+# from turning on, and a settings file that can't be read shouldn't leave DeskAI half removed, since trying again won't help.
+CAN_FAIL = {"hooks"}
+PROGRESS_BAR = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")  # how Ollama draws one, in what it says on stderr
+SAID_KEEPS = 4000     # characters of what a tool said: Ollama's bar repeats for a whole download, and the error comes last
+LOG_KEEPS = 64 * 1024
+
+
 class SetupError(Exception):
-    """A step failed, with a message worth showing."""
+    """A step failed. key and fields are the sentence the setup window says about it, from its STRINGS. What it holds as
+    an exception's text is what happened in the tool's own words, for the log and the terminal, and never for the window."""
+
+    def __init__(self, key, said, **fields):
+        super().__init__(said)
+        self.key, self.fields = key, fields
+        self.logged = False
+
+
+def _known_trouble(said):
+    return next((key for words, key in TROUBLES if words.search(said)), "")
+
+
+def _said(result):
+    """What a tool said. Both its outputs, since venv says why it can't work on stdout."""
+    said = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    return PROGRESS_BAR.sub("", said).strip()[-SAID_KEEPS:] or f"exit code {result.returncode}"
+
+
+def _tool_failed(key, result, **fields):
+    """The SetupError for a tool that failed: what it said if that's something we know, or else key, about this step."""
+    said = _said(result)
+    known = _known_trouble(said)
+    return SetupError(known, said) if known else SetupError(key, said, **fields)
+
+
+def _write_log(entry):
+    """Returns whether it worked. On a full disk it can't, and then stderr is all there is."""
+    try:
+        SETUP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            kept = SETUP_LOG.read_text(errors="replace")
+        except FileNotFoundError:
+            kept = ""
+        # A file name that isn't valid text can't be written as it is, and shouldn't cost the rest of it.
+        _write_private(SETUP_LOG, (kept + entry)[-LOG_KEEPS:].encode(errors="replace").decode())
+        return True
+    except (OSError, ValueError):
+        print(entry, file=sys.stderr)
+        return False
+
+
+def report(error, step=""):
+    """Writes down what went wrong, in the tool's own words, and returns the SetupError that says it plainly.
+    A file, since the window shows only the plain sentence and is gone once it's closed, and a stranger's bug report needs this."""
+    said = str(error) or repr(error)
+    details = said
+    if not isinstance(error, SetupError):
+        details = "".join(traceback.format_exception(error)).strip()
+        error = SetupError(_known_trouble(said) or "trouble_unknown", said)
+    error.logged = _write_log(f"{datetime.now().isoformat(timespec='seconds')} DeskAI {version()} {step or '-'} {error.key}\n{details}\n\n")
+    return error
+
+
+def log_path():
+    """Where the log is, the way you'd say it: a screenshot of the window shouldn't give your username away."""
+    return f"~/{SETUP_LOG.relative_to(HOME)}" if SETUP_LOG.is_relative_to(HOME) else str(SETUP_LOG)
 
 
 # ---- what's on this computer ------------------------------------------------------------
@@ -88,8 +175,10 @@ class Check:
     package: str = ""          # installable with install_package()
 
 
-def run(*args, timeout=30, **kwargs):
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, **kwargs)
+def run(*args, timeout=30, env=None, **kwargs):
+    # In the language TROUBLES knows: on an Italian desktop apt says "Pacchetto x non trovato".
+    env ={**(os.environ if env is None else env), "LC_ALL": "C"}
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env, **kwargs)
 
 
 def shell_version():
@@ -153,7 +242,7 @@ def hooks_installed():
         try:
             if "deskai" in (HOME / name).read_text() and "hook" in (HOME / name).read_text():
                 return True
-        except OSError:
+        except (OSError, ValueError):  # not text: the agent's own file can hold anything
             continue
     return False
 
@@ -177,11 +266,11 @@ def install_package(package):
     """Installs a system package through the password dialog. Raises SetupError."""
     pm = package_manager()
     if not pm or not shutil.which("pkexec"):
-        raise SetupError(f"Install {package} with your package manager.")
+        raise SetupError("trouble_no_installer", f"package manager: {pm or 'none'}, pkexec: {shutil.which('pkexec') or 'none'}", package=package)
     command = {"pacman": ["pacman", "-S", "--noconfirm", package]}.get(pm, [pm, "install", "-y", package])
     result = run("pkexec", *command, timeout=600)
     if result.returncode != 0:
-        raise SetupError((result.stderr or result.stdout).strip()[-400:] or f"Couldn't install {package}.")
+        raise _tool_failed("trouble_package", result, package=package)
 
 
 # ---- what's set up already --------------------------------------------------------------
@@ -282,7 +371,7 @@ def _link(target, link):
 def _write_env(key):
     """Saves the API key where only you can read it."""
     if re.search(r"\s", key):
-        raise SetupError("That API key has spaces in it.")
+        raise SetupError("trouble_key_spaces", "the API key has spaces in it")
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     try:
         lines = ENV_FILE.read_text().splitlines()
@@ -295,12 +384,16 @@ def _write_env(key):
     ENV_FILE.chmod(0o600)
 
 
-def _write_private_json(path, data):
-    temp = path.with_suffix(".json.new")
+def _write_private(path, text):
+    temp = path.with_name(path.name + ".new")
     temp.touch(mode=0o600)
     temp.chmod(0o600)
-    temp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    temp.write_text(text)
     temp.replace(path)
+
+
+def _write_private_json(path, data):
+    _write_private(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def _write_config(app_dir, options):
@@ -328,21 +421,20 @@ def _make_venv(python):
     if not (VENV / "bin" / "python").exists():
         result = run(python, "-m", "venv", "--system-site-packages", str(VENV), timeout=180)
         if result.returncode != 0:
-            raise SetupError("Python couldn't make a virtual environment. "
-                             "On Ubuntu and Debian, install python3-venv and try again.\n" + result.stderr[-300:])
+            raise _tool_failed("trouble_venv", result)
     result = run(str(VENV / "bin" / "pip"), "install", "--quiet", "--upgrade", "anthropic", timeout=300)
     if result.returncode != 0:
-        raise SetupError("Couldn't download the anthropic package. Check your connection.\n" + result.stderr[-300:])
+        raise _tool_failed("trouble_anthropic", result)
 
 
 def _pull_ollama_model(model):
     """Downloads the local model, if it isn't here yet."""
     ollama = find_ollama()
     if not ollama:
-        raise SetupError("Ollama isn't installed. Get it from ollama.com and try again.")
+        raise SetupError("trouble_no_ollama", "no ollama on PATH or in ~/.local/bin")
     result = run(ollama, "pull", model, timeout=3600)
     if result.returncode != 0:
-        raise SetupError(f"Couldn't download {model}. Is Ollama running?\n" + (result.stderr or result.stdout)[-300:])
+        raise _tool_failed("trouble_model", result, model=model)
 
 
 def _service_path():
@@ -375,7 +467,7 @@ WantedBy=graphical-session.target
     for command in (("daemon-reload",), ("enable", SERVICE), ("restart", SERVICE)):
         result = run("systemctl", "--user", *command)
         if result.returncode != 0:
-            raise SetupError(f"systemctl --user {' '.join(command)} failed: {result.stderr.strip()[-300:]}")
+            raise _tool_failed("trouble_service", result)
 
 
 def _write_command(app_dir, python):
@@ -418,7 +510,8 @@ def _hooks(action):
     env = {**os.environ, "PATH": f"{COMMAND.parent}:{os.environ.get('PATH', '')}"}
     result = run(str(COMMAND), "hooks", action, env=env, timeout=60)
     if result.returncode != 0:
-        raise SetupError((result.stderr or result.stdout).strip()[-300:])
+        # These whatever it said, since the rest carries on without this step: they say what's missing because of it.
+        raise SetupError("trouble_hooks", _said(result)) if action == "install" else SetupError("trouble_hooks_left", _said(result))
 
 
 def _login_screen():
@@ -469,7 +562,7 @@ def install_steps(options):
             if options.api_key:
                 _write_env(options.api_key)
             elif not has_api_key():
-                raise SetupError("No API key entered.")
+                raise SetupError("trouble_no_key", "no API key entered, and none saved")
         if options.ai == "api":
             _make_venv(python)
 
@@ -522,6 +615,8 @@ def uninstall_steps(purge=False):
     def hooks():
         if COMMAND.exists():
             _hooks("remove")
+        # Only now: if that failed, the rest still gets removed, and this is where what it said can still be read.
+        SETUP_LOG.unlink(missing_ok=True)
 
     def service():
         run("systemctl", "--user", "disable", "--now", SERVICE)
@@ -554,14 +649,17 @@ def uninstall_steps(purge=False):
 
 
 def run_steps(steps, progress):
-    """progress(step id, running|done|failed, error text). Stops at the first failure; returns success."""
+    """progress(step id, running|done|failed, the SetupError or ""). Stops at the first failure, except of what's in
+    CAN_FAIL; returns whether it got to the end."""
     for step_id, fn in steps:
         progress(step_id, "running", "")
         try:
             fn()
-        except (SetupError, OSError, subprocess.SubprocessError, ValueError) as e:
-            progress(step_id, "failed", str(e))
-            return False
+        except Exception as e:  # anything: the window can't say why it's stuck on a step that never ends
+            progress(step_id, "failed", report(e, step_id))
+            if step_id not in CAN_FAIL:
+                return False
+            continue
         progress(step_id, "done", "")
     return True
 
@@ -574,7 +672,13 @@ def main():
     parser.add_argument("--purge", action="store_true", help="with --uninstall: your modes and stats too")
     args = parser.parse_args()
 
+    failed = []
+
+    # The tool's own words, unlike the window: install.sh and uninstall.sh are for developers, in a terminal, and the
+    # window's sentences come with GTK, which this path doesn't need.
     def show(step_id, state, error):
+        if state == "failed":
+            failed.append(step_id)
         if state != "running":
             print(f"{'✓' if state == 'done' else '✗'} {step_id}" + (f": {error}" if error else ""), flush=True)
 
@@ -583,7 +687,8 @@ def main():
             print(f"{'✓' if check.ok else '✗' if check.required else '-'} {check.id}  {check.detail}")
         return
     if args.uninstall:
-        sys.exit(0 if run_steps(uninstall_steps(args.purge), show) else 1)
+        run_steps(uninstall_steps(args.purge), show)
+        sys.exit(1 if failed else 0)
     if not args.dev:
         parser.error("use the setup window for a normal install (./setup.sh), or --dev for a developer one")
     choices = current_choices()
@@ -594,6 +699,7 @@ def main():
         sys.exit(1)
     print("\nLog out and back in: GNOME only picks up an extension when it starts. Then: deskai doctor")
     print("Let Claude Code, Codex and Gemini CLI tell the dock when they're done: deskai hooks install")
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":
