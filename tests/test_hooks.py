@@ -234,7 +234,7 @@ class AgentFiles(unittest.TestCase):
         self.claude.write_text(json.dumps(settings))
         self.assertEqual(self.command("remove")[0], 0)
         self.assertEqual(json.loads(self.claude.read_text()), {"theme": "light"})
-        self.assertEqual(self.backups(), [])
+        self.assertEqual(len(self.backups()), 1, "it may have changed by something other than you, so the copy stays")
 
     def test_a_file_that_wasnt_there_goes_again(self):
         self.install_and_remove()
@@ -262,6 +262,26 @@ class AgentFiles(unittest.TestCase):
         self.assertTrue(lines[1].startswith("notify = "), lines)
         self.assertEqual(self.command("remove")[0], 0)
         self.assertEqual(self.codex.read_text(), 'model = "o3"')
+
+    def test_a_codex_file_an_older_version_broke_is_put_right(self):
+        command = '["/home/you/.local/bin/deskai", "hook", "codex"]'
+        for broken, fixed in ((f'model = "o3"notify = {command}  # DeskAI\n', 'model = "o3"'),
+                              (f'a = 1\nmodel = "o3"notify = {command}  # DeskAI\n', 'a = 1\nmodel = "o3"')):
+            with self.subTest(broken):
+                self.codex.write_text(broken)
+                self.assertTrue(hooks._codex_installed())
+                self.assertEqual(self.command("remove")[0], 0)
+                self.assertEqual(self.codex.read_text().strip(), fixed)
+        self.codex.write_text(f'model = "o3"notify = {command}  # DeskAI\n')
+        self.assertEqual(self.command("install")[0], 0)
+        lines = self.codex.read_text().splitlines()
+        self.assertEqual(lines[0], 'model = "o3"')
+        self.assertTrue(lines[1].startswith("notify = "))
+        self.assertEqual(len(lines), 2)
+
+    def test_a_notify_of_your_own_on_a_line_of_its_own_isnt_touched(self):
+        self.codex.write_text('notify = ["mine"]\nmodel = "o3"\n')
+        self.assertFalse(hooks._codex_installed())
 
     def test_codex_comes_back_as_it_was(self):
         for original in ('model = "o3"\n\n[tools]\nx = 1\n', "[tools]\nx = 1\n", ""):

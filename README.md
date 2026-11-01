@@ -148,9 +148,10 @@ bug reports, and removing DeskAI deletes it.
 - **GNOME's switch for user extensions**, if you had it off, since the dock can't run without it. Removing DeskAI turns
   it off again.
 - **Hooks in your AI agents**, only if you turn that on during setup: entries in
-  `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. A backup is kept as `*.deskai-bak`
-  until you take them out. Removing DeskAI then puts each file back exactly as it was, or if you changed something else
-  in it meanwhile, just takes the entries out. A file DeskAI can't change is left as it is, and setup says so.
+  `~/.claude/settings.json`, `~/.gemini/settings.json` and `~/.codex/config.toml`. A backup is kept as `*.deskai-bak`.
+  Removing DeskAI then puts each file back exactly as it was and deletes the backup, or if the file changed in some
+  other way meanwhile, just takes the entries out and leaves the backup there. A file DeskAI can't change is left as it
+  is, and setup says so.
 - **Resuming Claude Code.** Restoring your desk and the workday routine resume conversations with the
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs

@@ -78,6 +78,14 @@ class TurningOff(Docks):
         self.assertEqual(docks.turn_off_others(settings), ["Dash to Dock"])
         self.assertEqual((settings.enabled, settings.disabled), (["a@b", DASH, "c@d"], [DASH]))
 
+    def test_what_an_older_version_took_out_of_your_list_goes_back(self):
+        self.install(DASH)
+        self.record.parent.mkdir(parents=True)
+        self.record.write_text(json.dumps({DASH: True}))
+        settings = FakeSettings(enabled=["a@b"], disabled=[DASH])
+        docks.restore(settings)
+        self.assertEqual((settings.enabled, settings.disabled), (["a@b", DASH], []))
+
     def test_only_one_list_changes(self):
         # GNOME turns extensions off in steps, and a second change meanwhile can turn one back on halfway.
         self.session_starts(UBUNTU)

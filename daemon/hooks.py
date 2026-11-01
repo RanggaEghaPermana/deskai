@@ -21,6 +21,7 @@ import brain
 MARK = "deskai hook"
 BACKUP_SUFFIX = ".deskai-bak"
 CODEX_MARK = "# DeskAI"
+GLUED_NOTIFY = re.compile(r"^(.*[^\s].*?)(notify = \[.*\]  # DeskAI)$", re.M)
 
 CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 GEMINI_SETTINGS = Path.home() / ".gemini" / "settings.json"
@@ -262,17 +263,18 @@ def _edit_json(path, edit, keep_a_copy=True):
 
 def _put_back(path, meaning):
     """DeskAI's part is out again. If nothing else in the file changed meanwhile it goes back to exactly what it was, down to
-    its spaces, and if it wasn't there before, it goes. meaning(text) is what a file's text comes down to."""
+    its spaces, and the copy goes. If it wasn't there before, it goes. meaning(text) is what a file's text comes down to."""
     backup = path.with_name(path.name + BACKUP_SUFFIX)
     if not backup.exists():
         if not meaning(_read(path)):
             path.unlink()
         return
     try:
-        if meaning(_read(backup)) == meaning(_read(path)):
-            shutil.copy2(backup, path)
-    except ValueError:  # the copy isn't something it can compare: the file stays as it is now
-        pass
+        if meaning(_read(backup)) != meaning(_read(path)):
+            return  # the copy stays: the file has changed since, and maybe not by you
+    except ValueError:  # it can't tell
+        return
+    shutil.copy2(backup, path)
     backup.unlink()
 
 
@@ -303,7 +305,9 @@ def install_gemini():
 
 
 def _codex_lines():
-    return _read(CODEX_CONFIG).splitlines(keepends=True)
+    # Before 0.5, DeskAI's line could end up on the end of a last line with no newline, which broke the file. This takes them apart.
+    text = GLUED_NOTIFY.sub(r"\1\n\2", _read(CODEX_CONFIG))
+    return text.splitlines(keepends=True)
 
 
 def _codex_notify(lines):
