@@ -61,7 +61,11 @@ def open_app(app_id):
     info = app_info(app_id)
     if not info:
         return False
-    return _started(["gio", "launch", info.get_filename()]) if shutil.which("gio") else info.launch([], None)
+    # The session bus starts these, so they aren't in the daemon's cgroup anyway. And `gio launch` only asks and exits: the bus
+    # drops what someone who has gone asked for, so an app that wasn't running starts up, hears nothing, and leaves again.
+    if info.get_boolean("DBusActivatable") or not shutil.which("gio"):
+        return info.launch([], None)
+    return _started(["gio", "launch", info.get_filename()])
 
 
 def open_uri(uri):

@@ -61,15 +61,23 @@ class Opening(unittest.TestCase):
     def done(self, code=0):
         return mock.patch.object(launcher.subprocess, "run", return_value=subprocess.CompletedProcess([], code))
 
-    def installed(self):
+    def installed(self, on_the_bus=False):
         info = mock.Mock()
         info.get_filename.return_value = "/usr/share/applications/x.desktop"
+        info.get_boolean.side_effect = lambda key: on_the_bus and key == "DBusActivatable"
         return mock.patch.object(launcher.Gio.DesktopAppInfo, "new", return_value=info)
 
     def test_an_app(self):
         with self.installed(), self.done() as run:
             self.assertTrue(launcher.open_app("x.desktop"))
         self.assertEqual(run.call_args.args[0], ["scope", "gio", "launch", "/usr/share/applications/x.desktop"])
+
+    def test_an_app_the_session_bus_starts(self):
+        # Most of GNOME's own. `gio launch` exits with its request still waiting, and one that wasn't running never hears it.
+        with self.installed(on_the_bus=True) as new, self.done() as run:
+            self.assertTrue(launcher.open_app("x.desktop"))
+        run.assert_not_called()
+        new.return_value.launch.assert_called_once_with([], None)
 
     def test_nothing_is_captured(self):
         # The app inherits what gio has: reading a pipe it holds open would wait until you close the app.
