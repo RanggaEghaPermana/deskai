@@ -19,6 +19,7 @@ import threading
 import time
 
 import brain  # noqa: F401
+import launcher
 import routine
 import session
 from brain import log
@@ -255,7 +256,7 @@ def log_command(item):
 
 def open_log(item):
     cwd = item["cwd"] or os.path.expanduser("~")
-    subprocess.Popen(routine.terminal_args(cwd, log_command(item)), cwd=cwd, start_new_session=True,
+    subprocess.Popen(launcher.own_scope(routine.terminal_args(cwd, log_command(item))), cwd=cwd, start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

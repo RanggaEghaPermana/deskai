@@ -32,6 +32,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 import brain  # noqa: E402
+import launcher  # noqa: E402
 import routine  # noqa: E402
 from brain import log  # noqa: E402
 
@@ -491,6 +492,12 @@ def _command_line(pid):
     return [part.decode(errors="replace") for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if part]
 
 
+def _run_by_deskai(cgroup):
+    """Whether a process's cgroup is one of the services DeskAI runs dev servers as. Not just anything with its name
+    in: a terminal it opened for you has a scope of its own, and that's where you start your own servers."""
+    return "/deskai-" in cgroup
+
+
 def hand_started():
     """Dev servers running from a project that DeskAI didn't start: [{unit, cwd, command, port, pid}].
     `cwd` is the project, and `command` what you typed, if that's still around ("npm run dev", not the node under it)."""
@@ -501,7 +508,7 @@ def hand_started():
         try:
             root = project_root(os.readlink(f"/proc/{pid}/cwd"))
             words = _command_line(pid)
-            if not root or "deskai-" in Path(f"/proc/{pid}/cgroup").read_text() or NOT_A_DEV_SERVER.search(" ".join(words)):
+            if not root or _run_by_deskai(Path(f"/proc/{pid}/cgroup").read_text()) or NOT_A_DEV_SERVER.search(" ".join(words)):
                 continue
         except (OSError, ProcessLookupError):
             continue  # gone already, or not yours to look at
@@ -630,7 +637,7 @@ def browser_command(snap):
     """How you start your browser: its launcher's command with your flags in it, as if you'd clicked it."""
     used = [w["app"] for w in snap.get("windows", []) if w.get("app") in BROWSER_APPS]
     for app in [*used, *BROWSER_APPS]:
-        info = Gio.DesktopAppInfo.new(app)
+        info = launcher.app_info(app)
         command = info.get_commandline() if info else None
         if command:
             # Without the launcher's field codes (and Flatpak's, around them).
@@ -704,7 +711,7 @@ def restore(snap, progress, set_mode, labels=None):
         progress(label, "running")
         try:
             progress(label, fn() or "done")
-        except (OSError, subprocess.SubprocessError, GLib.Error, ValueError) as e:
+        except Exception as e:  # one thing that won't come back mustn't keep the rest from coming back
             log.warning("restore: %s failed: %s", label, e)
             progress(label, "failed")
 
@@ -724,7 +731,7 @@ def restore(snap, progress, set_mode, labels=None):
             command = browser_command(snap)
             if not command:
                 return "failed"
-            subprocess.Popen([*command, "--restore-last-session"], env=env, start_new_session=True,
+            subprocess.Popen(launcher.own_scope([*command, "--restore-last-session"]), env=env, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         step("chrome", chrome)
 
@@ -740,10 +747,7 @@ def restore(snap, progress, set_mode, labels=None):
         def launch(app=app):
             if app in open_apps:
                 return "skipped"  # already up (it started with the session)
-            info = Gio.DesktopAppInfo.new(app)
-            if not info:
-                return "failed"
-            info.launch([], None)
+            return None if launcher.open_app(app) else "failed"
         step(app.removesuffix(".desktop").split(".")[-1].split("_")[0], launch)
 
     windows = terminal_windows(snap)
@@ -764,7 +768,7 @@ def restore(snap, progress, set_mode, labels=None):
                 if tab.get("claude"):
                     resume = shlex.join([tab["exe"], "--resume", tab["claude"], *tab["flags"]])
                     command = ["-x", f"bash -c {shlex.quote(resume + '; exec bash')}"]
-                subprocess.Popen([ptyxis, where, "-d", cwd, *command], env=env, cwd=cwd, start_new_session=True,
+                subprocess.Popen(launcher.own_scope([ptyxis, where, "-d", cwd, *command]), env=env, cwd=cwd, start_new_session=True,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             taken = set()

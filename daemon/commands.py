@@ -25,6 +25,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 
 import brain  # noqa: E402
 import compose  # noqa: E402
+import launcher  # noqa: E402
 import projects as found_projects  # noqa: E402
 import routine  # noqa: E402
 import servers  # noqa: E402
@@ -769,7 +770,7 @@ def find_app(name):
 
 def open_app(name):
     found = find_app(name)
-    return bool(found) and Gio.DesktopAppInfo.new(found).launch([], None)
+    return bool(found) and launcher.open_app(found)
 
 
 def safe_url(url):
@@ -788,7 +789,7 @@ def folder_path(path, known_projects):
 
 
 def open_uri(uri):
-    Gio.AppInfo.launch_default_for_uri(uri, None)
+    launcher.open_uri(uri)
 
 
 def open_folder(path):

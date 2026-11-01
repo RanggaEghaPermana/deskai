@@ -102,6 +102,39 @@ class BrowserCommand(unittest.TestCase):
         self.assertIsNone(self.command({}))
 
 
+class RunByDeskAI(unittest.TestCase):
+    PREFIX = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/"
+
+    def test_a_dev_server_it_started(self):
+        self.assertTrue(session._run_by_deskai(self.PREFIX + "deskai-gudang-dev.service\n"))
+
+    def test_not_a_server_you_started_in_a_terminal_it_opened(self):
+        self.assertFalse(session._run_by_deskai(self.PREFIX + "app-deskai-ptyxis-1a2b3c4d.scope\n"))
+        self.assertFalse(session._run_by_deskai(self.PREFIX + "app-deskai-gio-1a2b3c4d.scope/vte-spawn-1.scope\n"))
+
+    def test_not_one_in_a_terminal_of_your_own(self):
+        self.assertFalse(session._run_by_deskai(self.PREFIX + "app-gnome-org.gnome.Ptyxis-1234.scope\n"))
+        self.assertFalse(session._run_by_deskai(self.PREFIX + "deskaid.service\n"))
+
+
+class RestoreWithAnAppGone(unittest.TestCase):
+    def test_the_rest_still_comes_back(self):
+        snap = {"session": "s", "time": 0, "mode": None, "terminals": [], "servers": [], "databases": [], "chrome": True,
+                "files": [], "apps": ["gone.desktop", "here.desktop"], "windows": []}
+        progress = {}
+        dock = mock.Mock()
+        dock.windows.return_value = []
+        with mock.patch.object(session, "Dock", return_value=dock), mock.patch.object(session.routine, "load", return_value={}), \
+                mock.patch.object(session.routine, "tool_path", return_value="/usr/bin"), mock.patch.object(session.routine, "find_claude"), \
+                mock.patch.object(session, "running", return_value=False), mock.patch.object(session, "mark_restored") as marked, \
+                mock.patch.object(session.subprocess, "Popen"), mock.patch.object(session.time, "sleep"), \
+                mock.patch.object(session.launcher, "open_app", side_effect=lambda app: app == "here.desktop"), \
+                mock.patch.object(session, "browser_command", side_effect=TypeError("constructor returned NULL")):
+            session.restore(snap, progress.__setitem__, lambda _m: None)
+        self.assertEqual(progress, {"chrome": "failed", "gone": "failed", "here": "done"})
+        marked.assert_called_once()
+
+
 class Restore(unittest.TestCase):
     """The terminal part of a restore, with the dock and Ptyxis faked."""
 

@@ -33,6 +33,7 @@ from collections import Counter
 from pathlib import Path
 
 import brain
+import launcher
 import projects as found_projects
 from brain import log
 
@@ -638,7 +639,7 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                 if cancelled():
                     return
                 if answered:
-                    subprocess.Popen(["gio", "open", step["url"]], env=env, start_new_session=True)
+                    subprocess.Popen(launcher.own_scope(["gio", "open", step["url"]]), env=env, start_new_session=True)
                     progress(step, "done")
                 else:
                     progress(step, "failed")
@@ -649,10 +650,10 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                     continue
                 command = " ".join(shlex.quote(part) for part in step["command"])
                 inner = f"{command}; exec bash"
-                subprocess.Popen(terminal_args(step["cwd"], inner), env=env, cwd=step["cwd"], start_new_session=True)
+                subprocess.Popen(launcher.own_scope(terminal_args(step["cwd"], inner)), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
             elif kind == "terminal":
-                subprocess.Popen(terminal_args(step["cwd"], "exec bash"), env=env, cwd=step["cwd"], start_new_session=True)
+                subprocess.Popen(launcher.own_scope(terminal_args(step["cwd"], "exec bash")), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:
             log.warning("routine: %s failed: %s", kind, e)

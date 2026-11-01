@@ -31,6 +31,7 @@ import compose  # noqa: E402
 import ports  # noqa: E402
 import docks  # noqa: E402
 import guide  # noqa: E402
+import launcher  # noqa: E402
 import learned  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
@@ -1408,7 +1409,7 @@ class Brain:
     def _open_whatsapp_setting(self):
         command = session.browser_command({})
         if command:
-            subprocess.Popen([*command, guide.WHATSAPP_SETTINGS], start_new_session=True,
+            subprocess.Popen(launcher.own_scope([*command, guide.WHATSAPP_SETTINGS]), start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # ---- break reminders -------------------------------------------------

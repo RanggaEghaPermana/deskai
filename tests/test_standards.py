@@ -28,6 +28,9 @@ RAW_FIELDS = {"error", "exception", "traceback"}
 ON_A_CARD = {"_say", "_command_card", "card"}
 PROGRAMS_EVERYWHERE = {"bash", "gnome-session-quit", "systemctl", "systemd-run"}  # on any desktop DeskAI runs on
 RUNS = {"run", "Popen", "check_output", "check_call", "call"}
+GLIB_STARTS = {"launch", "launch_uris", "launch_default_for_uri", "launch_default_for_uri_async", "launch_uris_as_manager"}
+# What's started right from the daemon on purpose: a dev server when there's no user systemd to run it under, and so no scope either.
+LEFT_IN_THE_DAEMON = [("daemon/routine.py", "start_server")]
 CATCHES_A_MISSING_PROGRAM = {"OSError", "FileNotFoundError", "Exception"}
 GNOME_TRAPS = {
     r"\bvertical:\s*true|\borientation:\s*Clutter": "St.BoxLayout changed in GNOME 48: use VERTICAL_BOX",
@@ -242,6 +245,41 @@ class OutsidePrograms(unittest.TestCase):
         self.assertEqual(unguarded('try:\n    subprocess.run(["docker"])\nexcept ValueError:\n    pass'), [(2, "docker")])
         self.assertEqual(unguarded('def f():\n    if shutil.which("docker"):\n        subprocess.run(["docker"])'), [])
         self.assertEqual(unguarded('def f():\n    if shutil.which("git"):\n        subprocess.run(["docker"])'), [(3, "docker")])
+
+
+def starts_outside_a_scope(source):
+    """[(function, line)] for each thing started in a way that leaves it in the daemon's cgroup, where stopping
+    or restarting the daemon takes it down: any Popen not given launcher.own_scope(), and GLib starting an app."""
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    found = []
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call):
+            continue
+        name = getattr(call.func, "attr", "")
+        wrapped = bool(call.args) and getattr(getattr(call.args[0], "func", None), "attr", "") == "own_scope"
+        if name in GLIB_STARTS or (name == "Popen" and not wrapped):
+            node = call
+            while node in parents and not isinstance(node, ast.FunctionDef):
+                node = parents[node]
+            found.append((getattr(node, "name", ""), call.lineno))
+    return found
+
+
+class AppsOutliveTheDaemon(unittest.TestCase):
+    def test_everything_the_daemon_starts_gets_a_scope(self):
+        found = []
+        for path in sorted((ROOT / "daemon").glob("*.py")):
+            if path.name != "launcher.py":
+                found += [(f"daemon/{path.name}", function) for function, _line in starts_outside_a_scope(path.read_text())
+                          if (f"daemon/{path.name}", function) not in LEFT_IN_THE_DAEMON]
+        self.assertEqual(found, [], "see daemon/launcher.py")
+
+    def test_the_check_itself(self):
+        self.assertEqual(starts_outside_a_scope('def f():\n    subprocess.Popen(["ptyxis"])'), [("f", 2)])
+        self.assertEqual(starts_outside_a_scope('def f():\n    subprocess.Popen(launcher.own_scope(["ptyxis"]))'), [])
+        self.assertEqual(starts_outside_a_scope('def f():\n    info.launch([], None)'), [("f", 2)])
+        self.assertEqual(starts_outside_a_scope('def f():\n    Gio.AppInfo.launch_default_for_uri(uri, None)'), [("f", 2)])
 
 
 class GnomeVersions(unittest.TestCase):
