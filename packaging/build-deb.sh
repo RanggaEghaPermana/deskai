@@ -24,7 +24,7 @@ git -C "$ROOT" archive HEAD daemon extension setup VERSION | tar -x -C "$APP"
 mkdir -p "$APP/packaging"
 cp "$ROOT/packaging/deskai-sessions.sh" "$APP/packaging/"
 cp "$ROOT/packaging/postinst" "$ROOT/packaging/prerm" "$PKG/DEBIAN/"
-cp "$ROOT/setup/$APP_ID.svg" "$PKG/usr/share/icons/hicolor/scalable/apps/"
+cp "$ROOT/setup/$APP_ID.svg" "$ROOT/setup/$APP_ID.Presets.svg" "$PKG/usr/share/icons/hicolor/scalable/apps/"
 cp "$ROOT/packaging/$APP_ID.Setup.desktop" "$ROOT/packaging/$APP_ID.Presets.desktop" "$PKG/usr/share/applications/"
 cp "$ROOT/packaging/$APP_ID.Setup.metainfo.xml" "$PKG/usr/share/metainfo/"
 cat > "$PKG/usr/bin/deskai-setup" <<'SCRIPT'

@@ -302,7 +302,7 @@ class PuttingItBack(unittest.TestCase):
         self.assertEqual(installer.installed_version(), "")
 
     def files(self):
-        for name in ("COMMAND", "LAUNCHER", "PRESETS_LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+        for name in ("COMMAND", "LAUNCHER", "PRESETS_LAUNCHER", "ICON", "PRESETS_ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             patcher = mock.patch.object(installer, name, self.root / "gone" / name)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -512,11 +512,23 @@ class PlainFailures(unittest.TestCase):
         with mock.patch.object(installer, "run", return_value=failed(1, stdout=HOOKS_NOT_ALL)):
             self.assertTrue(installer.run_steps(steps, lambda *_: None))
         self.assertEqual(ran, ["service", "local_ai", "extension", "files", "polkit", "settings"])
-        for name in ("LAUNCHER", "PRESETS_LAUNCHER", "ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
+        for name in ("LAUNCHER", "PRESETS_LAUNCHER", "ICON", "PRESETS_ICON", "EXTENSION_LINK", "LOGIN_LINK", "SHARE"):
             self.patch(installer, name, self.root / "gone" / name)
         dict(installer.uninstall_steps())["files"]()
         self.assertFalse(command.exists())
         self.assertIn("isn't valid JSON", self.log.read_text(), "what it said is still there to read")
+
+    def test_presets_has_its_own_icon(self):
+        for name in ("LAUNCHER", "PRESETS_LAUNCHER", "ICON", "PRESETS_ICON"):
+            self.patch(installer, name, self.root / "data" / name)
+        installer._write_launcher(installer.ROOT, "python3")
+        self.assertIn(f"Icon={installer.APP_ID}.Presets\n", installer.PRESETS_LAUNCHER.read_text())
+        self.assertEqual(installer.PRESETS_ICON.read_bytes(), (installer.ROOT / "setup" / f"{installer.APP_ID}.Presets.svg").read_bytes())
+
+    def test_the_package_points_at_that_icon_too(self):
+        desktop = installer.ROOT / "packaging" / f"{installer.APP_ID}.Presets.desktop"
+        self.assertIn(f"Icon={installer.APP_ID}.Presets\n", desktop.read_text())
+        self.assertIn("$APP_ID.Presets.svg", (installer.ROOT / "packaging" / "build-deb.sh").read_text())
 
     def test_an_agents_file_that_isnt_text_doesnt_stop_the_window_opening(self):
         settings = self.root / ".claude" / "settings.json"

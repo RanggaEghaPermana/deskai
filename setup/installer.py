@@ -73,6 +73,7 @@ LANGUAGE_ATTRIBUTE = "{http://www.w3.org/XML/1998/namespace}lang"
 LAUNCHER = DATA / "applications" / f"{APP_ID}.Setup.desktop"
 PRESETS_LAUNCHER = DATA / "applications" / f"{APP_ID}.Presets.desktop"
 ICON = DATA / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}.svg"
+PRESETS_ICON = ICON.with_name(f"{APP_ID}.Presets.svg")
 
 # What the AI choices mean in modes.json's llm.backend.
 BACKENDS = {"claude": "claude-cli", "api": "api", "ollama": "ollama", "none": "none"}
@@ -554,13 +555,14 @@ Name[id]=Preset Pribadi
 Comment=Your own routines, started by words you choose
 Comment[id]=Kebiasaan lu sendiri, dimulai dengan kata yang lu pilih
 Exec={python} {app_dir}/daemon/presets_window.py
-Icon={APP_ID}
+Icon={APP_ID}.Presets
 Terminal=false
 Categories=Utility;GNOME;GTK;
 StartupNotify=true
 """)
     ICON.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(app_dir / "setup" / f"{APP_ID}.svg", ICON)
+    shutil.copy2(app_dir / "setup" / f"{APP_ID}.Presets.svg", PRESETS_ICON)
 
 
 def _hooks(action):
@@ -736,7 +738,7 @@ def uninstall_steps(purge=False):
         localai.remove()
 
     def files():
-        for path in (COMMAND, LAUNCHER, PRESETS_LAUNCHER, ICON):
+        for path in (COMMAND, LAUNCHER, PRESETS_LAUNCHER, ICON, PRESETS_ICON):
             path.unlink(missing_ok=True)
         for link in (EXTENSION_LINK, LOGIN_LINK):
             if link.is_symlink():
