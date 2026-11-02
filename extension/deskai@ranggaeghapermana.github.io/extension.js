@@ -32,7 +32,7 @@ import {OneDock} from './docks.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
 import {INBOX_DEFAULTS, Inbox, RANK, sourceAppId} from './inbox.js';
 import {MOTION, Motion} from './motion.js';
-import {Music, describe} from './music.js';
+import {Music, describe, goTo} from './music.js';
 import {FILES_APP, Places, baseName, displayPath} from './places.js';
 
 const BUS_NAME = 'io.github.RanggaEghaPermana.DeskAI';
@@ -3061,7 +3061,9 @@ export default class DeskAIExtension extends Extension {
         this._musicTrack.set_child(track);
         this._musicTrack.connect('clicked', () => {
             this._tooltip.hide();
-            this._music?.current?.raise();
+            const player = this._music?.current;
+            if (player)
+                goTo(player);
         });
         this._addTooltip(this._musicTrack, () => this._musicTrack.accessible_name);
         pill.add_child(this._musicTrack);

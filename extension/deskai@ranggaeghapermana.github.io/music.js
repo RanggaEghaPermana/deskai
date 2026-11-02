@@ -3,7 +3,9 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Signals from 'resource:///org/gnome/shell/misc/signals.js';
 import * as Mpris from 'resource:///org/gnome/shell/ui/mpris.js';
 
@@ -90,6 +92,40 @@ export function describe(player) {
     const title = known(player.trackTitle, 'Unknown title') || fileName(player) || app;
     const artists = player.trackArtists.filter(artist => known(artist, 'Unknown artist')).join(', ');
     return {title, artists: artists || (title === app ? '' : app)};
+}
+
+// The window of the process behind a player, most recently used first: the one with the song in
+// its title if there is one, since that's the browser window with that tab in front.
+function windowOf(pid, title) {
+    const windows = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, null).filter(win => win.get_pid() === pid);
+    const song = (title ?? '').toLowerCase();
+    return (song && windows.find(win => win.get_title()?.toLowerCase().includes(song))) || windows[0] || null;
+}
+
+// Takes you to where it's playing. A browser says it can't be raised and doesn't say which app it
+// is, so raise() alone does nothing for one. The window goes by the process that has the player's
+// name. A browser doesn't let anything outside it pick a tab, so that's as close as it gets there.
+export function goTo(player) {
+    const name = player._playerProxy?.g_name;
+    if (!name) {
+        player.raise();
+        return;
+    }
+    Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+        'GetConnectionUnixProcessID', new GLib.Variant('(s)', [name]), null,
+        Gio.DBusCallFlags.NONE, -1, null, (conn, result) => {
+            let win = null;
+            try {
+                const [pid] = conn.call_finish(result).deepUnpack();
+                win = windowOf(pid, player.trackTitle);
+            } catch {
+                // it's left the bus: there's nothing to go to
+            }
+            if (win)
+                Main.activateWindow(win);
+            else
+                player.raise();
+        });
 }
 
 export class Music {

@@ -34,8 +34,9 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   using it, and ask to clear it to see which caches can go. The card's button or "turn off warnings" stops the
   warnings.
 - **Music on the dock.** While something plays, in a music app or a browser tab, the dock shows what it
-  is with previous, pause and next. Click the song to go to the player. It leaves when the player closes,
-  or after half an hour on pause.
+  is with previous, pause and next. Click the song to go to the player, on whichever workspace it's on. In a browser
+  that's its window: nothing outside a browser can pick one of its tabs. It leaves when the player closes, or after half an
+  hour on pause.
 - **Who gets through.** The first time someone new is held during a focus mode, the dock shows you the
   message and asks once: keep holding, or always show them. Notifications that are plainly urgent, like a
   deadline or an error, come through anyway.
