@@ -219,6 +219,11 @@ try_everything() {
   expect "$how: the mode dialog opens" "$(val "!!_T.ext._dialog")" true
   ev "_T.ext._dialog?.close()" >/dev/null
   sleep 0.6
+  ev "_T.ext._openBreakDialog()" >/dev/null
+  sleep 0.6
+  expect "$how: the break dialog opens" "$(val "!!_T.ext._dialog")" true
+  ev "_T.ext._dialog?.close()" >/dev/null
+  sleep 0.6
 
   [ "$windows" = "2" ] || return 0
   ev "_T.key($ALT, true)" >/dev/null

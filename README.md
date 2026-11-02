@@ -56,8 +56,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 - **Window motion.** Smooth animations when you switch between windows.
 - **Smooth login.** The login animation plays once your desktop and extensions have loaded, so it doesn't
   stutter.
-- **Break reminders.** A small card after two hours without a pause. One click turns it off, and
-  `breaks.after_minutes` in `~/.config/deskai/modes.json` sets how long.
+- **Break reminders.** A small card after two hours without a pause. How long that is, or whether it comes at all, is yours
+  to set: **Change time** on the card, or **Break reminders…** in the dock's menu.
 
 ## Requirements
 

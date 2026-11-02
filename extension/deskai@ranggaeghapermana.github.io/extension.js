@@ -26,7 +26,7 @@ import {Card} from './card.js';
 import {CommandBar} from './commandbar.js';
 import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
 import {isValidConfig} from './config.js';
-import {ModeDialog, fillAppPicker} from './editor.js';
+import {BreakDialog, ModeDialog, fillAppPicker} from './editor.js';
 import {Desk} from './desk.js';
 import {OneDock} from './docks.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
@@ -1599,6 +1599,7 @@ export default class DeskAIExtension extends Extension {
             menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             this._menuItem(menu, this._t('newMode'), () => this._openModeDialog(null));
             this._menuItem(menu, this._t('presets'), () => this._openPresets());
+            this._menuItem(menu, this._t('breaks'), () => this._openBreakDialog());
         });
     }
 
@@ -1631,12 +1632,24 @@ export default class DeskAIExtension extends Extension {
     _openModeDialog(key) {
         this._dialog?.close();
         const mode = key ? {...this._modes[key], label: this._modeLabel(key)} : null;
-        const dialog = new ModeDialog(mode, this._t, fields => {
+        this._showDialog(new ModeDialog(mode, this._t, fields => {
             if (key)
                 this._updateMode(key, fields);
             else
                 this._createMode(fields);
-        });
+        }));
+    }
+
+    _openBreakDialog() {
+        this._dialog?.close();
+        const breaks = {enabled: true, after_minutes: 120, ...this._config.breaks};
+        this._showDialog(new BreakDialog(breaks, this._t, fields => {
+            this._config.breaks = {...this._config.breaks, ...fields};
+            this._saveConfig();
+        }));
+    }
+
+    _showDialog(dialog) {
         dialog.connect('destroy', () => {
             if (this._dialog === dialog)
                 this._dialog = null;
@@ -2099,6 +2112,8 @@ export default class DeskAIExtension extends Extension {
             this._requestMode(action.slice('mode:'.length));
         } else if (action === 'undo-delete') {
             this._undoDelete();
+        } else if (action === 'break:change') {
+            this._openBreakDialog();
         } else if (action === 'inbox-open') {
             const item = this._inbox.get(spec.inbox_key);
             if (item)
@@ -2641,6 +2656,10 @@ export default class DeskAIExtension extends Extension {
         const presets = new PopupMenu.PopupMenuItem(this._t('presets'));
         presets.connect('activate', () => this._openPresets());
         menu.addMenuItem(presets);
+
+        const breaks = new PopupMenu.PopupMenuItem(this._t('breaks'));
+        breaks.connect('activate', () => this._debounce('menu-action', 0, () => this._openBreakDialog()));
+        menu.addMenuItem(breaks);
 
         const edit = new PopupMenu.PopupMenuItem(this._t('editJson'));
         edit.connect('activate', () => {

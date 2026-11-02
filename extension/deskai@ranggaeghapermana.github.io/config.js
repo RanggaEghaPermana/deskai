@@ -26,6 +26,15 @@ function isValidMode(key, mode) {
         allAre(exit, ['delay', 'per_press'], value => isNumberFrom(value, 0, true));
 }
 
+// Minutes from what's typed in the two boxes of the break dialog, or null if that isn't a time.
+export function breakMinutes(hours, minutes) {
+    const typed = [hours, minutes].map(text => text.trim());
+    if (!typed.every(text => /^\d*$/.test(text)))
+        return null;
+    const total = Number(typed[0]) * 60 + Number(typed[1]);
+    return total >= 1 ? total : null;
+}
+
 export function isValidConfig(cfg) {
     if (!isObject(cfg) || !isObject(cfg.modes) || Object.keys(cfg.modes).length === 0)
         return false;

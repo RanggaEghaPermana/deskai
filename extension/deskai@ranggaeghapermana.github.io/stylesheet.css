@@ -625,3 +625,17 @@
 .deskai-dialog-check {
   padding-top: 10px;
 }
+
+.deskai-break-time {
+  spacing: 8px;
+}
+
+.deskai-break-entry {
+  width: 56px;
+}
+
+.deskai-dialog-problem {
+  font-size: 0.9em;
+  color: #e5484d;
+  padding-top: 4px;
+}

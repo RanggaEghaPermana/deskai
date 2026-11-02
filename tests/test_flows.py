@@ -427,6 +427,28 @@ class Breaks(Base):
         self.tick(5, mode="social")
         self.assertEqual(self.brain.cards, [])
 
+    def test_it_goes_by_the_time_you_set(self):
+        path = self.folder / "modes.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "breaks": {"enabled": True, "after_minutes": 180}}))
+        self.brain.config.refresh()
+        self.brain.working_since = time.time() - 121 * 60
+        self.tick(5)
+        self.assertEqual(self.brain.cards, [])
+        self.brain.working_since = time.time() - 181 * 60
+        self.tick(5)
+        self.assertEqual(self.brain.cards[0]["title"], "Udah 3 jam 1 menit nonstop")
+
+    def test_the_card_offers_to_change_the_time(self):
+        self.brain.working_since = time.time() - 121 * 60
+        self.tick(5)
+        self.assertEqual([action["id"] for action in self.brain.cards[0]["actions"]], ["break:off", "break:change", "break:ok"])
+
+    def test_changing_the_time_is_the_docks_to_save(self):
+        before = (self.folder / "modes.json").read_text()
+        self.brain.on_card_action("break", "break:change")
+        self.assertEqual((self.folder / "modes.json").read_text(), before)
+        self.assertEqual(self.brain.cards, [])
+
     def test_turning_it_off_and_on(self):
         self.brain.on_card_action("break", "break:off")
         self.assertFalse(json.loads((self.folder / "modes.json").read_text())["breaks"]["enabled"])

@@ -103,6 +103,31 @@ class Mistakes(unittest.TestCase):
             self.assertEqual(not brain.validate_config(config), dock_takes_it, json.dumps(config)[:300])
 
 
+class BreakTime(unittest.TestCase):
+    """What the dock's dialog takes from its two boxes."""
+
+    def minutes(self, typed):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "check.js"
+            script.write_text(f"""
+                import {{breakMinutes}} from 'file://{EXTENSION / "config.js"}';
+                print(JSON.stringify({json.dumps(typed)}.map(([hours, minutes]) => breakMinutes(hours, minutes))));
+            """)
+            done = subprocess.run(["gjs", "-m", str(script)], capture_output=True, text=True, timeout=60, check=True)
+        return json.loads(done.stdout)
+
+    def test_a_time(self):
+        self.assertEqual(self.minutes([["2", "0"], ["0", "45"], ["1", "30"], ["", "90"], ["4", ""], [" 3 ", " 15 "], ["0", "1"]]),
+                         [120, 45, 90, 90, 240, 195, 1])
+
+    def test_not_a_time(self):
+        self.assertEqual(self.minutes([["", ""], ["0", "0"], ["x", "0"], ["1", "-5"], ["1.5", "0"], ["٢", "0"]]), [None] * 6)
+
+    def test_what_it_gives_is_a_time_the_daemon_takes(self):
+        for after in self.minutes([["0", "1"], ["999", "999"]]):
+            self.assertEqual(brain.validate_config({**FULL, "breaks": {"enabled": True, "after_minutes": after}}), [])
+
+
 class Reading(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()

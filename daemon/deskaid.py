@@ -1734,6 +1734,7 @@ class Brain:
             "title": self._say("break_title", time=worked),
             "text": self._say("break_text"),
             "actions": [{"id": "break:off", "label": self._say("break_off")},
+                        {"id": "break:change", "label": self._say("break_change")},
                         {"id": "break:ok", "label": self._say("break_ok"), "primary": True}],
             "anchor_mode": self.mode,
             "timeout": 20,

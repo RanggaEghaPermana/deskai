@@ -11,6 +11,7 @@ import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {VERTICAL_BOX} from './compat.js';
+import {breakMinutes} from './config.js';
 
 export const MODE_COLORS = [
     '#e8833a', '#3b82f6', '#10b981', '#e5484d', '#8b5cf6',
@@ -214,5 +215,71 @@ class ModeDialog extends ModalDialog.ModalDialog {
             icon: this._icon,
             focus: this._focus.checked,
         });
+    }
+});
+
+export const BreakDialog = GObject.registerClass(
+class BreakDialog extends ModalDialog.ModalDialog {
+    // breaks: modes.json's {enabled, after_minutes}; t: the dock's translator.
+    _init(breaks, t, onSave) {
+        super._init({styleClass: 'deskai-mode-dialog'});
+        this._onSave = onSave;
+        const after = Math.max(1, Math.round(breaks.after_minutes));
+
+        const content = new St.BoxLayout({
+            ...VERTICAL_BOX,
+            style_class: 'deskai-dialog-content',
+        });
+        content.add_child(new St.Label({text: t('breakTitle'), style_class: 'deskai-dialog-title'}));
+
+        this._on = new CheckBox.CheckBox(t('breakCheck'));
+        this._on.checked = breaks.enabled;
+        this._on.connect('notify::checked', () => this._sync());
+        content.add_child(this._on);
+
+        this._when = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-dialog-content'});
+        this._when.add_child(fieldLabel(t('breakAfter')));
+        const time = new St.BoxLayout({style_class: 'deskai-break-time'});
+        const box = (value, unit) => {
+            const entry = new St.Entry({style_class: 'deskai-break-entry', text: String(value), can_focus: true});
+            entry.clutter_text.set_max_length(3);
+            entry.clutter_text.connect('text-changed', () => this._problem.hide());
+            // A box keeps Enter to itself, so the dialog's default button never hears it.
+            entry.clutter_text.connect('activate', () => this._save());
+            time.add_child(entry);
+            time.add_child(new St.Label({text: unit, y_align: Clutter.ActorAlign.CENTER}));
+            return entry;
+        };
+        this._hours = box(Math.floor(after / 60), t('breakHours'));
+        this._minutes = box(after % 60, t('breakMinutes'));
+        this._when.add_child(time);
+        this._problem = new St.Label({text: t('breakBadTime'), style_class: 'deskai-dialog-problem', visible: false});
+        this._when.add_child(this._problem);
+        content.add_child(this._when);
+
+        this.contentLayout.add_child(content);
+        this.setButtons([
+            {label: t('cancel'), action: () => this.close(), key: Clutter.KEY_Escape},
+            {label: t('save'), action: () => this._save(), default: true},
+        ]);
+        this.setInitialKeyFocus(breaks.enabled ? this._hours : this._on);
+        this._sync();
+    }
+
+    _sync() {
+        this._when.visible = this._on.checked;
+    }
+
+    _save() {
+        const on = this._on.checked;
+        const after = breakMinutes(this._hours.get_text(), this._minutes.get_text());
+        if (on && after === null) {
+            this._problem.show();
+            this._hours.grab_key_focus();
+            return;
+        }
+        this.close();
+        // Turned off with nonsense in the boxes, the time it had stays for when it's turned back on.
+        this._onSave({enabled: on, ...(after === null ? {} : {after_minutes: after})});
     }
 });
