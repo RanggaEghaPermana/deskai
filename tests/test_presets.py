@@ -437,13 +437,13 @@ class FromTheCommandBar(Base):
     def test_without_a_preset_nothing_changes(self):
         with mock.patch.object(self.brain, "_setup_project") as setting_up:
             self.brain.on_command("setup toko")
-        setting_up.assert_called_once_with("toko")
+        setting_up.assert_called_once_with("toko", None)
 
     def test_a_command_bar_request_still_comes_before_a_slip(self):
         self.wrote(preset("Tako", ["setup tako"]))
         with mock.patch.object(self.brain, "_setup_project") as setting_up:
             self.brain.on_command("setup toko")
-        setting_up.assert_called_once_with("toko")
+        setting_up.assert_called_once_with("toko", None)
         self.assertIsNone(self.brain.preset_meant)
 
     def test_a_slip_asks_first(self):

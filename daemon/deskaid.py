@@ -229,6 +229,7 @@ class Brain:
         self.shell_settings = None
         self.config_told = None
         self.routine_running = None  # the setup going on right now
+        self.routine_choice = None   # where you just said a project's Claude Code opens, for its setup's card
         self.presets = presets.Store()
         self.preset_run = None     # the preset going on right now
         self.preset_asking = None  # a preset, and the commands in it you haven't seen yet
@@ -585,6 +586,8 @@ class Brain:
         elif action == "routine:later":
             routine.write_state(snoozed_until=time.time() + ROUTINE_SNOOZE_S)
             self.routine_plan = None
+        elif action.startswith("routine:claude-in:") and card_id == "routine" and self.routine_choice:
+            self._change_claude_in(action.rsplit(":", 1)[1])
         elif action.startswith("server:"):
             _, op, unit = action.split(":", 2)
             self._server_action(op, unit)
@@ -788,6 +791,7 @@ class Brain:
             return False
         self.routine_plan = plan
         self.routine_marks = {}
+        self.routine_choice = None
         self.card({
             "id": "routine",
             "kind": "suggest",
@@ -843,7 +847,9 @@ class Brain:
             except Exception as e:  # never take the daemon down with it
                 log.exception("routine failed: %s", e)
             if not cancel.is_set():
-                GLib.idle_add(self._routine_finished, plan, [self._why_it_failed(step) for step in failed])
+                why = [self._why_it_failed(step) for step in failed]
+                why += [self._say("routine_desktop_failed") for step in plan["steps"] if step.get("no_desktop")]
+                GLib.idle_add(self._routine_finished, plan, why)
 
         log.info("routine: setting up %s", plan.get("project"))
         thread = threading.Thread(target=work, name="routine", daemon=True)
@@ -855,13 +861,19 @@ class Brain:
         lines = [f"{marks.get(self.routine_marks.get(id(step)), '·')} {routine.label(step)}"
                  for step in plan["steps"] if step["type"] != "mode"]
         lines += [line for line in why if line]
+        name = os.path.basename(plan.get("project", ""))
+        choice = self.routine_choice if self.routine_choice and self.routine_choice["project"] == plan.get("project") else None
+        if choice:
+            lines.append(self._say(choice["says"], project=name))
         self.card({
             "id": "routine",
             "kind": "suggest",
             "icon": {"name": "media-playback-start-symbolic"},
             "title": title,
-            "subtitle": os.path.basename(plan.get("project", "")),
+            "subtitle": name,
             "text": "\n".join(lines),
+            "actions": [{"id": f"routine:claude-in:{choice['other']}", "label": self._say(f"routine_use_{choice['other']}")}]
+            if choice and choice.get("other") else [],
             "anchor_mode": self._routine_mode(plan) or self.mode,
             "timeout": timeout,
         })
@@ -876,7 +888,7 @@ class Brain:
     def _routine_finished(self, plan, why=()):
         failed = sum(1 for state in self.routine_marks.values() if state == "failed")
         title = self._say("routine_partly", n=failed) if failed else self._say("routine_ready")
-        self._routine_card(plan, title, 20 if any(why) else 12, why)
+        self._routine_card(plan, title, 20 if any(why) or self.routine_choice else 12, why)
         self.routine_plan = None
         self.routine_running = None
         return False
@@ -1268,7 +1280,7 @@ class Brain:
             say = commands.running_list(self.watch, action.get("show", "all"), self.config.language) \
                 or self._say("command_nothing_running")
         elif kind == "setup_project":
-            self._setup_project(action.get("project"))
+            self._setup_project(action.get("project"), action.get("claude_in"))
             answered_elsewhere = True
         elif kind == "close_project":
             self._close_project(action.get("project"))
@@ -1328,20 +1340,21 @@ class Brain:
                 answered_elsewhere = True
         return say, answered_elsewhere
 
-    def _setup_project(self, name):
+    def _setup_project(self, name, claude_in=None):
         path = commands.find_project(name, commands.all_projects())
         if not path:
             self._command_card(self._say("command_no_project"))
             return
 
         def work():
+            choice = self._choose_claude_in(path, claude_in) if claude_in else None
             try:
                 routine.write_state(last_project=path)  # what the morning offer goes by without Claude Code
                 plan = routine.learn(project=path)
             except Exception as e:  # anything from reading transcripts or the browser history
                 log.warning("command: can't plan %s: %s", path, e)
                 plan = None
-            GLib.idle_add(self._project_planned, plan)
+            GLib.idle_add(self._project_planned, plan, choice)
 
         threading.Thread(target=work, name="plan", daemon=True).start()
 
@@ -1435,12 +1448,31 @@ class Brain:
                    "actions": actions, "timeout": 45 if terminals or not_in_git else 12})
         return False
 
-    def _project_planned(self, plan):
+    def _choose_claude_in(self, path, where):
+        """What the setup's card says about it, and the button that changes your mind."""
+        try:
+            if not routine.choose_claude_in(path, where):
+                return {"project": path, "says": "routine_no_desktop"}
+        except OSError as e:
+            log.warning("routine: can't remember where %s opens: %s", path, e)
+            return {"project": path, "says": "routine_choice_unsaved"}
+        return {"project": path, "says": f"routine_in_{where}", "other": "terminal" if where == "desktop" else "desktop"}
+
+    def _change_claude_in(self, where):
+        project = self.routine_choice["project"]
+        self.routine_choice = None
+        choice = self._choose_claude_in(project, where)
+        if self.routine_plan:
+            routine.with_claude_in(self.routine_plan)  # it may not have got that far yet
+        self._command_card(self._say(choice["says"], project=os.path.basename(project)))
+
+    def _project_planned(self, plan, choice=None):
         if not plan:
             self._command_card(self._say("command_no_project"))
             return False
         self.routine_plan = plan
         self.routine_marks = {}
+        self.routine_choice = choice
         self._routine_card(plan, self._say("routine_running"), 120)
         self._run_routine(plan)
         return False

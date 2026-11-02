@@ -68,6 +68,11 @@ def open_app(app_id):
     return _started(["gio", "launch", info.get_filename()])
 
 
+def handles(scheme):
+    """Whether there's an app here for links like scheme://."""
+    return Gio.AppInfo.get_default_for_uri_scheme(scheme) is not None
+
+
 def open_uri(uri):
     """Opens a page, a file or a folder with the app for it. Raises if nothing could."""
     if not shutil.which("gio"):

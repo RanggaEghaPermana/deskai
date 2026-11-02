@@ -59,6 +59,7 @@ class Fake(deskaid.Brain):
         self.docks_changed_timer = 0
         self.config_told = None
         self.routine_running = None
+        self.routine_choice = None
         self.presets = presets.Store(folder / "presets.json")
         self.preset_run = self.preset_asking = self.preset_meant = None
 
@@ -1342,6 +1343,86 @@ class RoomWarnings(unittest.TestCase):
         self.brain.cards.clear()
         self.look()
         self.assertEqual(len(self.brain.cards), 1)
+
+
+
+class WhereClaudeOpens(Base):
+    PLAN = {"project": "/w/toko", "steps": [{"type": "claude", "cwd": "/w/toko", "command": ["claude"], "desktop": True}]}
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        for patcher in (mock.patch.object(deskaid.routine, "ROUTINE_FILE", Path(folder.name) / "routine.json"),
+                        mock.patch.object(deskaid.routine.launcher, "handles", return_value=True),
+                        mock.patch.object(self.brain, "_run_routine")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def planned(self, where="desktop"):
+        self.brain._project_planned(self.PLAN, self.brain._choose_claude_in("/w/toko", where))
+        return self.brain.cards[-1]
+
+    def test_the_card_says_its_remembered_and_how_to_change_it(self):
+        card = self.planned()
+        self.assertIn(brain.card_text("id", "routine_in_desktop", project="toko"), card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["routine:claude-in:terminal"])
+        self.assertEqual(deskaid.routine.load()["claude_in"], {"/w/toko": "desktop"})
+
+    def test_and_the_other_way_round(self):
+        deskaid.routine.choose_claude_in("/w/toko", "desktop")
+        card = self.planned("terminal")
+        self.assertIn(brain.card_text("id", "routine_in_terminal", project="toko"), card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["routine:claude-in:desktop"])
+        self.assertEqual(deskaid.routine.load()["claude_in"], {})
+
+    def test_changing_your_mind(self):
+        self.planned()
+        self.brain.on_card_action("routine", "routine:claude-in:terminal")
+        self.assertEqual(deskaid.routine.load()["claude_in"], {})
+        self.assertEqual(self.brain.cards[-1]["title"], brain.card_text("id", "routine_in_terminal", project="toko"))
+        self.assertIsNone(self.brain.routine_choice)
+
+    def test_changing_your_mind_while_it_runs_reaches_the_step_still_to_come(self):
+        plan = {"project": "/w/toko", "steps": [dict(self.PLAN["steps"][0])]}
+        self.brain._project_planned(plan, self.brain._choose_claude_in("/w/toko", "desktop"))
+        self.brain.on_card_action("routine", "routine:claude-in:terminal")
+        self.assertFalse(plan["steps"][0]["desktop"])
+
+    def test_a_button_left_from_earlier_does_nothing(self):
+        self.brain.on_card_action("routine", "routine:claude-in:desktop")
+        self.assertEqual(deskaid.routine.load()["claude_in"], {})
+
+    def test_with_no_claude_desktop(self):
+        deskaid.routine.launcher.handles.return_value = False
+        card = self.planned()
+        self.assertIn(brain.card_text("id", "routine_no_desktop", project="toko"), card["text"])
+        self.assertEqual(card["actions"], [])
+
+    def test_when_it_cant_be_saved(self):
+        with mock.patch.object(deskaid.routine, "save", side_effect=OSError("disk full")):
+            card = self.planned()
+        self.assertIn(brain.card_text("id", "routine_choice_unsaved", project="toko"), card["text"])
+        self.assertNotIn("disk full", card["text"])
+        self.assertEqual(card["actions"], [])
+
+    def test_a_setup_with_nothing_said_has_no_button(self):
+        self.brain._project_planned(self.PLAN)
+        self.assertEqual(self.brain.cards[-1]["actions"], [])
+
+    def test_the_note_stays_on_the_last_card_a_while(self):
+        self.planned()
+        self.brain.routine_marks = {}
+        self.brain._routine_finished(self.PLAN)
+        self.assertEqual(self.brain.cards[-1]["timeout"], 20)
+        self.assertIn(brain.card_text("id", "routine_in_desktop", project="toko"), self.brain.cards[-1]["text"])
+
+    def test_the_morning_offer_doesnt_inherit_it(self):
+        self.planned()
+        with mock.patch.object(deskaid.routine, "already_set_up", return_value=False):
+            future = mock.Mock(result=mock.Mock(return_value=self.PLAN))
+            self.brain._offer_routine(future)
+        self.assertIsNone(self.brain.routine_choice)
 
 
 if __name__ == "__main__":

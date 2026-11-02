@@ -46,6 +46,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
 - **Ready after setup.** No AI and nothing to teach it first. Setup puts the apps you use in each mode, from what's
   installed and what GNOME has seen you open, and your projects are found in your home folder. "Set up my project"
   starts what a project's own files say it runs, and uses your Claude Code sessions when it has them.
+  To have Claude Code open in Claude Desktop instead of a terminal, say so once: "setup my project in Claude Desktop", or
+  "pakai claude desktop". It's remembered for that project, and "setup my project in a terminal" changes it back.
 - **Smart places.** After a download or a screen recording, the dock offers to open it or show it,
   and it learns the folders you go back to. A suggestion leaves the dock after a minute, and clicking Files
   on the dock then takes you there: your latest screenshot, download or recording, or the folder you closed
@@ -168,6 +170,9 @@ bug reports, and removing DeskAI deletes it.
   is, and setup says so.
 - **Resuming Claude Code.** Restoring your desk and the workday routine resume conversations with the
   flags they had. If you run Claude Code with `--dangerously-skip-permissions`, it comes back that way.
+  A project you've said opens in Claude Desktop gets the conversation there, through a `claude://` link, and that link can't
+  carry those flags: Claude Desktop's own permission settings apply. If it won't open, a terminal does the job instead. Which
+  projects open there is kept in `~/.config/deskai/routine.json`.
 - **Ptyxis' saved session** is set aside as `session.gvariant.deskai-bak` during a restore, so tabs
   don't come back twice. Removing DeskAI puts it back if Ptyxis hasn't made a new one.
 - **Presets** are in `~/.config/deskai/presets.json`, and only do what you wrote. A command in one runs in bash with your

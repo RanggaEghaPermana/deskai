@@ -536,5 +536,172 @@ class SlipsOfTheFingers(unittest.TestCase):
             self.assertIsNone(self.act(text), text)
 
 
+
+class WhereClaudeOpensWords(unittest.TestCase):
+    KNOWN = {"pabrik-app": "/w/pabrik-app", "toko-online": "/w/toko-online", "my-terminal": "/w/my-terminal",
+             "claude-desktop": "/w/claude-desktop"}
+
+    def act(self, text):
+        result = commands.quick(text, [("building", "Building")], servers.Watch(), self.KNOWN)
+        return result and result["actions"][0]
+
+    def test_saying_claude_desktop(self):
+        for text in ("setup pabrik yang terminal ganti dengan claude desktop", "setup pabrik ganti terminal jadi claude desktop",
+                     "setup pabrik terminalnya diganti claude desktop", "setup pabrik pakai claude desktop",
+                     "setup pabrik pake calude desktop dong", "setup pabrik di claude dekstop", "setup pabrik buka di claude desktop",
+                     "setup pabrik claude desktop", "setup pabrik yang kebuka itu bukan terminal tapi claude desktop",
+                     "setup pabrik pakai claude desktop bukan terminal", "setup pabrik pakai app claude aja",
+                     "set up pabrik in claude desktop", "setup pabrik open in claude desktop instead of a terminal",
+                     "setup pabrik replace the terminal with claude desktop"):
+            self.assertEqual(self.act(text), {"type": "setup_project", "project": "pabrik", "claude_in": "desktop"}, text)
+
+    def test_saying_a_terminal(self):
+        for text in ("setup pabrik pakai terminal", "setup pabrik di terminal", "setup pabrik balik ke terminal",
+                     "setup pabrik yang claude desktop ganti terminal", "setup pabrik in a terminal"):
+            self.assertEqual(self.act(text), {"type": "setup_project", "project": "pabrik", "claude_in": "terminal"}, text)
+
+    def test_any_way_of_asking_for_a_setup(self):
+        self.assertEqual(self.act("mau kerja di toko, pakai claude desktop"), {"type": "setup_project", "project": "toko", "claude_in": "desktop"})
+        self.assertEqual(self.act("siapin toko pakai claude desktop"), {"type": "setup_project", "project": "toko", "claude_in": "desktop"})
+
+    def test_saying_nothing_about_it_changes_nothing(self):
+        self.assertEqual(self.act("setup pabrik"), {"type": "setup_project", "project": "pabrik"})
+
+    def test_a_project_with_those_words_in_its_name(self):
+        self.assertEqual(self.act("setup my terminal"), {"type": "setup_project", "project": "my terminal"})
+        self.assertEqual(self.act("setup my-terminal"), {"type": "setup_project", "project": "my-terminal"})
+        self.assertEqual(self.act("setup claude desktop"), {"type": "setup_project", "project": "claude desktop"})
+
+    def test_a_word_on_its_own_isnt_a_choice(self):
+        self.assertIsNone(self.act("setup pabrik terminal"))
+
+    def test_nothing_it_doesnt_know_as_a_project(self):
+        self.assertIsNone(self.act("setup gudang pakai claude desktop"))
+        self.assertIsNone(self.act("lanjut kerja di terminal"))
+
+    def test_being_told_not_to(self):
+        self.assertEqual(self.act("jangan setup pabrik pakai claude desktop"), {"type": "left_alone"})
+
+    def test_the_model_cant_change_it(self):
+        self.assertNotIn("claude_in", json.dumps(commands.COMMAND_SCHEMA))
+
+
+class WhereClaudeOpens(unittest.TestCase):
+    SESSION = "11111111-2222-4333-8444-555555555555"
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.home = Path(folder.name)
+        for patcher in (mock.patch.object(routine, "ROUTINE_FILE", self.home / "routine.json"),
+                        mock.patch.object(routine.launcher, "handles", return_value=True),
+                        mock.patch.object(routine, "write_state"), mock.patch.object(routine.Path, "home", return_value=self.home)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def claude(self, **more):
+        return {"type": "claude", "cwd": "/w/app", "command": ["claude", "--resume", self.SESSION], **more}
+
+    def run_step(self, step, opening=None):
+        states = []
+        with mock.patch.object(routine.launcher, "open_uri", side_effect=opening) as opened, \
+                mock.patch.object(routine.subprocess, "Popen") as popen:
+            routine.run({"steps": [step]}, lambda _step, state: states.append(state), lambda _mode: None)
+        return states[-1], opened, popen
+
+    def live(self, entrypoint):
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps({"sessionId": self.SESSION, "entrypoint": entrypoint}))
+
+    def test_a_choice_is_kept_by_project(self):
+        self.assertTrue(routine.choose_claude_in("/w/app", "desktop"))
+        self.assertTrue(routine.choose_claude_in("/w/other", "desktop"))
+        self.assertTrue(routine.choose_claude_in("/w/other", "terminal"))
+        self.assertEqual(routine.load()["claude_in"], {"/w/app": "desktop"})
+
+    def test_it_keeps_the_rest_of_the_file(self):
+        routine.save({**routine.load(), "pinned": True, "steps": [{"type": "url", "url": "http://127.0.0.1:1"}]})
+        routine.choose_claude_in("/w/app", "desktop")
+        self.assertTrue(routine.load()["pinned"])
+        self.assertEqual(len(routine.load()["steps"]), 1)
+
+    def test_no_claude_desktop_to_choose(self):
+        routine.launcher.handles.return_value = False
+        self.assertFalse(routine.choose_claude_in("/w/app", "desktop"))
+        self.assertFalse((self.home / "routine.json").exists())
+        self.assertTrue(routine.choose_claude_in("/w/app", "terminal"))
+
+    def test_a_file_edited_by_hand_into_something_else(self):
+        routine.save({**routine.load(), "claude_in": "desktop"})
+        self.assertFalse(routine.with_claude_in({"steps": [self.claude()]})["steps"][0]["desktop"])
+        self.assertTrue(routine.choose_claude_in("/w/app", "desktop"))
+
+    def test_a_plan_is_marked_with_it(self):
+        routine.choose_claude_in("/w/app", "desktop")
+        steps = routine.with_claude_in({"steps": [self.claude(), {"type": "terminal", "cwd": "/w/other"}, {"type": "mode", "mode": "x"}]})["steps"]
+        self.assertEqual([step.get("desktop") for step in steps], [True, False, None])
+        self.assertEqual(routine.label(steps[0]), "Claude Desktop")
+        self.assertEqual(routine.label(steps[1]), "terminal")
+
+    def test_the_link_for_a_conversation(self):
+        self.assertEqual(routine.desktop_link(self.claude()), f"claude://resume?session={self.SESSION}")
+
+    def test_the_link_for_a_folder(self):
+        self.assertEqual(routine.desktop_link({"type": "terminal", "cwd": "/w/my app&x"}), "claude://code/new?folder=%2Fw%2Fmy+app%26x")
+
+    def test_a_session_that_isnt_one_gets_its_folder(self):
+        step = {"type": "claude", "cwd": "/w/app", "command": ["claude", "--resume", "x&folder=/etc"]}
+        self.assertEqual(routine.desktop_link(step), "claude://code/new?folder=%2Fw%2Fapp")
+
+    def test_it_opens_in_claude_desktop(self):
+        state, opened, popen = self.run_step(self.claude(desktop=True))
+        self.assertEqual(state, "done")
+        opened.assert_called_once_with(f"claude://resume?session={self.SESSION}")
+        popen.assert_not_called()
+
+    def test_a_project_claude_never_saw(self):
+        state, opened, popen = self.run_step({"type": "terminal", "cwd": "/w/app", "desktop": True})
+        self.assertEqual(state, "done")
+        opened.assert_called_once_with("claude://code/new?folder=%2Fw%2Fapp")
+        popen.assert_not_called()
+
+    def test_without_a_choice_it_stays_in_a_terminal(self):
+        state, opened, popen = self.run_step(self.claude())
+        self.assertEqual(state, "done")
+        opened.assert_not_called()
+        popen.assert_called_once()
+
+    def test_when_it_wont_open_a_terminal_does_it(self):
+        for step in (self.claude(desktop=True), {"type": "terminal", "cwd": "/w/app", "desktop": True}):
+            state, _opened, popen = self.run_step(step, opening=OSError("no"))
+            self.assertEqual(state, "done")
+            popen.assert_called_once()
+            self.assertTrue(step["no_desktop"])
+            self.assertFalse(step["desktop"])
+
+    def test_open_in_a_terminal_it_stays_there(self):
+        self.live("cli")
+        state, opened, popen = self.run_step(self.claude(desktop=True))
+        self.assertEqual(state, "skipped")
+        opened.assert_not_called()
+        popen.assert_not_called()
+
+    def test_open_in_claude_desktop_it_shows_it(self):
+        self.live("claude-desktop")
+        state, opened, _popen = self.run_step(self.claude(desktop=True))
+        self.assertEqual(state, "done")
+        opened.assert_called_once()
+
+    def test_open_in_claude_desktop_a_terminal_wouldnt_fork_it(self):
+        self.live("claude-desktop")
+        state, _opened, popen = self.run_step(self.claude(desktop=True), opening=OSError("no"))
+        self.assertEqual(state, "skipped")
+        popen.assert_not_called()
+        state, _opened, popen = self.run_step(self.claude())
+        self.assertEqual(state, "skipped")
+        popen.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

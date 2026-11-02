@@ -10,8 +10,8 @@
   - the dock mode you spent the most time in.
 `run()` performs them: database first, servers as user services (so they keep running
 and their logs are in the journal), the page once its server answers, Claude resumed in a
-new terminal window. Steps that are already done (a server that already answers, a
-running database) are skipped.
+new terminal window, or in Claude Desktop for a project you said that about. Steps that are
+already done (a server that already answers, a running database) are skipped.
 
 The plan is saved to ~/.config/deskai/routine.json. Edit it and set "pinned": true to
 keep your own version instead of relearning each morning.
@@ -31,6 +31,7 @@ import tempfile
 import time
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlencode
 
 import brain
 import launcher
@@ -53,7 +54,9 @@ SETTINGS = {
     "from": "07:00",
     "until": "17:00",
     "pinned": False,
+    "claude_in": {},  # the folders of the projects whose Claude Code opens in Claude Desktop
 }
+SESSION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")  # all that Claude Desktop's link takes
 WORK_HOURS = (6, 19)  # activity that counts as "work" when learning
 LOOKBACK_DAYS = 10
 PROJECT_LOOKBACK_DAYS = 60     # asked for a project by name: its last day could be a while back
@@ -289,11 +292,14 @@ def usual_mode(day):
     return max(focus, key=focus.get) if focus else None
 
 
-def claude_running(session_id):
-    """Whether that conversation is already open somewhere (resuming it twice would fork it)."""
+def claude_running(session_id, outside_desktop=False):
+    """Whether that conversation is already open somewhere (resuming it twice would fork it). Asking Claude Desktop for one
+    it has open only shows it, so `outside_desktop` leaves those out."""
     for info in (Path.home() / ".claude" / "sessions").glob("*.json"):
         try:
-            if json.loads(info.read_text()).get("sessionId") == session_id and Path(f"/proc/{info.stem}").exists():
+            live = json.loads(info.read_text())
+            if live.get("sessionId") == session_id and Path(f"/proc/{info.stem}").exists() \
+                    and not (outside_desktop and live.get("entrypoint") == "claude-desktop"):
                 return True
         except (OSError, ValueError):
             continue
@@ -350,6 +356,53 @@ def save(plan):
     brain.write_json_atomic(ROUTINE_FILE, plan)
 
 
+def _chosen(plan):
+    chosen = plan.get("claude_in")
+    return chosen if isinstance(chosen, dict) else {}
+
+
+def choose_claude_in(project, where):
+    """Remembers where this project's Claude Code opens, "desktop" or "terminal". False if there's no Claude Desktop here to
+    choose. Raises OSError if it can't be saved."""
+    if where == "desktop" and not launcher.handles("claude"):
+        return False
+    plan = load()
+    chosen = {folder: there for folder, there in _chosen(plan).items() if folder != project}
+    if where == "desktop":
+        chosen[project] = where
+    save({**plan, "claude_in": chosen})
+    return True
+
+
+def with_claude_in(plan):
+    """The plan, with each of its Claude steps marked with where you said it opens."""
+    chosen = _chosen(load())
+    for step in plan.get("steps", []):
+        if step["type"] in ("claude", "terminal"):
+            step["desktop"] = chosen.get(step["cwd"]) == "desktop"
+    return plan
+
+
+def desktop_link(step):
+    """The link that opens a step in Claude Desktop: the conversation it resumes, or a new one in its folder."""
+    command = step.get("command", [])
+    resumes = command[command.index("--resume") + 1] if "--resume" in command else ""
+    if SESSION_ID.fullmatch(resumes):
+        return f"claude://resume?session={resumes}"
+    return "claude://code/new?" + urlencode({"folder": step["cwd"]})
+
+
+def _open_in_desktop(step):
+    """False, and noted on the step, if Claude Desktop wouldn't open it. A terminal does the job too."""
+    try:
+        launcher.open_uri(desktop_link(step))
+        return True
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("routine: Claude Desktop wouldn't open: %s", e)
+        step.update(desktop=False, no_desktop=True)
+        return False
+
+
 def learn(today=None, project=None):
     """A fresh plan from your last workday, or from your last day in `project`, keeping your settings.
     None when there's nothing to go on."""
@@ -396,7 +449,7 @@ def learn(today=None, project=None):
 
     plan.update({"learned_from": day.isoformat(), "project": project,
                  "path": tool_path(claude), "steps": steps})
-    return plan
+    return with_claude_in(plan)
 
 
 def _compose_step(project, servers):
@@ -421,7 +474,7 @@ def _plan_from_files(plan, project, today):
         steps.append({"type": "url", "url": f"http://127.0.0.1:{port}"})
     steps.append({"type": "terminal", "cwd": project})
     plan.update({"learned_from": today.isoformat(), "project": project, "path": tool_path(find_claude()), "steps": steps})
-    return plan
+    return with_claude_in(plan)
 
 
 def plan_for_today():
@@ -432,7 +485,7 @@ def plan_for_today():
         if learned:
             plan = learned
             save(plan)
-    return plan if plan.get("steps") else None
+    return with_claude_in(plan) if plan.get("steps") else None
 
 
 # ---- when to offer ----------------------------------------------------------------
@@ -607,7 +660,7 @@ def label(step):
     if kind == "compose":
         return "docker compose"
     if kind in ("claude", "terminal"):
-        return kind
+        return "Claude Desktop" if step.get("desktop") else kind
     return step.get("mode", kind)
 
 
@@ -658,7 +711,13 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                     progress(step, "failed")
             elif kind == "claude":
                 resumes = step["command"][step["command"].index("--resume") + 1] if "--resume" in step["command"] else None
-                if resumes and claude_running(resumes):
+                if resumes and claude_running(resumes, outside_desktop=step.get("desktop")):
+                    progress(step, "skipped")
+                    continue
+                if step.get("desktop") and _open_in_desktop(step):
+                    progress(step, "done")
+                    continue
+                if resumes and claude_running(resumes):  # it was open in Claude Desktop, and that didn't work out
                     progress(step, "skipped")
                     continue
                 command = " ".join(shlex.quote(part) for part in step["command"])
@@ -666,6 +725,9 @@ def run(plan, progress, set_mode, cancelled=lambda: False):
                 subprocess.Popen(launcher.own_scope(terminal_args(step["cwd"], inner)), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
             elif kind == "terminal":
+                if step.get("desktop") and _open_in_desktop(step):
+                    progress(step, "done")
+                    continue
                 subprocess.Popen(launcher.own_scope(terminal_args(step["cwd"], "exec bash")), env=env, cwd=step["cwd"], start_new_session=True)
                 progress(step, "done")
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as e:

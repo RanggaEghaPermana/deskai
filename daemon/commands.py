@@ -133,6 +133,24 @@ SETUP_PROJECT = re.compile(r"^(?:(?:siapin|siapkan|setup|set up|start|prepare|mu
                            r"(?:server(?:nya)?\s+)?(?:project\s+|proyek\s+)?(.+)"
                            r"|(?:mau\s+)?(?:kerja|kerjain|ngerjain|garap|ngoding|work on)\s+(?:(?:di)\s+)?(?:project\s+|proyek\s+)?(.+?)"
                            r"(?:[,\s]+(?:siapin|setup|set up))?)$", re.I)
+# Where a project's Claude Code opens, at the end of asking for it: "setup toko pakai claude desktop", "setup toko yang terminal
+# ganti dengan claude desktop", "setup toko di terminal".
+_DESKTOP = (r"(?:(?:cl(?:aude|oude|ude|uade|aud)|calude)\s+(?:code\s+)?(?:desktop|dekstop|deskop|destop|app)"
+            r"|(?:app|aplikasi)\s+(?:cl(?:aude|oude|ude|uade|aud)|calude))")
+_A_TERMINAL = r"(?:(?:the|a|di|in)\s+)*terminal(?:nya)?"
+_CLAUDE_THERE = rf"(?:{_DESKTOP}|terminal)(?:nya)?"
+ENDS_WITH_CLAUDE = re.compile(rf"^(.*?)\b({_CLAUDE_THERE})(?:\s+(?:bukan|not|instead\s+of)\s+{_A_TERMINAL})?"
+                              r"(?:\s+(?:aja|saja|only|instead))*$", re.I)
+_TO = r"(?:\s+(?:dengan|jadi|menjadi|sama|ke|pakai|pake|with|to|for|by))?"
+_SWAP = r"(?:di)?(?:ganti|gantiin|ubah|tuker|tukar)|replace[ds]?|change[ds]?|swap(?:ped|s)?"
+_ON = r"(?:di|ke|pakai|pake|pakek|dengan|sama|lewat|via|in|on|with|using|through)\s+(?:(?:the|a|yang)\s+)?"
+_OPENS = r"(?:yang\s+)?(?:kebuka|terbuka|dibuka|buka(?:nya|in)?|open(?:ed|s)?)(?:\s+itu)?"
+CLAUDE_THERE_LEAD_IN = re.compile(
+    rf"(?:^|[,\s]+)(?:(?:(?:yang|the)\s+)?{_CLAUDE_THERE}\s+(?:{_SWAP}){_TO}"       # yang terminal ganti dengan
+    rf"|(?:{_SWAP})\s+(?:(?:yang|the)\s+)?{_CLAUDE_THERE}{_TO}"                       # ganti terminal jadi
+    rf"|(?:{_OPENS}\s+)?(?:bukan|not)\s+{_A_TERMINAL}\s+(?:tapi|melainkan|but)"       # bukan terminal tapi
+    r"|(?:balik(?:in)?|kembali(?:in)?|(?:go\s+)?back)\s+(?:ke|to)\s+(?:(?:the|a)\s+)?"    # balik ke
+    rf"|{_OPENS}(?:\s+{_ON})?|{_ON})\s*$", re.I)                                       # buka di, pakai
 OPEN_FOLDER = re.compile(r"^(?:buka|open)\s+folder\s+(?:project\s+|proyek\s+)?(.+)$", re.I)
 OPEN_THING = re.compile(r"^(?:buka|bukain|open|launch)\s+(?:the\s+)?(.+)$", re.I)
 RESTORE = re.compile(r"^(?:balikin|pulihin|kembaliin|restore|bring back)(?:\s+(?:sesi|session|desk|meja|semua|jendela|windows)\b.*)?$", re.I)
@@ -516,9 +534,9 @@ def _quick_action(words, modes, watch, known_projects):
         return {"type": "restore_desk"}
     setting_up = SETUP_PROJECT.match(words)
     if setting_up and known_projects:
-        name = setting_up.group(1) or setting_up.group(2)
+        name, claude_in = _where_claude_opens(setting_up.group(1) or setting_up.group(2), known_projects)
         if _meant_as_project(name, known_projects):
-            return {"type": "setup_project", "project": name}
+            return {"type": "setup_project", "project": name, **({"claude_in": claude_in} if claude_in else {})}
     wanted = WANTS_TO.match(words)
     mode = _mode_named(wanted.group(1), modes) if wanted and not AND_THEN.search(words) else None
     if mode:
@@ -872,6 +890,19 @@ def _reads_as(word, project):
 def _a_slip(word, part):
     """Close to a name, and not just letters it shares: "gudnag" and "shopflor", not "mainan" for main or "ring" for string."""
     return difflib.SequenceMatcher(None, word, part).ratio() >= 0.8 and (abs(len(word) - len(part)) <= 1 or not (word in part or part in word))
+
+
+def _where_claude_opens(name, known):
+    """"toko pakai claude desktop": the project, and where you want its Claude Code from now on. Only that when the words
+    lead up to it, or are about Claude Desktop by name: "setup my terminal" is a project called my terminal."""
+    said = None if any(_simple(project) == _simple(name) for project in known) else ENDS_WITH_CLAUDE.match(name)
+    if not said:
+        return name, None
+    project = CLAUDE_THERE_LEAD_IN.sub("", said.group(1)).strip(" ,")
+    where = "terminal" if said.group(2).lower().startswith("terminal") else "desktop"
+    if not project or (where == "terminal" and project == said.group(1).strip(" ,")):
+        return name, None
+    return project, where
 
 
 def _meant_as_project(name, known):
