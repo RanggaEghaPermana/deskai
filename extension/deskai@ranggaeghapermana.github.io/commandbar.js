@@ -10,6 +10,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {VERTICAL_BOX} from './compat.js';
+import {SPRINGS, animationsOn, springEase} from './spring.js';
 
 const WIDTH = 640;
 const GAP = 14;
@@ -18,21 +19,25 @@ const HISTORY = 30;
 const SHOWN = 5;
 
 export class CommandBar {
-    // history: what was asked before, newest first; onSubmit(text); onHistory(history); onClose()
-    constructor({gicon, history = [], onSubmit, onHistory, onClose}) {
+    // history: what was asked before, newest first; onSubmit(text); onHistory(history); onClose();
+    // decorate(bar, list): dresses the two for the current theme each time they're made.
+    constructor({gicon, history = [], onSubmit, onHistory, onClose, decorate}) {
         this._gicon = gicon;
         this._history = history;
         this._onSubmit = onSubmit;
         this._onHistory = onHistory;
         this._onClose = onClose;
+        this._decorate = decorate;
+        this._closing = new Set(); // bars still folding away
     }
 
     get isOpen() {
         return Boolean(this._backdrop);
     }
 
-    // place: {hint, monitor, bottomY, buttons: [{label, command}]}: a click on one submits its command
-    open({hint, monitor, bottomY, buttons = []}) {
+    // place: {hint, monitor, bottomY, buttons: [{label, command}], from}: a click on a button submits its
+    // command; from: the actor the bar grows out of and folds back into (the dock's button, on glass)
+    open({hint, monitor, bottomY, buttons = [], from = null}) {
         if (this.isOpen)
             return;
         this._backdrop = new St.Widget({
@@ -60,15 +65,20 @@ export class CommandBar {
                 y_align: Clutter.ActorAlign.CENTER,
             });
             button.connect('clicked', () => {
+                if (!this.isOpen) // folding away: it's already been answered
+                    return;
                 this.close();
                 this._onSubmit(command);
             });
             this._bar.add_child(button);
         }
-        this._backdrop.add_child(this._bar);
+        // The list goes in first, under the bar: their glass overlaps, and the list's shadow mustn't
+        // darken the bar.
         this._list = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-command-list', reactive: true});
         this._backdrop.add_child(this._list);
+        this._backdrop.add_child(this._bar);
         Main.uiGroup.add_child(this._backdrop);
+        this._decorate?.(this._bar, this._list);
 
         const width = Math.min(WIDTH, monitor.width - 32);
         this._bar.width = width;
@@ -91,11 +101,33 @@ export class CommandBar {
         this._selected = -1;
         this._showList();
 
+        this._from = from?.get_stage() && animationsOn() ? from : null;
+        if (this._from) {
+            this._grow(monitor, width, height);
+            return;
+        }
         for (const actor of [this._bar, this._list]) {
             actor.opacity = 0;
             actor.translation_y = 8;
             actor.ease({opacity: 255, translation_y: 0, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
+    }
+
+    // The bar starts as the button it was opened from and stretches into place on a spring.
+    _grow(monitor, width, height) {
+        const [fx, fy] = this._from.get_transformed_position();
+        const [fw, fh] = this._from.get_transformed_size();
+        const x = monitor.x + this._bar.x;
+        const y = monitor.y + this._bar.y;
+        this._bar.set_pivot_point((fx + fw / 2 - x) / width, (fy + fh / 2 - y) / height);
+        this._folded = [fw / width, fh / height];
+        this._bar.set_scale(...this._folded);
+        this._bar.opacity = 0;
+        this._bar.ease({opacity: 255, duration: 100, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        springEase(this._bar, {scale_x: 1, scale_y: 1}, SPRINGS.bouncy);
+        this._list.opacity = 0;
+        this._list.translation_y = 8;
+        this._list.ease({opacity: 255, translation_y: 0, delay: 120, duration: 180, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
     }
 
     close() {
@@ -104,7 +136,28 @@ export class CommandBar {
         if (this._grab)
             Main.popModal(this._grab);
         this._grab = null;
-        this._backdrop.destroy();
+        const backdrop = this._backdrop;
+        if (this._from && animationsOn() && this._folded) {
+            // Folds back into its button, then goes.
+            backdrop.reactive = false;
+            this._closing.add(backdrop);
+            springEase(this._bar, {scale_x: this._folded[0], scale_y: this._folded[1]}, SPRINGS.smooth);
+            this._list.ease({opacity: 0, duration: 120, mode: Clutter.AnimationMode.EASE_IN_QUAD});
+            this._bar.ease({
+                opacity: 0,
+                duration: 180,
+                delay: 120,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => {
+                    this._closing.delete(backdrop);
+                    backdrop.destroy();
+                },
+            });
+        } else {
+            backdrop.destroy();
+        }
+        this._from = null;
+        this._folded = null;
         this._backdrop = null;
         this._bar = null;
         this._list = null;
@@ -113,7 +166,10 @@ export class CommandBar {
     }
 
     destroy() {
+        this._from = null; // going away with the extension: no folding back
         this.close();
+        this._closing.forEach(backdrop => backdrop.destroy());
+        this._closing.clear();
     }
 
     _onKey(key) {
@@ -174,6 +230,8 @@ export class CommandBar {
         });
         row.set_child(new St.Label({text, x_align: Clutter.ActorAlign.START, x_expand: true}));
         row.connect('clicked', () => {
+            if (!this.isOpen) // folding away
+                return;
             this._selected = this._matches().indexOf(text);
             this._setText(text);
             this._showList();

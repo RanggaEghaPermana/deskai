@@ -19,6 +19,7 @@ EXTENSION = ROOT / "extension" / "deskai@ranggaeghapermana.github.io"
 DEFAULTS = json.loads((EXTENSION / "modes.default.json").read_text())
 # Everything the rules look at, so each of them gets tried.
 FULL = {**DEFAULTS, "breaks": {"enabled": True, "after_minutes": 90}, "room_warnings": {"enabled": True},
+        "appearance": {"theme": "glass", "scheme": "auto", "glass": "clear", "blur_windows": True, "rim": True, "reduce_transparency": False},
         "llm": {**DEFAULTS["llm"], "ollama_url": "http://127.0.0.1:11434"},
         "dock": {**DEFAULTS["dock"], "icon_size": 38, "autohide": "windows"},
         "modes": {**DEFAULTS["modes"], "custom": {"label": "Custom", "description": "Mine", "icon": "x-symbolic", "color": "#abc", "focus": True,
@@ -84,6 +85,25 @@ class Mistakes(unittest.TestCase):
                              ({"exit": None}, "modes.custom.exit must be an object"), ({"icon": 5}, "modes.custom.icon")):
             config = {**FULL, "modes": {**FULL["modes"], "custom": {**FULL["modes"]["custom"], **change}}}
             self.assertIn(said, "; ".join(brain.validate_config(config)), change)
+
+    def test_appearance(self):
+        for fine in ({}, {"theme": "classic"}, {"theme": "glass", "scheme": "dark", "glass": "tinted"},
+                     {"blur_windows": False, "rim": False, "reduce_transparency": True}):
+            self.assertEqual(brain.validate_config({**FULL, "appearance": fine}), [], fine)
+        self.assertEqual(brain.validate_config({k: v for k, v in FULL.items() if k != "appearance"}), [])
+        for change, said in (({"appearance": []}, "appearance must be an object"), ({"appearance": {"theme": "neon"}}, "appearance.theme"),
+                             ({"appearance": {"scheme": "sepia"}}, "appearance.scheme"), ({"appearance": {"glass": 1}}, "appearance.glass"),
+                             ({"appearance": {"theme": None}}, "appearance.theme"), ({"appearance": {"rim": "yes"}}, "appearance.rim"),
+                             ({"appearance": {"blur_windows": 1}}, "appearance.blur_windows"),
+                             ({"appearance": {"reduce_transparency": None}}, "appearance.reduce_transparency")):
+            self.assertIn(said, "; ".join(brain.validate_config({**FULL, **change})), change)
+
+    def test_appearance_defaults(self):
+        config = brain.Config.__new__(brain.Config)
+        config.data = {"appearance": {"theme": "classic"}}
+        self.assertEqual(config.appearance, {**brain.APPEARANCE_DEFAULTS, "theme": "classic"})
+        config.data = {}
+        self.assertEqual(config.appearance["theme"], "glass")
 
     @unittest.skipUnless(shutil.which("gjs"), "needs gjs")
     def test_the_dock_goes_by_the_same_rules(self):

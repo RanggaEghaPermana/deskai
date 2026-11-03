@@ -232,6 +232,11 @@ Modes live in `~/.config/deskai/modes.json`, and the dock picks up changes right
 it, a card says where and DeskAI keeps going by the last version that worked. Should anything have to save over a
 file it can't read, the old one is kept next to it as `modes.json.broken-…`.
 
+How the dock looks is in the `appearance` key, or in **Appearance…** in DeskAI's menu in the top bar or a mode's menu (typing
+"theme" in the command bar opens it too): `theme` (`glass` or `classic`),
+`scheme` (`auto` follows GNOME, `light` or `dark`), `glass` (`clear` or `tinted`), and `blur_windows`, `rim` and
+`reduce_transparency` (true or false). Leave out what you don't care about.
+
 ## Remove
 
 Uninstall the package in App Center, or run `sudo apt remove deskai`: that removes DeskAI for everyone logged in, and your

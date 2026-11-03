@@ -49,6 +49,8 @@ SYSTEM_APPS = {
 MODE_DEFAULTS = {"nudge_after": 45, "renudge_after": 300, "on_distraction": "nudge"}
 BREAK_DEFAULTS = {"enabled": True, "after_minutes": 120}
 ROOM_WARNING_DEFAULTS = {"enabled": True}
+APPEARANCE_DEFAULTS = {"theme": "glass", "scheme": "auto", "glass": "clear", "blur_windows": True, "rim": True,
+                       "reduce_transparency": False}
 LLM_DEFAULTS = {
     "backend": "auto",
     "model": "claude-opus-5-5",
@@ -124,6 +126,13 @@ def validate_config(cfg):
         errors.append("breaks.after_minutes must be a number of minutes > 0")
     if not isinstance(_section(cfg, "room_warnings", errors).get("enabled", True), bool):
         errors.append("room_warnings.enabled must be true or false")
+    appearance = _section(cfg, "appearance", errors)
+    for field, allowed in (("theme", ("glass", "classic")), ("scheme", ("auto", "light", "dark")), ("glass", ("clear", "tinted"))):
+        if appearance.get(field, allowed[0]) not in allowed:
+            errors.append(f"appearance.{field} must be {', '.join(allowed[:-1])} or {allowed[-1]}")
+    for field in ("blur_windows", "rim", "reduce_transparency"):
+        if not isinstance(appearance.get(field, True), bool):
+            errors.append(f"appearance.{field} must be true or false")
     llm = _section(cfg, "llm", errors)
     for field in ("backend", "model", "effort", "ollama_model", "ollama_url"):
         if not isinstance(llm.get(field, ""), str):
@@ -237,6 +246,10 @@ class Config:
     @property
     def room_warnings(self):
         return {**ROOM_WARNING_DEFAULTS, **self.data.get("room_warnings", {})}
+
+    @property
+    def appearance(self):
+        return {**APPEARANCE_DEFAULTS, **self.data.get("appearance", {})}
 
     def mode(self, key):
         mode = self.data["modes"].get(key)

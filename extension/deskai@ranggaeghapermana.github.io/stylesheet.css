@@ -639,3 +639,410 @@
   color: #e5484d;
   padding-top: 4px;
 }
+
+/* ---- appearance dialog ---- */
+
+.deskai-appearance-content {
+  spacing: 4px;
+  min-width: 420px;
+}
+
+.deskai-appearance-section {
+  spacing: 4px;
+}
+
+.deskai-appearance-options {
+  spacing: 4px;
+}
+
+.deskai-appearance-tiles {
+  spacing: 10px;
+}
+
+.deskai-appearance-tile {
+  padding: 8px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+}
+
+.deskai-appearance-tile:hover,
+.deskai-appearance-tile:focus {
+  background-color: rgba(127, 127, 127, 0.15);
+}
+
+.deskai-appearance-tile.selected {
+  border: 2px solid #3b82f6;
+  background-color: rgba(59, 130, 246, 0.14);
+}
+
+.deskai-appearance-tile-label {
+  padding-top: 6px;
+  font-size: 0.9em;
+}
+
+.deskai-appearance-thumb {
+  height: 54px;
+  min-width: 70px;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+}
+
+/* The bar sits low in its square, as a dock would. */
+.deskai-appearance-thumb-bar {
+  height: 12px;
+  width: 44px;
+  border-radius: 6px;
+  margin: 34px 12px 0 12px;
+  background-color: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.deskai-appearance-thumb-glass {
+  background-gradient-direction: horizontal;
+  background-gradient-start: #f59e0b;
+  background-gradient-end: #8b5cf6;
+}
+
+.deskai-appearance-thumb-classic {
+  background-color: #2b2d31;
+}
+
+.deskai-appearance-thumb-classic .deskai-appearance-thumb-bar {
+  background-color: #1a1b1e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.deskai-appearance-thumb-auto {
+  background-gradient-direction: horizontal;
+  background-gradient-start: #e8e8ec;
+  background-gradient-end: #26272b;
+}
+
+.deskai-appearance-thumb-light {
+  background-color: #e8e8ec;
+}
+
+.deskai-appearance-thumb-dark {
+  background-color: #26272b;
+}
+
+.deskai-appearance-thumb-auto .deskai-appearance-thumb-bar,
+.deskai-appearance-thumb-light .deskai-appearance-thumb-bar,
+.deskai-appearance-thumb-dark .deskai-appearance-thumb-bar {
+  background-color: rgba(127, 127, 127, 0.5);
+  border: 1px solid rgba(127, 127, 127, 0.6);
+}
+
+.deskai-appearance-thumb-clear {
+  background-gradient-direction: horizontal;
+  background-gradient-start: #38bdf8;
+  background-gradient-end: #a78bfa;
+}
+
+.deskai-appearance-thumb-tinted {
+  background-gradient-direction: horizontal;
+  background-gradient-start: #38bdf8;
+  background-gradient-end: #a78bfa;
+}
+
+.deskai-appearance-thumb-clear .deskai-appearance-thumb-bar {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+.deskai-appearance-thumb-tinted .deskai-appearance-thumb-bar {
+  background-color: rgba(30, 41, 100, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.deskai-appearance-switches {
+  padding-top: 8px;
+  spacing: 2px;
+}
+
+.deskai-appearance-switch-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.deskai-appearance-switch-row:hover,
+.deskai-appearance-switch-row:focus {
+  background-color: rgba(127, 127, 127, 0.15);
+}
+
+/* ---- Liquid Glass ---------------------------------------------------------
+   theme.js puts deskai-lg and deskai-lg-light or deskai-lg-dark (and maybe deskai-lg-tinted or
+   deskai-lg-solid) on each surface. glass.js draws the glass itself behind it, so a surface's own
+   background stays clear here. Ink, fills and lines follow the design's tokens. */
+
+.deskai.deskai-lg,
+.deskai-card.deskai-lg,
+.deskai-tooltip.deskai-lg,
+.deskai-previews.deskai-lg,
+.deskai-command.deskai-lg,
+.deskai-command-list.deskai-lg {
+  background-color: transparent;
+  border-width: 0;
+  box-shadow: none;
+}
+
+.deskai-lg-light { color: #1c1c1e; }
+.deskai-lg-dark { color: #f5f5f7; }
+
+/* dock */
+
+.deskai.deskai-lg {
+  border-radius: 30px;
+  padding: 4px 10px;
+  spacing: 4px;
+}
+
+.deskai-lg .deskai-sep { margin: 12px 3px; }
+.deskai-lg-light .deskai-sep { background-color: rgba(60, 60, 67, 0.16); }
+.deskai-lg-dark .deskai-sep { background-color: rgba(235, 235, 245, 0.16); }
+
+.deskai-lg .deskai-modes { spacing: 4px; }
+
+.deskai-lg .deskai-mode {
+  min-width: 46px;
+  min-height: 46px;
+  border-radius: 23px;
+  background-color: transparent;
+}
+
+.deskai-lg-light .deskai-mode,
+.deskai-lg-light .deskai-mode.active,
+.deskai-lg-light .deskai-mode.pending { color: #1c1c1e; }
+.deskai-lg-dark .deskai-mode,
+.deskai-lg-dark .deskai-mode.active,
+.deskai-lg-dark .deskai-mode.pending { color: #f5f5f7; }
+.deskai-lg-light .deskai-mode:hover { background-color: rgba(255, 255, 255, 0.4); color: #1c1c1e; }
+.deskai-lg-dark .deskai-mode:hover { background-color: rgba(255, 255, 255, 0.12); color: #f5f5f7; }
+
+.deskai-lg .deskai-mode-box { padding: 0 13px; }
+.deskai-lg .deskai-mode-icon { icon-size: 18px; }
+.deskai-lg .deskai-mode-labels { padding: 0 3px 0 8px; spacing: 7px; }
+.deskai-lg .deskai-mode-label { font-size: 14px; font-weight: 600; }
+.deskai-lg-light .deskai-mode-time { color: #48484d; }
+.deskai-lg-dark .deskai-mode-time { color: #c7c7cc; }
+.deskai-lg .deskai-mode-progress { border-radius: 23px; }
+.deskai-lg-light .deskai-badge { background-color: rgba(60, 60, 67, 0.12); }
+.deskai-lg-dark .deskai-badge { background-color: rgba(255, 255, 255, 0.16); }
+
+.deskai-lg .deskai-stay {
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 23px;
+  font-weight: 600;
+}
+.deskai-lg-light .deskai-stay { background-color: #1c1c1e; color: #ffffff; }
+.deskai-lg-light .deskai-stay:hover { background-color: #3a3a3c; }
+.deskai-lg-dark .deskai-stay { background-color: #f5f5f7; color: #1c1c1e; }
+.deskai-lg-dark .deskai-stay:hover { background-color: #ffffff; }
+
+.deskai-lg .deskai-apps { spacing: 4px; }
+.deskai-lg .deskai-app { border-radius: 14px; padding: 4px 4px 2px 4px; }
+.deskai-lg-light .deskai-app:hover { background-color: rgba(255, 255, 255, 0.35); }
+.deskai-lg-dark .deskai-app:hover { background-color: rgba(255, 255, 255, 0.1); }
+.deskai-lg .deskai-dot { margin-top: 4px; }
+.deskai-lg-light .deskai-dot { background-color: #48484d; }
+.deskai-lg-dark .deskai-dot { background-color: #c7c7cc; }
+.deskai-lg-light .deskai-app-badge,
+.deskai-lg-light .deskai-server-dot { border-color: rgba(246, 246, 249, 0.95); }
+.deskai-lg-dark .deskai-app-badge,
+.deskai-lg-dark .deskai-server-dot { border-color: rgba(40, 40, 46, 0.95); }
+
+/* round buttons: "+", servers, the command bar */
+.deskai-lg .deskai-add {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 17px;
+  margin: 0 4px;
+}
+.deskai-lg .deskai-command-button,
+.deskai-lg .deskai-server-button {
+  min-width: 46px;
+  min-height: 46px;
+  border-radius: 23px;
+  margin: 0;
+}
+.deskai-lg .deskai-add-icon { icon-size: 18px; }
+.deskai-lg-light .deskai-add { background-color: rgba(255, 255, 255, 0.3); color: #1c1c1e; }
+.deskai-lg-light .deskai-add:hover { background-color: rgba(255, 255, 255, 0.5); }
+.deskai-lg-dark .deskai-add { background-color: rgba(255, 255, 255, 0.1); color: #f5f5f7; }
+.deskai-lg-dark .deskai-add:hover { background-color: rgba(255, 255, 255, 0.17); }
+
+/* pills: where you left off, music, the inbox */
+.deskai-lg .deskai-next,
+.deskai-lg .deskai-music,
+.deskai-lg .deskai-inbox {
+  min-height: 46px;
+  border-radius: 23px;
+}
+.deskai-lg .deskai-next { padding: 0 16px 0 12px; }
+.deskai-lg .deskai-music { padding: 0 6px; spacing: 2px; }
+.deskai-lg .deskai-inbox { padding: 0 14px 0 6px; }
+.deskai-lg-light .deskai-next,
+.deskai-lg-light .deskai-music,
+.deskai-lg-light .deskai-inbox { background-color: rgba(255, 255, 255, 0.3); color: #1c1c1e; }
+.deskai-lg-light .deskai-next:hover,
+.deskai-lg-light .deskai-inbox:hover { background-color: rgba(255, 255, 255, 0.5); }
+.deskai-lg-dark .deskai-next,
+.deskai-lg-dark .deskai-music,
+.deskai-lg-dark .deskai-inbox { background-color: rgba(255, 255, 255, 0.1); color: #f5f5f7; }
+.deskai-lg-dark .deskai-next:hover,
+.deskai-lg-dark .deskai-inbox:hover { background-color: rgba(255, 255, 255, 0.17); }
+.deskai-lg .deskai-inbox.attention { background-color: rgba(245, 158, 11, 0.85); color: #1c1c1e; }
+.deskai-lg .deskai-inbox.done { background-color: rgba(16, 185, 129, 0.85); color: #ffffff; }
+.deskai-lg .deskai-next-icon { icon-size: 18px; }
+.deskai-lg .deskai-next-box { spacing: 8px; }
+.deskai-lg .deskai-next-label { font-size: 13px; font-weight: 600; }
+.deskai-lg .deskai-inbox-face { width: 34px; height: 34px; border-radius: 17px; }
+.deskai-lg .deskai-inbox-count { font-size: 14px; }
+.deskai-lg .deskai-music-title { font-size: 13px; font-weight: 600; }
+.deskai-lg .deskai-music-artist { font-size: 12px; }
+.deskai-lg-light .deskai-music-artist { color: #48484d; }
+.deskai-lg-dark .deskai-music-artist { color: #c7c7cc; }
+.deskai-lg-light .deskai-music-track:hover .deskai-music-artist { color: #1c1c1e; }
+.deskai-lg .deskai-music-control { min-width: 30px; min-height: 30px; border-radius: 15px; }
+.deskai-lg-light .deskai-music-control { color: #1c1c1e; }
+.deskai-lg-light .deskai-music-control:hover { background-color: rgba(255, 255, 255, 0.55); color: #1c1c1e; }
+.deskai-lg-light .deskai-music-control.off,
+.deskai-lg-light .deskai-music-control.off:hover { color: rgba(60, 60, 67, 0.3); background-color: transparent; }
+.deskai-lg-dark .deskai-music-control:hover { background-color: rgba(255, 255, 255, 0.18); }
+
+/* tooltip and window previews */
+.deskai-tooltip.deskai-lg {
+  border-radius: 15px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.deskai-previews.deskai-lg { border-radius: 18px; padding: 8px; spacing: 6px; }
+.deskai-lg .deskai-preview { border-radius: 12px; }
+.deskai-lg-light .deskai-preview:hover { background-color: rgba(255, 255, 255, 0.4); }
+.deskai-lg-dark .deskai-preview:hover { background-color: rgba(255, 255, 255, 0.12); }
+
+/* cards */
+.deskai-card.deskai-lg {
+  border-radius: 22px;
+  padding: 16px;
+  spacing: 12px;
+}
+.deskai-lg-light .deskai-card-icon { color: #1c1c1e; }
+.deskai-lg-dark .deskai-card-icon { color: #f5f5f7; }
+.deskai-lg .deskai-card-actions { spacing: 8px; padding-top: 8px; }
+.deskai-lg .deskai-card-button {
+  border-width: 0;
+  border-radius: 16px;
+  padding: 7px 16px;
+  font-weight: 600;
+}
+.deskai-lg-light .deskai-card-button { background-color: rgba(255, 255, 255, 0.55); color: #1c1c1e; }
+.deskai-lg-light .deskai-card-button:hover { background-color: rgba(255, 255, 255, 0.75); }
+.deskai-lg-dark .deskai-card-button { background-color: rgba(255, 255, 255, 0.18); color: #f5f5f7; }
+.deskai-lg-dark .deskai-card-button:hover { background-color: rgba(255, 255, 255, 0.26); }
+.deskai-lg .deskai-card-button.primary { color: #ffffff; padding: 7px 16px; }
+.deskai-lg-light .deskai-card-chip { background-color: rgba(255, 255, 255, 0.45); }
+.deskai-lg-dark .deskai-card-chip { background-color: rgba(255, 255, 255, 0.12); }
+.deskai-lg-dark .deskai-card-chip-tag { color: #b9a7ff; }
+.deskai-lg-dark .deskai-card-chip-detail { color: #c7c7cc; }
+
+/* command bar */
+.deskai-command.deskai-lg {
+  border-radius: 26px;
+  padding: 12px 18px;
+  spacing: 10px;
+}
+.deskai-lg-light .deskai-command-icon { color: #7c5cff; }
+.deskai-lg .deskai-command-entry { selected-color: #ffffff; }
+.deskai-lg-light .deskai-command-entry { color: #1c1c1e; caret-color: #1c1c1e; selection-background-color: #0066cc; }
+.deskai-lg-dark .deskai-command-entry { color: #f5f5f7; caret-color: #f5f5f7; selection-background-color: #0a6cd6; }
+.deskai-lg-light .deskai-command-entry StLabel.hint-text { color: #48484d; }
+.deskai-lg-dark .deskai-command-entry StLabel.hint-text { color: #c7c7cc; }
+.deskai-lg-light .deskai-command-chip { background-color: rgba(255, 255, 255, 0.45); color: #1c1c1e; }
+.deskai-lg-light .deskai-command-chip:hover { background-color: rgba(255, 255, 255, 0.65); }
+.deskai-command-list.deskai-lg { border-radius: 22px; padding: 8px; }
+.deskai-lg .deskai-command-recent { border-radius: 12px; }
+.deskai-lg-light .deskai-command-recent { color: #1c1c1e; }
+.deskai-lg-light .deskai-command-recent:hover { background-color: rgba(255, 255, 255, 0.4); }
+.deskai-lg-dark .deskai-command-recent { color: #f5f5f7; }
+.deskai-lg-light .deskai-command-recent.selected { background-color: #0066cc; color: #ffffff; }
+.deskai-lg-dark .deskai-command-recent.selected { background-color: #0a6cd6; color: #ffffff; }
+
+/* menus: the glass is drawn behind the content, so the pointer box and content stay clear */
+.popup-menu-boxpointer.deskai-lg {
+  -boxpointer-gap: 8px;
+  -arrow-background-color: transparent;
+  -arrow-border-color: transparent;
+  -arrow-border-width: 0;
+}
+.deskai-lg .popup-menu-content {
+  background-color: transparent;
+  border-width: 0;
+  box-shadow: none;
+  border-radius: 16px;
+  padding: 6px;
+}
+.deskai-lg .popup-menu-item {
+  border-radius: 8px;
+  padding: 6px 10px;
+  spacing: 10px;
+}
+.deskai-lg-light .popup-menu-item { color: #1c1c1e; }
+.deskai-lg-dark .popup-menu-item { color: #f5f5f7; }
+.deskai-lg-light .popup-menu-item:hover,
+.deskai-lg-light .popup-menu-item:selected,
+.deskai-lg-light .popup-menu-item:focus { background-color: #0066cc !important; color: #ffffff; }
+.deskai-lg-dark .popup-menu-item:hover,
+.deskai-lg-dark .popup-menu-item:selected,
+.deskai-lg-dark .popup-menu-item:focus { background-color: #0a6cd6 !important; color: #ffffff; }
+.deskai-lg .popup-menu-item:insensitive { background-color: transparent !important; }
+.deskai-lg-light .popup-menu-item:insensitive { color: rgba(60, 60, 67, 0.55); }
+.deskai-lg-dark .popup-menu-item:insensitive { color: rgba(235, 235, 245, 0.45); }
+.deskai-lg .popup-separator-menu-item { padding: 5px 10px; }
+.deskai-lg-light .popup-separator-menu-item .popup-separator-menu-item-separator { background-color: rgba(60, 60, 67, 0.16); }
+.deskai-lg-dark .popup-separator-menu-item .popup-separator-menu-item-separator { background-color: rgba(235, 235, 245, 0.16); }
+.deskai-lg .popup-sub-menu { background-color: transparent; border-width: 0; }
+.deskai-lg-light .deskai-inbox-item-meta { color: #48484d; }
+.deskai-lg-dark .deskai-inbox-item-meta { color: #c7c7cc; }
+
+/* dialogs */
+.modal-dialog.deskai-lg {
+  background-color: transparent;
+  box-shadow: none;
+  border-width: 0;
+  border-radius: 28px;
+  padding: 26px;
+  spacing: 18px;
+}
+.modal-dialog.deskai-lg .modal-dialog-button-box { spacing: 8px; padding-top: 4px; }
+.modal-dialog.deskai-lg .modal-dialog-button-box .modal-dialog-button {
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-weight: 600;
+}
+.modal-dialog.deskai-lg-light .modal-dialog-button-box .modal-dialog-button { background-color: rgba(60, 60, 67, 0.1); color: #1c1c1e; }
+.modal-dialog.deskai-lg-light .modal-dialog-button-box .modal-dialog-button:hover { background-color: rgba(60, 60, 67, 0.16); }
+.modal-dialog.deskai-lg-dark .modal-dialog-button-box .modal-dialog-button { background-color: rgba(255, 255, 255, 0.14); color: #f5f5f7; }
+.modal-dialog.deskai-lg-dark .modal-dialog-button-box .modal-dialog-button:hover { background-color: rgba(255, 255, 255, 0.22); }
+.modal-dialog.deskai-lg-light .modal-dialog-button-box .modal-dialog-button:default { background-color: #0066cc; color: #ffffff; }
+.modal-dialog.deskai-lg-dark .modal-dialog-button-box .modal-dialog-button:default { background-color: #0a6cd6; color: #ffffff; }
+.modal-dialog.deskai-lg .modal-dialog-button-box .modal-dialog-button:focus { box-shadow: inset 0 0 0 2px rgba(10, 108, 214, 0.6) !important; }
+.deskai-lg-light .deskai-dialog-label,
+.deskai-lg-light .deskai-appearance-tile-label { color: #48484d; }
+.deskai-lg-dark .deskai-dialog-label,
+.deskai-lg-dark .deskai-appearance-tile-label { color: #c7c7cc; }
+.deskai-lg .deskai-appearance-tile { border-radius: 16px; }
+.deskai-lg-light .deskai-appearance-tile:hover,
+.deskai-lg-light .deskai-appearance-tile:focus { background-color: rgba(60, 60, 67, 0.08); }
+.deskai-lg-dark .deskai-appearance-tile:hover,
+.deskai-lg-dark .deskai-appearance-tile:focus { background-color: rgba(255, 255, 255, 0.08); }
+.deskai-lg-light .deskai-appearance-tile.selected { border-color: #0066cc; background-color: rgba(0, 102, 204, 0.1); }
+.deskai-lg-dark .deskai-appearance-tile.selected { border-color: #4f9cf0; background-color: rgba(10, 108, 214, 0.18); }
+.deskai-lg-light .deskai-appearance-switch-row:hover,
+.deskai-lg-light .deskai-appearance-switch-row:focus { background-color: rgba(60, 60, 67, 0.08); }
+.deskai-lg-dark .deskai-appearance-switch-row:hover,
+.deskai-lg-dark .deskai-appearance-switch-row:focus { background-color: rgba(255, 255, 255, 0.08); }
+.deskai-lg-light .toggle-switch { background: rgba(60, 60, 67, 0.2); }
+.deskai-lg-dark .toggle-switch { background: rgba(255, 255, 255, 0.2); }
+.deskai-lg .toggle-switch:checked { background: #34c759; }

@@ -38,14 +38,18 @@ export function breakMinutes(hours, minutes) {
 export function isValidConfig(cfg) {
     if (!isObject(cfg) || !isObject(cfg.modes) || Object.keys(cfg.modes).length === 0)
         return false;
-    const {dock = {}, inbox = {}, breaks = {}, room_warnings: room = {}, llm = {}} = cfg;
-    return [dock, inbox, breaks, room, llm].every(isObject) &&
+    const {dock = {}, inbox = {}, breaks = {}, room_warnings: room = {}, appearance = {}, llm = {}} = cfg;
+    return [dock, inbox, breaks, room, appearance, llm].every(isObject) &&
         (cfg.language === undefined || ['en', 'id'].includes(cfg.language)) &&
         (dock.autohide === undefined || ['windows', 'smart', 'always', 'never'].includes(dock.autohide)) &&
         allAre(dock, ['icon_size'], value => isNumberFrom(value, 0, false)) &&
         allAre(inbox, ['enabled'], isBool) && allAre(inbox, ['messages', 'agent_apps'], isStrings) &&
         allAre(breaks, ['enabled'], isBool) && allAre(breaks, ['after_minutes'], value => isNumberFrom(value, 0, false)) &&
         allAre(room, ['enabled'], isBool) &&
+        (appearance.theme === undefined || ['glass', 'classic'].includes(appearance.theme)) &&
+        (appearance.scheme === undefined || ['auto', 'light', 'dark'].includes(appearance.scheme)) &&
+        (appearance.glass === undefined || ['clear', 'tinted'].includes(appearance.glass)) &&
+        allAre(appearance, ['blur_windows', 'rim', 'reduce_transparency'], isBool) &&
         allAre(llm, ['backend', 'model', 'effort', 'ollama_model', 'ollama_url'], isString) &&
         allAre(llm, ['triage_notifications'], isBool) && allAre(llm, ['exclude_apps'], isStrings) &&
         (cfg.default_mode === undefined || (isString(cfg.default_mode) && Object.hasOwn(cfg.modes, cfg.default_mode))) &&

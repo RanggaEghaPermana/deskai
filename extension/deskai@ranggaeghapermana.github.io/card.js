@@ -8,6 +8,7 @@ import St from 'gi://St';
 
 import {VERTICAL_BOX} from './compat.js';
 import {MOTION} from './motion.js';
+import {SPRINGS, springEase} from './spring.js';
 
 const TEXT_WIDTH = 330;
 const TAIL_WIDTH = 18;
@@ -76,6 +77,18 @@ export class Card {
         return this.actor.visible && this.spec !== null;
     }
 
+    // The card's own box, which a theme can dress.
+    get body() {
+        return this._body;
+    }
+
+    // Glass cards don't point: they float above the dock like the rest of it, and grow out of the
+    // spot they're about on a spring instead of popping up.
+    setGlass(glass) {
+        this._glass = glass;
+        this._tail.visible = !glass;
+    }
+
     destroy() {
         this.actor.destroy();
     }
@@ -114,6 +127,17 @@ export class Card {
         this.actor.set_position(x, Math.round(bottomY - height - TAIL_HEIGHT - GAP));
         this.actor.set_pivot_point((tailX + TAIL_WIDTH / 2) / width, 1);
 
+        if (this._glass) {
+            if (fresh) {
+                this.actor.opacity = 0;
+                this.actor.scale_x = 0.4;
+                this.actor.scale_y = 0.3;
+                this.actor.translation_y = 14;
+            }
+            this.actor.ease({opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            springEase(this.actor, {scale_x: 1, scale_y: 1, translation_y: 0}, SPRINGS.bouncy);
+            return;
+        }
         if (fresh) {
             this.actor.opacity = 0;
             this.actor.scale_x = this.actor.scale_y = 0.94;
@@ -129,6 +153,20 @@ export class Card {
         this.spec = null;
         this._busyIcon?.remove_all_transitions();
         this._busyIcon = null;
+        if (this._glass) {
+            springEase(this.actor, {scale_x: 0.5, scale_y: 0.4, translation_y: 10}, SPRINGS.smooth);
+            this.actor.ease({
+                opacity: 0,
+                duration: 220,
+                delay: 60,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => {
+                    if (!this.spec)
+                        this.actor.hide();
+                },
+            });
+            return;
+        }
         this.actor.ease({
             opacity: 0,
             scale_x: 0.97,

@@ -26,7 +26,9 @@ import {Card} from './card.js';
 import {CommandBar} from './commandbar.js';
 import {SHELL_MAJOR, VERTICAL_BOX, defaultSeat} from './compat.js';
 import {isValidConfig} from './config.js';
-import {BreakDialog, ModeDialog, fillAppPicker} from './editor.js';
+import {AppearanceDialog, BreakDialog, ModeDialog, fillAppPicker} from './editor.js';
+import {SPRINGS, animationsOn, springEase} from './spring.js';
+import {Theme} from './theme.js';
 import {Desk} from './desk.js';
 import {OneDock} from './docks.js';
 import {LANGUAGES, languageOf, translator} from './i18n.js';
@@ -164,6 +166,7 @@ const BROWSER_IDS = new Set([
     'com.brave.Browser.desktop', 'microsoft-edge.desktop', 'zen.desktop', 'app.zen_browser.zen.desktop',
 ]);
 const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
+const APPEARANCE_WORDS = /^(?:(?:buka|open|ganti|ubah|change|atur)\s+)?(?:tampilan|tema|theme|appearance)(?:\s+(?:dock|deskai))?\s*[?.!]?$/i;
 const FOCUSABLE_TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 const {AnimationMode} = Clutter;
 
@@ -268,6 +271,8 @@ export default class DeskAIExtension extends Extension {
         this._keyboard = defaultSeat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
         this._loadConfig();
+        this._theme = new Theme(() => this._onThemeChanged(false));
+        this._theme.set(this._config.appearance);
         const saved = readJson(this._stateFile);
         this._mode = saved?.mode in this._modes ? saved.mode : this._defaultMode();
 
@@ -276,6 +281,8 @@ export default class DeskAIExtension extends Extension {
         this._buildIndicator();
         this._card = new Card((spec, action) => this._onCardAction(spec, action));
         Main.layoutManager.addTopChrome(this._card.actor);
+        this._theme.add(this._card.body, {radius: 22});
+        this._card.setGlass(this._theme.isGlass);
         this._grabCommandKey();
         this._buildSwitcher();
         this._rebuildApps(false);
@@ -429,7 +436,7 @@ export default class DeskAIExtension extends Extension {
         this._clearIconGeometry();
 
         this._keyboard = null;
-        this._menu?.destroy();
+        this._dropMenu(this._menu);
         this._menu = null;
         this._menuManager = null;
         this._dialog?.close();
@@ -459,6 +466,8 @@ export default class DeskAIExtension extends Extension {
         this._modeEntries = null;
         this._appButtons = [];
         this._trackedStruts = undefined;
+        this._theme?.destroy();
+        this._theme = null;
     }
 
     // ---- config ---------------------------------------------------------
@@ -513,6 +522,9 @@ export default class DeskAIExtension extends Extension {
         this._syncInbox();
         this._queueVisibility();
         this._syncMotion();
+        // Not while the Appearance dialog is trying a look out: Save or Cancel settle it.
+        if (!(this._dialog instanceof AppearanceDialog))
+            this._applyAppearance();
     }
 
     _watchConfig() {
@@ -715,6 +727,7 @@ export default class DeskAIExtension extends Extension {
         });
         this._dock = new St.BoxLayout({style_class: 'deskai', reactive: true});
         this._frame.add_child(this._dock);
+        this._theme.add(this._dock, {kind: 'bar', radius: 30});
 
         this._switcher = new St.BoxLayout({style_class: 'deskai-modes', y_align: Clutter.ActorAlign.CENTER});
         this._appsClip = new St.Widget({clip_to_allocation: true, y_align: Clutter.ActorAlign.CENTER});
@@ -757,11 +770,14 @@ export default class DeskAIExtension extends Extension {
             'notify::width', () => this._queueReposition(),
             'notify::height', () => this._queueReposition(),
             'notify::hover', () => this._onFrameHover(),
-            'motion-event', () => {
+            'motion-event', (_actor, event) => {
                 this._noteDockMotion();
+                const [x, y] = event.get_coords();
+                this._theme?.point(this._dock, x, y);
                 return Clutter.EVENT_PROPAGATE;
             },
             this);
+        this._dock.connect('captured-event', (_actor, event) => this._pressGlass(event));
         // Drop target for rearranging apps: DND walks up from the actor under
         // the pointer, so anything inside the dock lands here.
         this._frame._delegate = {
@@ -799,8 +815,10 @@ export default class DeskAIExtension extends Extension {
 
         this._tooltip = new St.Label({style_class: 'deskai-tooltip', visible: false});
         Main.uiGroup.add_child(this._tooltip);
+        this._theme.add(this._tooltip, {radius: 99});
         this._previews = new St.BoxLayout({style_class: 'deskai-previews', reactive: true, track_hover: true, visible: false});
         Main.uiGroup.add_child(this._previews);
+        this._theme.add(this._previews, {radius: 18});
         this._previews.connect('notify::hover', () => {
             if (this._previews.hover)
                 this._cancelDebounce('previews-leave');
@@ -897,12 +915,13 @@ export default class DeskAIExtension extends Extension {
         const progress = new St.Widget({style_class: 'deskai-mode-progress', visible: false});
         holder.add_child(progress);
         const content = new St.BoxLayout({style_class: 'deskai-mode-box', y_align: Clutter.ActorAlign.CENTER});
-        content.add_child(new St.Icon({
+        const icon = new St.Icon({
             icon_name: mode.icon ?? 'emblem-default-symbolic',
             fallback_icon_name: 'emblem-default-symbolic',
             style_class: 'deskai-mode-icon',
             y_align: Clutter.ActorAlign.CENTER,
-        }));
+        });
+        content.add_child(icon);
         // The label lives in a clipping box whose width animates open and closed.
         const labelClip = new St.Widget({clip_to_allocation: true, width: 0, y_align: Clutter.ActorAlign.CENTER});
         const labelBox = new St.BoxLayout({style_class: 'deskai-mode-labels', opacity: 0});
@@ -924,7 +943,7 @@ export default class DeskAIExtension extends Extension {
                 this._requestMode(key);
         });
 
-        const entry = {key, button, progress, labelClip, labelBox, time, badge, open: false};
+        const entry = {key, button, icon, progress, labelClip, labelBox, time, badge, open: false};
         this._addTooltip(button, () => (entry.open ? null : mode.label ?? key));
         return entry;
     }
@@ -939,12 +958,25 @@ export default class DeskAIExtension extends Extension {
             const pending = this._pending?.target === entry.key;
 
             entry.button.style_class = `deskai-mode${active ? ' active' : ''}${pending ? ' pending' : ''}`;
-            if (active)
-                entry.button.set_style(`background-color: ${color};`);
-            else if (pending)
-                entry.button.set_style(`background-color: ${withAlpha(color, 0.38)};`);
-            else
-                entry.button.set_style(null);
+            if (this._theme?.isGlass) {
+                // On glass the active mode's pill is part of the glass (theme.select below), so it can
+                // slide and stretch to the next mode. Its color draws the icon; the label stays ink.
+                if (active)
+                    entry.button.set_style(null);
+                else if (pending)
+                    entry.button.set_style(`background-color: ${withAlpha(color, 0.14)};`);
+                else
+                    entry.button.set_style(null);
+                entry.icon.set_style(`color: ${color};`);
+            } else {
+                if (active)
+                    entry.button.set_style(`background-color: ${color};`);
+                else if (pending)
+                    entry.button.set_style(`background-color: ${withAlpha(color, 0.38)};`);
+                else
+                    entry.button.set_style(null);
+                entry.icon.set_style(null);
+            }
             entry.progress.set_style(`background-color: ${color};`);
             entry.progress.visible = pending;
             entry.time.visible = pending;
@@ -952,6 +984,64 @@ export default class DeskAIExtension extends Extension {
             entry.badge.text = `${this._held.size}`;
             this._setLabelOpen(entry, active || pending, animate);
         }
+        const active = this._modeEntries.get(this._mode);
+        this._theme?.select(this._dock, active && this._theme.isGlass ? () => this._selectionBox(active) : null,
+            this._modeColor(this._modes[this._mode]));
+    }
+
+    // Where the active mode's button will be once the labels opening and closing beside it are done: the
+    // glass capsule heads there, instead of chasing a button that's still sliding over and coming back.
+    _selectionBox(active) {
+        if (!active.button.is_mapped())
+            return null;
+        const box = active.button.get_transformed_extents();
+        const still = entry => (entry.labelClip.get_transition('width') ? entry.labelTarget - entry.labelClip.width : 0);
+        let shift = 0;
+        for (const key of this._modeOrder) {
+            const entry = this._modeEntries.get(key);
+            if (entry === active)
+                break;
+            if (entry)
+                shift += still(entry);
+        }
+        return {x: box.origin.x + shift, y: box.origin.y, width: box.size.width + still(active), height: box.size.height};
+    }
+
+    // Glass gives under a finger: a pressed button swells a little, and springs back when let go.
+    _pressGlass(event) {
+        if (!this._theme?.isGlass || !animationsOn())
+            return Clutter.EVENT_PROPAGATE;
+        const type = event.type();
+        if (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN) {
+            let button = global.stage.get_event_actor(event);
+            while (button && button !== this._dock && !(button instanceof St.Button))
+                button = button.get_parent();
+            if (!(button instanceof St.Button))
+                return Clutter.EVENT_PROPAGATE;
+            this._releaseGlass();
+            this._pressed = button;
+            // A dock rebuilt under the finger takes the button with it.
+            button.connectObject('destroy', () => {
+                if (this._pressed === button)
+                    this._pressed = null;
+            }, this);
+            button.set_pivot_point(0.5, 0.5);
+            button.ease({scale_x: 1.05, scale_y: 1.05, duration: 120, mode: AnimationMode.EASE_OUT_QUAD});
+        } else if (type === Clutter.EventType.BUTTON_RELEASE || type === Clutter.EventType.TOUCH_END ||
+            type === Clutter.EventType.TOUCH_CANCEL || type === Clutter.EventType.LEAVE) {
+            this._releaseGlass();
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _releaseGlass() {
+        const button = this._pressed;
+        this._pressed = null;
+        if (!button)
+            return;
+        button.disconnectObject(this);
+        if (button.get_stage())
+            springEase(button, {scale_x: 1, scale_y: 1}, SPRINGS.snappy);
     }
 
     _setLabelOpen(entry, open, animate) {
@@ -963,6 +1053,7 @@ export default class DeskAIExtension extends Extension {
         clip.width = -1;
         const [, natural] = clip.get_preferred_width(-1);
         const to = open ? natural : 0;
+        entry.labelTarget = to;
 
         if (!animate || (wasOpen === open && from === to)) {
             clip.width = open ? -1 : 0;
@@ -970,16 +1061,16 @@ export default class DeskAIExtension extends Extension {
             return;
         }
         clip.width = from;
-        clip.ease({
-            width: to,
-            duration: 300,
-            mode: AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-                // Open labels follow their natural width again (the countdown ticks, badges change).
-                if (entry.open)
-                    clip.width = -1;
-            },
-        });
+        // Open labels follow their natural width again once there (the countdown ticks, badges change).
+        const onComplete = () => {
+            if (entry.open)
+                clip.width = -1;
+        };
+        // No overshoot: the dock is centered, so a label swinging past its width shakes every icon sideways.
+        if (this._theme?.isGlass)
+            springEase(clip, {width: to}, SPRINGS.smooth, {onComplete});
+        else
+            clip.ease({width: to, duration: 300, mode: AnimationMode.EASE_OUT_QUAD, onComplete});
         entry.labelBox.ease({
             opacity: open ? 255 : 0,
             duration: open ? 280 : 150,
@@ -1103,7 +1194,7 @@ export default class DeskAIExtension extends Extension {
             button_mask: St.ButtonMask.ONE | St.ButtonMask.TWO | St.ButtonMask.THREE,
         });
         const box = new St.BoxLayout({...VERTICAL_BOX});
-        const icon = app.create_icon_texture(this._config.dock?.icon_size ?? 38);
+        const icon = app.create_icon_texture(this._iconSize());
         // The inbox badge: a colored dot on the icon's corner (needs you, done, or a message).
         const iconBox = new St.Widget({layout_manager: new Clutter.BinLayout()});
         iconBox.add_child(icon);
@@ -1147,7 +1238,7 @@ export default class DeskAIExtension extends Extension {
         // Hold and drag to rearrange (or drag a running app in among the pinned ones).
         button._delegate = {
             app,
-            getDragActor: () => app.create_icon_texture(this._config.dock?.icon_size ?? 38),
+            getDragActor: () => app.create_icon_texture(this._iconSize()),
             getDragActorSource: () => icon,
         };
         const draggable = DND.makeDraggable(button, {timeoutThreshold: 200});
@@ -1315,6 +1406,7 @@ export default class DeskAIExtension extends Extension {
             this._tooltip.text = text;
             this._tooltip.show();
             this._tooltip.get_parent().set_child_above_sibling(this._tooltip, null); // above an open menu
+            this._theme?.restack(this._tooltip); // and its glass with it
             const [x, y] = actor.get_transformed_position();
             const [w] = actor.get_transformed_size();
             const [, tipWidth] = this._tooltip.get_preferred_width(-1);
@@ -1369,13 +1461,14 @@ export default class DeskAIExtension extends Extension {
     _openMenu(sourceActor, fill, {onApp = false} = {}) {
         const old = this._menu;
         this._menu = null;
-        old?.destroy();
+        this._dropMenu(old);
         this._tooltip.hide();
         this._hidePreviews();
 
         const menu = new PopupMenu.PopupMenu(sourceActor, 0.5, St.Side.BOTTOM);
         menu.actor.add_style_class_name('deskai-menu');
         Main.uiGroup.add_child(menu.actor);
+        this._theme.add(menu.actor, {kind: 'sheet', radius: 16, shapeOf: () => menu.box});
         menu.actor.hide();
         this._menuManager.addMenu(menu);
         this._menu = menu;
@@ -1385,21 +1478,62 @@ export default class DeskAIExtension extends Extension {
         menu.connect('open-state-changed', (_menu, open) => {
             if (open)
                 return;
-            // Let the close animation finish before tearing the menu down.
-            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            // Let the close animation finish before tearing the menu down (on glass it melts back into
+            // the dock, which takes a little longer).
+            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, menu._grown ? 360 : 250, () => {
                 this._timeouts.delete(id);
                 if (this._menu === menu) {
                     this._menu = null;
-                    menu.destroy();
+                    this._dropMenu(menu);
                     this._afterMenuClosed();
                 }
                 return GLib.SOURCE_REMOVE;
             });
             this._timeouts.add(id);
         });
-        menu.open(BoxPointer.PopupAnimation.FULL);
+        if (this._theme.isGlass && animationsOn())
+            this._growMenu(menu);
+        else
+            menu.open(BoxPointer.PopupAnimation.FULL);
         focus?.grab_key_focus();
         this._updateVisibility();
+    }
+
+    // A glass menu grows out of the button it belongs to, from its bottom middle, and folds back into it.
+    _growMenu(menu) {
+        menu._grown = true;
+        const pointer = menu._boxPointer ?? menu.actor;
+        const close = pointer.close.bind(pointer);
+        pointer.close = (animate, onComplete) => {
+            if (!animate || !animationsOn()) {
+                close(animate, onComplete);
+                return;
+            }
+            pointer.remove_all_transitions();
+            springEase(pointer, {scale_x: 0.3, scale_y: 0.2}, SPRINGS.smooth);
+            pointer.ease({
+                opacity: 0,
+                duration: 200,
+                delay: 80,
+                mode: AnimationMode.EASE_IN_QUAD,
+                onComplete: () => close(BoxPointer.PopupAnimation.NONE, onComplete),
+            });
+        };
+        menu.open(BoxPointer.PopupAnimation.NONE);
+        pointer.set_pivot_point(0.5, 1);
+        pointer.scale_x = 0.3;
+        pointer.scale_y = 0.2;
+        pointer.opacity = 0;
+        pointer.ease({opacity: 255, duration: 120, mode: AnimationMode.EASE_OUT_QUAD});
+        springEase(pointer, {scale_x: 1, scale_y: 1}, SPRINGS.bouncy);
+    }
+
+    // A menu's glass goes first: destroyed with it, GNOME later tries to lay out the glass it no longer has.
+    _dropMenu(menu) {
+        if (!menu)
+            return;
+        this._theme?.release(menu.actor);
+        menu.destroy();
     }
 
     _afterMenuClosed() {
@@ -1463,6 +1597,7 @@ export default class DeskAIExtension extends Extension {
 
         this._previews.show();
         this._previews.get_parent().set_child_above_sibling(this._previews, null);
+        this._theme?.restack(this._previews);
         const [x, y] = button.get_transformed_position();
         const [w] = button.get_transformed_size();
         const [, ownWidth] = this._previews.get_preferred_width(-1);
@@ -1600,6 +1735,7 @@ export default class DeskAIExtension extends Extension {
             this._menuItem(menu, this._t('newMode'), () => this._openModeDialog(null));
             this._menuItem(menu, this._t('presets'), () => this._openPresets());
             this._menuItem(menu, this._t('breaks'), () => this._openBreakDialog());
+            this._menuItem(menu, this._t('appearance'), () => this._openAppearanceDialog());
         });
     }
 
@@ -1649,12 +1785,54 @@ export default class DeskAIExtension extends Extension {
         }));
     }
 
+    _openAppearanceDialog() {
+        this._dialog?.close();
+        // Preview restyles the live dock; only Save writes the file. Cancel puts back what's saved, unless
+        // a newer dialog has taken over by the time this one finishes closing.
+        const dialog = new AppearanceDialog(this._config.appearance, this._t, {
+            onPreview: draft => this._applyAppearance?.(draft),
+            onCancel: () => {
+                if (this._dialog === dialog || !(this._dialog instanceof AppearanceDialog))
+                    this._applyAppearance?.();
+            },
+            onSave: draft => {
+                this._config.appearance = draft;
+                this._saveConfig();
+                this._applyAppearance?.();
+            },
+        });
+        this._showDialog(dialog);
+    }
+
+    // modes.json's "appearance", or a draft the Appearance dialog is trying out.
+    _applyAppearance(draft) {
+        if (!this._theme)
+            return;
+        const wasGlass = this._theme.isGlass;
+        this._theme.set(draft ?? this._config.appearance);
+        this._onThemeChanged(wasGlass !== this._theme.isGlass);
+    }
+
+    // What CSS alone can't restyle: inline colors, the card's tail, and app icons, which are larger on glass.
+    _onThemeChanged(iconsChanged) {
+        this._card?.setGlass(this._theme.isGlass);
+        this._syncModeButtons(false);
+        if (iconsChanged)
+            this._rebuildApps(false);
+    }
+
+    _iconSize() {
+        return this._config.dock?.icon_size ?? (this._theme?.isGlass ? 46 : 38);
+    }
+
     _showDialog(dialog) {
         dialog.connect('destroy', () => {
             if (this._dialog === dialog)
                 this._dialog = null;
         });
         this._dialog = dialog;
+        // The box GNOME styles as the dialog sits inside its layout.
+        this._theme.add(dialog.dialogLayout._dialog ?? dialog.dialogLayout, {kind: 'sheet', radius: 28});
         dialog.open();
     }
 
@@ -1967,6 +2145,8 @@ export default class DeskAIExtension extends Extension {
     }
 
     _onFrameHover() {
+        if (!this._frame.hover)
+            this._theme?.point(this._dock, null, null);
         // Only real motion-events count as the pointer moving: St also flips
         // hover by itself when the frame's reactivity changes under a still pointer.
         if (this._frame.hover) {
@@ -2257,26 +2437,25 @@ export default class DeskAIExtension extends Extension {
             clip.width = -1;
             const [, natural] = clip.get_preferred_width(-1);
             clip.width = from;
-            clip.ease({
-                width: natural,
-                duration: 300,
-                mode: AnimationMode.EASE_OUT_QUAD,
-                onComplete: () => {
-                    clip.width = -1; // follow the count as it changes
-                    this._queueIconGeometry();
-                },
-            });
+            const onComplete = () => {
+                clip.width = -1; // follow the count as it changes
+                this._queueIconGeometry();
+            };
+            // Without overshoot, for the same reason as a mode's label.
+            if (this._theme?.isGlass)
+                springEase(clip, {width: natural}, SPRINGS.smooth, {onComplete});
+            else
+                clip.ease({width: natural, duration: 300, mode: AnimationMode.EASE_OUT_QUAD, onComplete});
         } else {
-            clip.ease({
-                width: 0,
-                duration: 260,
-                mode: AnimationMode.EASE_IN_OUT_QUAD,
-                onComplete: () => {
-                    if (!wanted())
-                        clip.visible = false;
-                    this._queueIconGeometry();
-                },
-            });
+            const onComplete = () => {
+                if (!wanted())
+                    clip.visible = false;
+                this._queueIconGeometry();
+            };
+            if (this._theme?.isGlass)
+                springEase(clip, {width: 0}, SPRINGS.smooth, {onComplete});
+            else
+                clip.ease({width: 0, duration: 260, mode: AnimationMode.EASE_IN_OUT_QUAD, onComplete});
         }
     }
 
@@ -2660,6 +2839,9 @@ export default class DeskAIExtension extends Extension {
         const breaks = new PopupMenu.PopupMenuItem(this._t('breaks'));
         breaks.connect('activate', () => this._debounce('menu-action', 0, () => this._openBreakDialog()));
         menu.addMenuItem(breaks);
+        const appearance = new PopupMenu.PopupMenuItem(this._t('appearance'));
+        appearance.connect('activate', () => this._debounce('menu-action', 0, () => this._openAppearanceDialog()));
+        menu.addMenuItem(appearance);
 
         const edit = new PopupMenu.PopupMenuItem(this._t('editJson'));
         edit.connect('activate', () => {
@@ -2927,7 +3109,7 @@ export default class DeskAIExtension extends Extension {
         });
         const row = new St.BoxLayout({style_class: 'deskai-inbox-row'});
         row.add_child(separator());
-        this._serverButton = new St.Button({style_class: 'deskai-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        this._serverButton = new St.Button({style_class: 'deskai-add deskai-server-button', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
         const box = new St.Widget({layout_manager: new Clutter.BinLayout()});
         box.add_child(new St.Icon({icon_name: 'network-server-symbolic', style_class: 'deskai-add-icon'}));
         this._serverDot = new St.Widget({
@@ -3186,7 +3368,7 @@ export default class DeskAIExtension extends Extension {
 
     _buildCommand() {
         this._sparkle = Gio.icon_new_for_string(GLib.build_filenamev([this.path, 'icons', 'deskai-sparkle-symbolic.svg']));
-        this._commandButton = new St.Button({style_class: 'deskai-add', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        this._commandButton = new St.Button({style_class: 'deskai-add deskai-command-button', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
         this._commandButton.set_child(new St.Icon({gicon: this._sparkle, style_class: 'deskai-add-icon'}));
         this._commandButton.connect('clicked', () => this._openCommandBar());
         this._dock.add_child(this._commandButton);
@@ -3204,6 +3386,10 @@ export default class DeskAIExtension extends Extension {
                 }
             },
             onClose: () => this._endPeek(),
+            decorate: (bar, list) => {
+                this._theme?.add(bar, {radius: 99});
+                this._theme?.add(list, {radius: 22});
+            },
         });
     }
 
@@ -3219,6 +3405,7 @@ export default class DeskAIExtension extends Extension {
             monitor: Main.layoutManager.primaryMonitor,
             bottomY: this._frame.y,
             buttons: this._modes[this._mode]?.focus && this._focusWindow ? this._labelButtons() : [],
+            from: this._theme.isGlass ? this._commandButton : null,
         });
     }
 
@@ -3231,6 +3418,11 @@ export default class DeskAIExtension extends Extension {
     }
 
     _submitCommand(text) {
+        // "tema", "ganti tema", "appearance": straight to the Appearance dialog, brain or no brain.
+        if (APPEARANCE_WORDS.test(text.trim())) {
+            this._openAppearanceDialog();
+            return;
+        }
         if (!this._brainOnline) {
             this._showCard({id: 'command', kind: 'command', title: this._t('commandOffline'), timeout: 8});
             return;

@@ -283,3 +283,138 @@ class BreakDialog extends ModalDialog.ModalDialog {
         this._onSave({enabled: on, ...(after === null ? {} : {after_minutes: after})});
     }
 });
+
+const APPEARANCE_DEFAULTS = {
+    theme: 'glass', scheme: 'auto', glass: 'clear', blur_windows: true, rim: true, reduce_transparency: false,
+};
+
+export const AppearanceDialog = GObject.registerClass(
+class AppearanceDialog extends ModalDialog.ModalDialog {
+    // appearance: modes.json's appearance (any field may be missing); t: the dock's translator.
+    // Every change goes to onPreview(draft) at once; Save hands the draft to onSave, anything else that closes it to onCancel.
+    _init(appearance, t, {onPreview, onSave, onCancel}) {
+        super._init({styleClass: 'deskai-mode-dialog'});
+        this._draft = {...APPEARANCE_DEFAULTS, ...appearance};
+        this._onPreview = onPreview;
+        this._onSave = onSave;
+        this._saved = false;
+        this._groups = [];
+        this._switches = [];
+
+        const content = new St.BoxLayout({
+            ...VERTICAL_BOX,
+            style_class: 'deskai-dialog-content deskai-appearance-content',
+        });
+        content.add_child(new St.Label({text: t('appearanceTitle'), style_class: 'deskai-dialog-title'}));
+
+        content.add_child(this._section(t('appearanceTheme'), 'theme', [
+            ['glass', t('appearanceGlassTheme'), 'glass'],
+            ['classic', t('appearanceClassicTheme'), 'classic'],
+        ]));
+
+        // Classic has no color scheme or glass to choose, so these only show for the glass theme.
+        this._glassOptions = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-appearance-options'});
+        this._glassOptions.add_child(this._section(t('appearanceScheme'), 'scheme', [
+            ['auto', t('appearanceAuto'), 'auto'],
+            ['light', t('appearanceLight'), 'light'],
+            ['dark', t('appearanceDark'), 'dark'],
+        ]));
+        this._glassOptions.add_child(this._section(t('appearanceGlass'), 'glass', [
+            ['clear', t('appearanceClear'), 'clear'],
+            ['tinted', t('appearanceTinted'), 'tinted'],
+        ]));
+        const switches = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-appearance-switches'});
+        switches.add_child(this._switchRow(t('appearanceBlurWindows'), 'blur_windows'));
+        switches.add_child(this._switchRow(t('appearanceRim'), 'rim'));
+        switches.add_child(this._switchRow(t('appearanceReduce'), 'reduce_transparency'));
+        this._glassOptions.add_child(switches);
+        content.add_child(this._glassOptions);
+
+        this.contentLayout.add_child(content);
+        this.setButtons([
+            {label: t('cancel'), action: () => this.close(), key: Clutter.KEY_Escape},
+            {label: t('save'), action: () => this._save(), default: true},
+        ]);
+        // Escape, Cancel and anything else that closes it count as cancelling, so the preview never outlives the dialog.
+        this.connect('closed', () => {
+            if (!this._saved)
+                onCancel();
+        });
+        this.setInitialKeyFocus(this._groups[0].tiles.find(({value}) => value === this._draft.theme).button);
+        this._sync();
+    }
+
+    _section(title, field, options) {
+        const section = new St.BoxLayout({...VERTICAL_BOX, style_class: 'deskai-appearance-section'});
+        section.add_child(fieldLabel(title));
+        const row = new St.BoxLayout({style_class: 'deskai-appearance-tiles'});
+        // The thumbnail is its own style class (deskai-appearance-thumb-<look>), drawn by the stylesheet.
+        const tiles = options.map(([value, label, look]) => {
+            const button = new St.Button({
+                style_class: 'deskai-appearance-tile',
+                can_focus: true,
+                x_expand: true,
+                accessible_name: label,
+            });
+            const box = new St.BoxLayout({...VERTICAL_BOX});
+            const thumb = new St.Widget({style_class: `deskai-appearance-thumb deskai-appearance-thumb-${look}`});
+            thumb.add_child(new St.Widget({style_class: 'deskai-appearance-thumb-bar'}));
+            box.add_child(thumb);
+            box.add_child(new St.Label({text: label, style_class: 'deskai-appearance-tile-label', x_align: Clutter.ActorAlign.CENTER}));
+            button.set_child(box);
+            button.connect('clicked', () => this._set(field, value));
+            row.add_child(button);
+            return {button, value};
+        });
+        section.add_child(row);
+        this._groups.push({field, tiles});
+        return section;
+    }
+
+    _switchRow(label, field) {
+        const row = new St.Button({
+            style_class: 'deskai-appearance-switch-row',
+            can_focus: true,
+            x_expand: true,
+            accessible_name: label,
+        });
+        const box = new St.BoxLayout({x_expand: true});
+        box.add_child(new St.Label({text: label, x_expand: true, y_align: Clutter.ActorAlign.CENTER}));
+        const toggle = new PopupMenu.Switch(this._draft[field]);
+        // The row takes the click; a live switch would swallow it for its own drag.
+        toggle.reactive = false;
+        box.add_child(toggle);
+        row.set_child(box);
+        row.connect('clicked', () => this._set(field, !this._draft[field]));
+        this._switches.push({field, toggle});
+        return row;
+    }
+
+    _set(field, value) {
+        if (this._draft[field] === value)
+            return;
+        this._draft[field] = value;
+        this._sync();
+        this._onPreview({...this._draft});
+    }
+
+    _sync() {
+        for (const {field, tiles} of this._groups) {
+            for (const {button, value} of tiles) {
+                if (value === this._draft[field])
+                    button.add_style_class_name('selected');
+                else
+                    button.remove_style_class_name('selected');
+            }
+        }
+        for (const {field, toggle} of this._switches)
+            toggle.state = this._draft[field];
+        this._glassOptions.visible = this._draft.theme === 'glass';
+    }
+
+    _save() {
+        this._saved = true;
+        this.close();
+        this._onSave({...this._draft});
+    }
+});
