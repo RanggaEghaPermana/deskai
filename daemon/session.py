@@ -54,7 +54,9 @@ TITLE_GLYPHS = re.compile(r"^[^\w(\[]+")
 # bash titles a tab "user@host: ~/folder".
 SHELL_TITLE = re.compile(r"^[\w.-]+@[\w.-]+:\s*(.+)$")
 APPEAR_S = 10                  # waiting for a new terminal window to show up
-PLACE_S = 20                   # waiting for the other apps to open their windows (base)
+PLACE_S = 60                   # waiting for the other apps to open their windows (base); right after a login
+                               # a busy laptop can take most of a minute to bring Chrome back, and the wait
+                               # ends as soon as every window is back
 PLACE_S_PER_WINDOW = 2         # extra seconds per non-terminal window; large sessions need more time
 WINDOW_FIELDS = ("id", "app", "title", "workspace", "sticky", "monitor", "rect", "max_h", "max_v",
                  "maximized", "fullscreen", "minimized", "above", "stack", "focused")
