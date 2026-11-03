@@ -38,6 +38,7 @@ import launcher  # noqa: E402
 import learned  # noqa: E402
 import localai  # noqa: E402
 import phrases  # noqa: E402
+import portal  # noqa: E402
 import presets  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
@@ -279,6 +280,7 @@ class Brain:
             self.bus, BUS_NAME, Gio.BusNameWatcherFlags.NONE, self._on_dock_appeared, self._on_dock_vanished)
         GLib.timeout_add_seconds(TICK_SECONDS, self._tick)
         self._watch_extensions()
+        portal.heal(self.bus, log)  # logging straight back in can leave apps without dark mode or text size
         log.info("deskaid up · AI: %s", self.llm.describe())
 
     def shutdown(self):
