@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 import gi
@@ -36,6 +37,7 @@ import guide  # noqa: E402
 import launcher  # noqa: E402
 import learned  # noqa: E402
 import localai  # noqa: E402
+import phrases  # noqa: E402
 import presets  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
@@ -53,6 +55,7 @@ SNAPSHOT_EVERY = 30          # seconds between snapshots of the desk, for after 
 SERVER_CHECK_EVERY = 10      # seconds between looks at the servers on the desk
 ROOM_CHECK_EVERY = 60        # seconds between looks at memory and disk space
 ROUTINE_STOP_WAIT_S = 3      # closing a project lets a setup still going finish the step it's on, if it's quick
+STEPS_WAIT_S = 600           # the rest of a request waits this long for its project, and is dropped after: nobody's waiting any more
 DOCKS_SETTLE_S = 3           # turning a dock off restarts the extensions GNOME loaded after it, this dock among them
 DOCKS_CHANGED_WAIT_S = 2     # GNOME changes two lists to turn an extension on, and a change meanwhile can leave one half on
 DOCK_WAIT_S = 60             # after starting, how long the dock gets to appear before the docks it replaced come back
@@ -234,6 +237,12 @@ class Brain:
         self.preset_run = None     # the preset going on right now
         self.preset_asking = None  # a preset, and the commands in it you haven't seen yet
         self.preset_meant = None   # the preset a slip of the fingers looked like
+        self.phrases = phrases.Phrases()
+        self.unclear = None       # a request nothing understood, for asking the AI about or teaching
+        self.guess = None         # {"text", "actions"}: the AI's guess at it, waiting for your yes
+        self.partial = None       # the steps understood of a request with some that weren't, waiting for your OK
+        self.queued = None        # {"after": (kind, project), "actions", "at"}: the steps waiting for a project to be set up or closed
+        self.request_at = 0       # counts the requests: an AI answer to one that's been followed by another is old
         self.guide_tries = 0
         self.whatsapp_checked = False
         self.card_act = None      # what the last distraction card was about, for "Allow in …"
@@ -636,6 +645,28 @@ class Brain:
             self._after_a_click(self._run_preset_named, name)
         elif action == "preset:not-meant":
             self.preset_meant = None
+        elif action == "command:ask-ai" and self.unclear and card_id == "command":
+            text, self.unclear = self.unclear, None
+            self._ask_model(text, confirm=True)
+        elif action == "command:teach":
+            text, self.unclear = self.unclear, None
+            self._open_presets_window(text or "")
+        elif action == "command:guess-yes" and self.guess and card_id == "command":
+            guess, self.guess = self.guess, None
+            try:
+                self.phrases.remember(commands.plain(guess["text"]), guess["actions"], guess["text"].strip())
+            except OSError as e:
+                log.warning("command: can't keep what %r means: %s", guess["text"], e)
+            self._after_a_click(self._run_actions, {"say": "", "actions": guess["actions"]})
+        elif action == "command:guess-no" and self.guess:
+            self.unclear, self.guess = self.guess["text"], None
+            self._after_a_click(self._command_card, self._say("command_guess_wrong"), [
+                {"id": "command:teach", "label": self._say("command_teach"), "primary": True}], 20)
+        elif action == "steps:rest" and self.partial and card_id == "command":
+            rest, self.partial = self.partial, None
+            self._after_a_click(self._run_actions, {"say": "", "actions": rest})
+        elif action == "steps:none":
+            self.partial = None
         elif action.startswith("preset:next:") and self.preset_run and action == f"preset:next:{self.preset_run['turn_at']}":
             self.preset_run["turn"].set()
         elif action == "preset:stop" and self.preset_run:
@@ -891,6 +922,7 @@ class Brain:
         self._routine_card(plan, title, 20 if any(why) or self.routine_choice else 12, why)
         self.routine_plan = None
         self.routine_running = None
+        self._next_steps("setup_project", plan.get("project"))
         return False
 
     # ---- servers on the desk ---------------------------------------------
@@ -1150,12 +1182,20 @@ class Brain:
 
     def on_command(self, text):
         log.info("command: %s", text[:120])
+        self.queued = self.unclear = self.guess = self.partial = None  # what an earlier request left waiting isn't wanted now
+        self.request_at += 1
         self.presets.refresh()
         preset = presets.named(text, self.presets.items)  # your own word comes before anything DeskAI would make of it
         if preset:
             self._start_preset(preset)
             return
-        quick = commands.quick(text, [(key, mode["label"]) for key, mode in self.config.modes()], self.watch, commands.all_projects())
+        taught = [action for action in self.phrases.recall(commands.plain(text)) or [] if commands.a_step(action)]
+        if taught:
+            log.info("command: as you said it means")
+            self._run_actions({"say": "", "actions": taught})
+            return
+        modes, known = [(key, mode["label"]) for key, mode in self.config.modes()], commands.all_projects()
+        quick = commands.quick(text, modes, self.watch, known)
         if quick:
             self._run_actions(quick)
             return
@@ -1166,30 +1206,117 @@ class Brain:
                 {"id": "preset:not-meant", "label": self._say("preset_not_meant")},
                 {"id": "preset:meant", "label": self._say("preset_run"), "primary": True}])
             return
+        done, missed = commands.steps(text, modes, self.watch, known)
+        if done and commands.only_for_the_lists(missed):
+            self.partial = done
+            self._command_card(self._say("steps_partly", missed=", ".join(f"“{part}”" for part in missed),
+                                         rest=", ".join(map(self._in_words, done))), timeout=30, actions=[
+                {"id": "steps:none", "label": self._say("steps_none")},
+                {"id": "steps:rest", "label": self._say("steps_rest"), "primary": True}])
+            return
         if not self.llm.available:
-            self._command_card(self._say("command_needs_ai"))
+            self._not_understood(text, self._say("command_needs_ai"))
             return
         if self.llm.backend == "ollama" and commands.for_the_lists_alone(text):
-            self._command_card(self._say("command_unsure"))
+            # Half a minute of a small model for what the lists know the shape of is only worth it when you ask for it.
+            self._not_understood(text, self._say("command_unsure"), ask_ai=True)
             return
-        language, mode = self.config.language, self.mode
+        self._ask_model(text)
+
+    def _not_understood(self, text, said, ask_ai=False):
+        self.unclear = text
+        actions = [{"id": "command:teach", "label": self._say("command_teach")}]
+        if ask_ai:
+            actions.append({"id": "command:ask-ai", "label": self._say("command_ask_ai"), "primary": True})
+        self._command_card(said, timeout=30, actions=actions)
+
+    def _ask_model(self, text, confirm=False):
+        """With confirm, or when a small model's answer goes further than the words do, it only guesses: the card puts the guess
+        to you, and saying yes teaches DeskAI what you meant."""
+        language, mode, small, asked = self.config.language, self.mode, self.llm.backend == "ollama", self.request_at
+        taught = self.phrases.examples() if small else ""
+        if confirm:
+            self._command_card(self._say("command_asking"), timeout=90, busy=True)
+
+        def answer(fn, *args):
+            if asked == self.request_at:  # you've asked something else since: that card isn't for this
+                fn(*args)
+            return False
 
         def work():
             try:
                 can_restore = bool(session.to_restore(session.current_session(), again=True))
-                desk = commands.desk(self.config, mode, self.watch, can_restore, small_model=self.llm.backend == "ollama")
+                desk = commands.desk(self.config, mode, self.watch, can_restore, small_model=small)
                 asked_at = time.monotonic()
-                result = commands.interpret(self.llm, language, text, desk)
+                result = commands.interpret(self.llm, language, text, desk, taught)
                 log.info("command: %s answered in %.1f s", self.llm.backend, time.monotonic() - asked_at)
-                if self.llm.backend == "ollama":
-                    result = commands.only_what_was_asked(result, text, commands.all_projects())
+                kept = commands.only_what_was_asked(result, text, commands.all_projects()) if small else result
             except (brain.LLMError, ValueError, KeyError, OSError, TypeError) as e:
                 log.warning("command failed: %s", e)
-                GLib.idle_add(self._command_failed, e)
+                GLib.idle_add(answer, self._command_failed, e)
                 return
-            GLib.idle_add(self._run_actions, result)
+            if confirm or (small and commands.worth_a_guess(kept, text)):
+                GLib.idle_add(answer, self._put_guess, text, commands.guessed(result, text))
+            else:
+                GLib.idle_add(answer, self._run_actions, kept)
 
         threading.Thread(target=work, name="command", daemon=True).start()
+
+    def _put_guess(self, text, actions):
+        actions = [action for action in actions if self._is_here(action)]  # a guess at a project you don't have isn't worth a yes
+        if not actions:
+            self._not_understood(text, self._say("command_ai_unsure"))
+            return False
+        self.guess = {"text": text, "actions": actions}
+        self._command_card(self._say("command_guess", steps=", ".join(map(self._in_words, actions))), timeout=45, actions=[
+            {"id": "command:guess-no", "label": self._say("command_guess_no")},
+            {"id": "command:guess-yes", "label": self._say("command_guess_yes"), "primary": True}])
+        return False
+
+    def _is_here(self, action):
+        """Whether what an action names is really on this computer, for a guess you'd say yes to and have it kept."""
+        kind, known = action.get("type"), commands.all_projects()
+        if kind == "mode":
+            return bool(self.config.mode(action.get("mode")))
+        if kind in ("setup_project", "close_project"):
+            return bool(commands.find_project(action.get("project"), known))
+        if kind == "open_app":
+            return bool(commands.find_app(action.get("app")))
+        if kind == "open_url":
+            return commands.safe_url(action.get("url"))
+        if kind == "open_folder":
+            return bool(commands.folder_path(action.get("path"), known))
+        if kind == "server":
+            return bool(self.watch.match(action.get("target")))
+        return False
+
+    def _in_words(self, action):
+        """A step, the way a card says it: "close inventory-manager", "open Terminal"."""
+        kind = action.get("type")
+        said = {"git_report": "step_git", "docker_images": "step_images", "compose_list": "step_compose_list", "ports": "step_ports",
+                "servers_list": "step_servers", "focus_today": "step_focus", "restore_desk": "step_restore"}
+        if kind in said:
+            return self._say(said[kind])
+        if kind == "system":
+            return self._say({"memory": "step_memory", "clear": "step_clear"}.get(action.get("what"), "step_storage"))
+        if kind in ("compose", "dev_service"):
+            op = {"restart": "step_restart", "start": "step_start", "up": "step_start"}.get(action.get("op"), "step_stop")
+            return self._say(op, name=os.path.basename(str(action.get("project") or action.get("unit", "")).removesuffix(".service")))
+        if kind == "mode":
+            return self._say("step_mode", mode=(self.config.mode(action.get("mode")) or {"label": action.get("mode", "")})["label"])
+        if kind in ("setup_project", "close_project"):
+            path = commands.find_project(action.get("project"), commands.all_projects())
+            name = os.path.basename(path) if path else str(action.get("project", ""))
+            return self._say("step_setup" if kind == "setup_project" else "step_close", name=name)
+        if kind == "open_app":
+            found = commands.find_app(action.get("app"))
+            info = launcher.app_info(found) if found else None
+            return self._say("step_open", name=info.get_name() if info else str(action.get("app", "")))
+        if kind == "open_url":
+            return self._say("step_open", name=urllib.parse.urlparse(str(action.get("url", ""))).netloc or str(action.get("url", "")))
+        if kind == "open_folder":
+            return self._say("step_open", name=os.path.basename(str(action.get("path", "")).rstrip("/")))
+        return self._say("step_restart" if action.get("op") == "restart" else "step_stop", name=str(action.get("target", "")))
 
     def _could_not(self, error):
         return self._say("command_failed", why=self._say(commands.trouble(error)))
@@ -1199,8 +1326,10 @@ class Brain:
         self._command_card(self._say(hint, **error.params) if hint else self._could_not(error))
         return False
 
-    def _run_actions(self, result):
-        """Does what was asked, checking everything named against what's really here."""
+    def _run_actions(self, result, quiet=False):
+        """Does what was asked, checking everything named against what's really here. Several steps go one after another,
+        and one that sets up or closes a project is waited for. quiet: steps carried on with after one of those, whose card
+        is there to read, so only what didn't work gets a card of its own."""
         say = (result.get("say") or "").strip()
         answered_elsewhere = False  # the steps report on their own card
         if result.get("unsure"):
@@ -1209,17 +1338,36 @@ class Brain:
             say = ""  # a small model's "done!" isn't worth much: say what really happened
         elif result.get("dropped"):
             say = say or self._say("command_nothing")
-        for action in result.get("actions", [])[:5]:
-            kind = action.get("type")
+        actions = result.get("actions", [])[:commands.MAX_STEPS]
+        for at, action in enumerate(actions):
+            kind, rest = action.get("type"), actions[at + 1:]
+            waited = bool(rest) and kind in commands.WAITED_FOR
+            if waited:
+                path = commands.find_project(action.get("project"), commands.all_projects())
+                self.queued = {"after": (kind, path), "actions": rest, "at": time.monotonic()} if path else None
             try:
                 say, reported = self._run_action(kind, action, say)
             except (GLib.Error, OSError, subprocess.SubprocessError, ValueError) as e:
                 log.warning("command: %s failed: %s", kind, e)
                 say, reported = self._could_not(e), False
+                self.queued = None
             answered_elsewhere = answered_elsewhere or reported
-        if not answered_elsewhere:
+            if waited:
+                break
+        # Carried on with after a project's card: "done" or a new mode would cover it, but an answer or what went wrong won't.
+        covering = {self._say("command_done")} | {self._say("command_mode", mode=(self.config.mode(action.get("mode")) or {}).get("label", ""))
+                                                   for action in actions if action.get("type") == "mode"}
+        if not answered_elsewhere and (not quiet or (say and say not in covering)):
             self._command_card(say or self._say("command_nothing"))
         return False
+
+    def _next_steps(self, kind, path):
+        """The project the rest of a request waited for is set up or closed: on with the rest."""
+        if self.queued and self.queued["after"] == (kind, path):
+            rest, at, self.queued = self.queued["actions"], self.queued["at"], None
+            # A question left unanswered on the project's card, and the morning's setup of it hours later, aren't this request.
+            if time.monotonic() - at < STEPS_WAIT_S:
+                self._run_actions({"say": "", "actions": rest}, quiet=True)
 
     def _run_action(self, kind, action, say):
         """Does one action. Returns what to say, and whether its steps report on their own card."""
@@ -1446,6 +1594,7 @@ class Brain:
         title = self._say("project_closed", name=name) if closed else self._say("project_nothing", name=name)
         self.card({"id": "close-project", "kind": "command", "title": title, "text": "\n".join(lines),
                    "actions": actions, "timeout": 45 if terminals or not_in_git else 12})
+        self._next_steps("close_project", path)
         return False
 
     def _choose_claude_in(self, path, where):
@@ -1468,6 +1617,7 @@ class Brain:
 
     def _project_planned(self, plan, choice=None):
         if not plan:
+            self.queued = None  # nothing to set up, so nothing to wait for
             self._command_card(self._say("command_no_project"))
             return False
         self.routine_plan = plan
@@ -1493,10 +1643,11 @@ class Brain:
         else:
             self._command_card(self._say("preset_gone"))
 
-    def _open_presets_window(self):
+    def _open_presets_window(self, keyword=""):
+        """keyword: words to start a new preset with, from a request nothing understood."""
         window = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets_window.py")
         try:
-            subprocess.Popen(launcher.own_scope([sys.executable, window]), stdin=subprocess.DEVNULL,
+            subprocess.Popen(launcher.own_scope([sys.executable, window, *(["--keyword", keyword] if keyword else [])]), stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError as e:
             log.warning("can't open the presets window: %s", e)

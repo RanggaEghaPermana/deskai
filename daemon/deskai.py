@@ -16,6 +16,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 
 import brain  # noqa: E402
 import hooks  # noqa: E402
+import phrases  # noqa: E402
 import routine  # noqa: E402
 import senders  # noqa: E402
 import session  # noqa: E402
@@ -151,6 +152,23 @@ def cmd_senders(args):
         print("Nobody yet. The dock asks the first time someone new is held during a focus mode.")
     for name, app, word in listing:
         print(f"{'always show' if word == senders.ALWAYS else 'keep holding':<13} {name}" + (f" ({app})" if app else " (the whole app)"))
+
+
+def cmd_phrases(args):
+    known = phrases.Phrases()
+    if args.forget:
+        import commands  # only here: it looks at what's installed and running, which the rest of this doesn't need
+        if not known.forget(commands.plain(args.forget)):
+            sys.exit(f"Nothing kept for “{args.forget}”.")
+        print(f"Forgot “{args.forget}”.")
+        return
+    listing = known.listing()
+    if not listing:
+        print("Nothing yet. When the command bar doesn't understand you, it can ask the AI, and saying yes to its guess teaches it.")
+    for said, actions in listing:
+        steps = ", ".join(f"{action['type']} {next((str(action[field]) for field in ('mode', 'project', 'app', 'url', 'path', 'target') if action.get(field)), '')}".strip()
+                          for action in actions)
+        print(f"{said}  →  {steps}")
 
 
 def cmd_agent(args):
@@ -466,6 +484,10 @@ def main():
     p = sub.add_parser("senders", help="who always gets through during a focus mode, and who stays held")
     p.add_argument("--forget", metavar="NAME", help="take back your word on someone")
     p.set_defaults(func=cmd_senders)
+
+    p = sub.add_parser("phrases", help="what you've taught DeskAI your own words mean")
+    p.add_argument("--forget", metavar="WORDS", help="take back what you taught it these words mean")
+    p.set_defaults(func=cmd_phrases)
 
     p = sub.add_parser("agent", help='change modes in plain language, e.g. "add a Design mode"')
     p.add_argument("instruction")

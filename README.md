@@ -18,7 +18,8 @@ you, and puts your desk back the way it was after a logout. The AI part is optio
   "restart the server", "close my project", "how long did I focus today?". It can only do what's on a
   fixed list, and neither it nor the AI ever comes up with a command to run. Plain requests, in English or Indonesian, are done instantly with no AI:
   switching mode, setting up or closing a project, servers, opening things, your focus time, a mode's lists,
-  which projects have work not committed or pushed.
+  which projects have work not committed or pushed. Several at once work too, one after another: "close the shop project
+  and open the terminal". What it doesn't understand, it can ask the AI about, and learn from your answer.
 - **My Presets.** Your own routines, the kind nothing could guess: open this app, do that by hand, switch to that mode, run
   this command. Write the steps in the My Presets window, pick the words that start them, like "setup discord", and type
   those words in the command bar. It takes no AI, and a near miss asks you first.
@@ -145,6 +146,17 @@ day, at a pause, it also asks about a window you spent a while on that it couldn
 What you say about senders is in `~/.local/state/deskai/senders.json`: their names, never their messages.
 `deskai senders` lists them, and `deskai senders --forget NAME` takes your word back.
 
+When the command bar doesn't understand a request, its card offers to ask the AI, or to teach it in My Presets. The AI
+only guesses: the card says what it would do, and only your yes does it. With a small local model, a request shaped like
+something the lists know waits for you to ask, since its answer takes half a minute. Your yes also keeps the request and
+what it meant in `~/.local/state/deskai/phrases.json`, readable only by you. The next time you type it, it's done at once,
+with no AI, and the local model sees your latest ones as examples of how you say things. Only what a request can be made
+of is kept: a mode, opening something, a server, setting up or closing a project. `deskai phrases` lists them, and
+`deskai phrases --forget WORDS` takes one back.
+
+A request of several parts, one of them not understood or not something DeskAI does, gets a card saying which part,
+and the rest only happens if you say so.
+
 The command bar shows what you last asked for, and `Up` and `Down` go through it. Your last 30 requests are in
 `~/.local/state/deskai/commands.json`, readable only by you, and `Delete` forgets the one you're on.
 
@@ -209,6 +221,7 @@ deskai doctor        # check that everything is working
 deskai status        # mode, window, inbox
 deskai stats         # today's focus recap
 deskai senders       # who always gets through, and who stays held
+deskai phrases       # what you've taught it your own words mean
 deskai session       # what would come back after a logout
 deskai presets       # your own routines: write them, or add list or log
 deskai routine       # the workday routine

@@ -18,6 +18,7 @@ import brain  # noqa: E402
 import deskaid  # noqa: E402
 import learned  # noqa: E402
 import presets  # noqa: E402
+import phrases  # noqa: E402
 import senders  # noqa: E402
 import servers  # noqa: E402
 
@@ -55,6 +56,9 @@ class Fake(deskaid.Brain):
         self.drift_since = self.last_nudge = None
         self.servers_sent = None
         self.dock_seen = False
+        self.phrases = phrases.Phrases(folder / "phrases.json")
+        self.queued = self.unclear = self.guess = self.partial = None
+        self.request_at = 0
         self.dock_up = False
         self.docks_changed_timer = 0
         self.config_told = None
@@ -1449,3 +1453,297 @@ class WhereClaudeOpens(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeveralAtOnce(Base):
+    """A request of several steps: one after another, and one that sets up or closes a project is waited for."""
+
+    def setUp(self):
+        super().setUp()
+        for owner, name, value in ((deskaid.commands, "all_projects", lambda: {"gudang": "/w/gudang"}),
+                                   (deskaid.commands, "find_app", lambda name: None),
+                                   (self.brain, "_after_a_click", lambda work, *args: work(*args))):
+            patcher = mock.patch.object(owner, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def ran(self):
+        done = []
+
+        def run(kind, action, say):
+            done.append(kind)
+            return say, kind in deskaid.commands.WAITED_FOR
+        return done, mock.patch.object(self.brain, "_run_action", side_effect=run)
+
+    def test_after_a_project_is_closed_the_rest_go_on(self):
+        done, running = self.ran()
+        with running:
+            self.brain._run_actions({"actions": [{"type": "close_project", "project": "gudang"}, {"type": "open_app", "app": "x"}]})
+            self.assertEqual(done, ["close_project"], "the terminal waits for the project to be closed")
+            self.brain._next_steps("close_project", "/w/elsewhere")
+            self.assertEqual(done, ["close_project"], "another project being closed isn't this one")
+            self.brain._next_steps("close_project", "/w/gudang")
+        self.assertEqual(done, ["close_project", "open_app"])
+        self.assertIsNone(self.brain.queued)
+
+    def test_the_project_cards_say_when_theyre_done(self):
+        self.brain.queued = {"after": ("close_project", "/w/gudang"), "actions": [], "at": deskaid.time.monotonic()}
+        with mock.patch.object(self.brain, "_send_servers"), mock.patch.object(self.brain, "_next_steps") as next_steps:
+            self.brain._project_report("/w/gudang", [], [], None)
+        next_steps.assert_called_once_with("close_project", "/w/gudang")
+        self.brain.routine_marks, self.brain.routine_choice = {}, None
+        with mock.patch.object(self.brain, "_routine_card"), mock.patch.object(self.brain, "_next_steps") as next_steps:
+            self.brain._routine_finished({"project": "/w/gudang"})
+        next_steps.assert_called_once_with("setup_project", "/w/gudang")
+
+    def test_whats_carried_on_with_doesnt_cover_the_projects_card(self):
+        self.brain.queued = {"after": ("close_project", "/w/gudang"), "actions": [{"type": "mode", "mode": "writing"}], "at": deskaid.time.monotonic()}
+        with mock.patch.object(self.brain, "call"):
+            self.brain._next_steps("close_project", "/w/gudang")
+        self.assertEqual(self.brain.cards, [])
+
+    def test_but_what_didnt_work_still_says_so(self):
+        self.brain.queued = {"after": ("close_project", "/w/gudang"), "actions": [{"type": "open_app", "app": "nothing-like-it"}], "at": deskaid.time.monotonic()}
+        with mock.patch.object(deskaid.commands, "open_app", return_value=False):
+            self.brain._next_steps("close_project", "/w/gudang")
+        self.assertEqual(self.brain.cards[-1]["title"], self.brain._say("command_no_app"))
+
+    def test_a_new_request_drops_what_was_waiting(self):
+        self.brain.queued = {"after": ("close_project", "/w/gudang"), "actions": [{"type": "open_app", "app": "x"}]}
+        with mock.patch.object(deskaid.commands, "quick", return_value={"say": "", "actions": []}):
+            self.brain.on_command("buka terminal")
+        self.assertIsNone(self.brain.queued)
+
+    def test_a_project_that_isnt_there_takes_the_rest_with_it(self):
+        done, running = self.ran()
+        with running:
+            self.brain._run_actions({"actions": [{"type": "close_project", "project": "nope"}, {"type": "open_app", "app": "x"}]})
+        self.assertEqual((done, self.brain.queued), (["close_project"], None))
+
+    def partly(self):
+        steps = ([{"type": "open_app", "app": "Terminal"}], ["tutup claude desktop"])
+        with mock.patch.object(deskaid.commands, "quick", return_value=None), mock.patch.object(deskaid.commands, "steps", return_value=steps):
+            self.brain.on_command("matiin gudang dan tutup claude desktop kemudian buka terminal")
+        return self.brain.cards[-1]
+
+    def test_a_part_that_cant_be_done_is_said(self):
+        card = self.partly()
+        said = card["title"] + card["text"]
+        self.assertIn("“tutup claude desktop”", said)
+        self.assertIn("buka Terminal", said)
+        self.assertEqual([action["id"] for action in card["actions"]], ["steps:none", "steps:rest"])
+
+    def test_and_the_rest_only_on_your_word(self):
+        self.partly()
+        with mock.patch.object(deskaid.commands, "open_app", return_value=True) as opened:
+            self.brain.on_card_action("command", "steps:rest")
+        opened.assert_called_once_with("Terminal")
+        self.assertIsNone(self.brain.partial)
+
+    def test_or_none_of_it(self):
+        self.partly()
+        self.brain.on_card_action("command", "steps:none")
+        with mock.patch.object(deskaid.commands, "open_app") as opened:
+            self.brain.on_card_action("command", "steps:rest")
+        opened.assert_not_called()
+
+    def test_an_answer_after_a_project_is_still_shown(self):
+        self.brain.queued = {"after": ("setup_project", "/w/gudang"), "actions": [{"type": "servers_list", "show": "all"}], "at": deskaid.time.monotonic()}
+        with mock.patch.object(deskaid.commands, "running_list", return_value="vite :5173"):
+            self.brain._next_steps("setup_project", "/w/gudang")
+        self.assertEqual(self.brain.cards[-1]["title"], "vite :5173")
+
+    def test_the_rest_of_an_old_request_isnt_done_much_later(self):
+        self.brain.queued = {"after": ("setup_project", "/w/gudang"), "actions": [{"type": "open_app", "app": "x"}],
+                             "at": deskaid.time.monotonic() - deskaid.STEPS_WAIT_S - 1}
+        with mock.patch.object(deskaid.commands, "open_app") as opened:
+            self.brain._next_steps("setup_project", "/w/gudang")  # this morning's setup of the same project, say
+        opened.assert_not_called()
+        self.assertIsNone(self.brain.queued)
+
+    def test_nothing_to_set_up_nothing_to_wait_for(self):
+        self.brain.queued = {"after": ("setup_project", "/w/gudang"), "actions": [], "at": deskaid.time.monotonic()}
+        self.brain._project_planned(None)
+        self.assertIsNone(self.brain.queued)
+
+    def test_a_part_that_isnt_a_request_goes_to_the_ai(self):
+        steps = ([{"type": "close_project", "project": "gudang"}], ["gua mau tidur"])
+        for backend, asks_now in (("claude-cli", True), ("ollama", False)):
+            self.brain.llm.backend = backend
+            with mock.patch.object(deskaid.commands, "quick", return_value=None), mock.patch.object(deskaid.commands, "steps", return_value=steps), \
+                    mock.patch.object(deskaid.threading, "Thread") as thread:
+                self.brain.on_command("tutup gudang, gua mau tidur")
+            self.assertEqual(thread.called, asks_now, backend)
+            self.assertIsNone(self.brain.partial, "no card saying it can't, since the AI may well understand it")
+        self.assertEqual(self.brain.cards[-1]["actions"][-1]["id"], "command:ask-ai", "a small model is a button away")
+
+    def test_each_step_in_words(self):
+        self.brain.config.modes = lambda: [("writing", {"label": "Writing"})]
+        with mock.patch.object(self.brain.config, "mode", return_value={"label": "Writing"}):
+            self.assertEqual(self.brain._in_words({"type": "mode", "mode": "writing"}), "pindah ke Writing")
+        self.assertEqual(self.brain._in_words({"type": "close_project", "project": "gudnag"}), "tutup gudang")
+        self.assertEqual(self.brain._in_words({"type": "setup_project", "project": "gudang"}), "siapin gudang")
+        self.assertEqual(self.brain._in_words({"type": "open_url", "url": "https://www.youtube.com/watch"}), "buka www.youtube.com")
+        self.assertEqual(self.brain._in_words({"type": "open_folder", "path": "~/Downloads/"}), "buka Downloads")
+        self.assertEqual(self.brain._in_words({"type": "server", "op": "restart", "target": "vite"}), "restart vite")
+        self.assertEqual(self.brain._in_words({"type": "server", "op": "stop", "target": "vite"}), "matiin vite")
+        self.assertEqual(self.brain._in_words({"type": "dev_service", "op": "stop", "unit": "postgresql.service"}), "matiin postgresql")
+        self.assertEqual(self.brain._in_words({"type": "compose", "op": "up", "project": "/w/gudang"}), "nyalain gudang")
+        self.assertEqual(self.brain._in_words({"type": "system", "what": "memory"}), "nunjukin yang makan RAM")
+        self.assertEqual(self.brain._in_words({"type": "git_report"}), "ngecek kerjaan yang belum di-commit atau di-push")
+
+
+class WhatYouMean(Base):
+    """A request nothing understood: the AI guesses only when asked, and your yes teaches DeskAI what you meant."""
+
+    TEXT = "gas pulang"
+
+    def setUp(self):
+        super().setUp()
+        for owner, name, value in ((deskaid.commands, "all_projects", lambda: {"gudang": "/w/gudang"}),
+                                   (deskaid.commands, "find_app", lambda name: None),
+                                   (deskaid.commands, "quick", lambda *_args: None),
+                                   (self.brain, "_after_a_click", lambda work, *args: work(*args))):
+            patcher = mock.patch.object(owner, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def typed(self, text=TEXT, lists_alone=True):
+        with mock.patch.object(deskaid.commands, "for_the_lists_alone", return_value=lists_alone), \
+                mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain.on_command(text)
+        return thread
+
+    def answered(self, thread, answer):
+        with mock.patch.object(deskaid.session, "to_restore", return_value=None), mock.patch.object(deskaid.session, "current_session", return_value="s"), \
+                mock.patch.object(deskaid.commands, "desk", return_value=""), \
+                mock.patch.object(deskaid.commands, "interpret", return_value=answer) as interpret, \
+                mock.patch.object(deskaid.GLib, "idle_add", side_effect=lambda fn, *args: fn(*args)):
+            thread.call_args.kwargs["target"]()
+        return interpret
+
+    def ask_ai(self, answer):
+        self.typed()
+        with mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain.on_card_action("command", "command:ask-ai")
+        self.assertTrue(self.brain.cards[-1].get("busy"), "half a minute: it says it's on it")
+        return self.answered(thread, answer)
+
+    def test_the_card_offers_to_ask_the_ai_or_teach_it(self):
+        self.assertFalse(self.typed().called, "no half minute of a small model unless asked")
+        card = self.brain.cards[-1]
+        self.assertIn("belum nangkep", card["title"] + card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["command:teach", "command:ask-ai"])
+
+    def test_the_ai_guess_is_put_to_you(self):
+        self.ask_ai({"actions": [{"type": "close_project", "project": "gudang"}]})
+        card = self.brain.cards[-1]
+        self.assertIn("Maksudnya: tutup gudang?", card["title"] + card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["command:guess-no", "command:guess-yes"])
+
+    def test_yes_does_it_and_remembers(self):
+        self.ask_ai({"actions": [{"type": "close_project", "project": "gudang"}]})
+        with mock.patch.object(self.brain, "_close_project") as closing:
+            self.brain.on_card_action("command", "command:guess-yes")
+        closing.assert_called_once_with("gudang")
+        self.assertEqual(self.brain.phrases.recall(deskaid.commands.plain(self.TEXT)), [{"type": "close_project", "project": "gudang"}])
+        self.assertEqual(self.brain.phrases.listing()[0][0], self.TEXT, "shown the way you typed it")
+
+    def test_the_next_time_its_done_at_once(self):
+        self.brain.phrases.remember(deskaid.commands.plain(self.TEXT), [{"type": "close_project", "project": "gudang"}])
+        with mock.patch.object(self.brain, "_close_project") as closing:
+            thread = self.typed("Gas  pulang!")
+        closing.assert_called_once_with("gudang")
+        self.assertFalse(thread.called)
+
+    def test_your_words_come_before_the_lists(self):
+        self.brain.phrases.remember("buka terminal", [{"type": "mode", "mode": "writing"}])
+        with mock.patch.object(deskaid.commands, "quick") as quick, mock.patch.object(self.brain, "call"):
+            self.typed("buka terminal")
+        quick.assert_not_called()
+
+    def test_only_steps_are_taken_from_the_file(self):
+        self.brain.phrases.remember(deskaid.commands.plain(self.TEXT), [{"type": "edit_modes", "request": "x"}])
+        thread = self.typed()
+        self.assertFalse(thread.called)
+        self.assertIn("belum nangkep", self.brain.cards[-1]["title"] + self.brain.cards[-1]["text"])
+
+    def test_no_does_nothing_and_offers_to_teach(self):
+        self.ask_ai({"actions": [{"type": "close_project", "project": "gudang"}]})
+        with mock.patch.object(self.brain, "_close_project") as closing:
+            self.brain.on_card_action("command", "command:guess-no")
+        closing.assert_not_called()
+        self.assertEqual([action["id"] for action in self.brain.cards[-1]["actions"]], ["command:teach"])
+        self.assertIsNone(self.brain.phrases.recall(deskaid.commands.plain(self.TEXT)))
+
+    def test_a_guess_at_something_not_here_isnt_put_to_you(self):
+        self.ask_ai({"actions": [{"type": "close_project", "project": "no-such-project"}]})
+        self.assertIn("AI-nya juga belum nangkep", self.brain.cards[-1]["title"] + self.brain.cards[-1]["text"])
+        self.assertIsNone(self.brain.guess)
+
+    def test_an_answer_to_an_old_request_is_left_alone(self):
+        self.typed()
+        with mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain.on_card_action("command", "command:ask-ai")
+        self.typed("buka terminal", lists_alone=False)  # asked something else while the AI was thinking
+        cards = len(self.brain.cards)
+        self.answered(thread, {"actions": [{"type": "close_project", "project": "gudang"}]})
+        self.assertEqual(len(self.brain.cards), cards)
+        self.assertIsNone(self.brain.guess)
+
+    def test_a_question_keeps_its_answer(self):
+        thread = self.typed("berapa server yang jalan?", lists_alone=False)
+        self.answered(thread, {"say": "Dua server.", "actions": [{"type": "close_project", "project": "gudang"}]})
+        self.assertIn("Dua server.", self.brain.cards[-1]["title"] + self.brain.cards[-1]["text"])
+        self.assertIsNone(self.brain.guess)
+
+    def test_a_guess_of_nothing_says_so(self):
+        self.ask_ai({"say": "hmm", "actions": []})
+        card = self.brain.cards[-1]
+        self.assertIn("AI-nya juga belum nangkep", card["title"] + card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["command:teach"])
+
+    def test_nor_what_cant_be_a_step(self):
+        self.ask_ai({"actions": [{"type": "edit_modes", "request": "x"}]})
+        self.assertIn("AI-nya juga belum nangkep", self.brain.cards[-1]["title"] + self.brain.cards[-1]["text"])
+
+    def test_it_learns_from_your_words_too(self):
+        self.brain.phrases.remember("gas ngoding", [{"type": "mode", "mode": "building"}])
+        interpret = self.ask_ai({"actions": []})
+        self.assertIn('"gas ngoding"', interpret.call_args.args[4])
+
+    def test_a_small_models_answer_beyond_the_words_is_only_a_guess(self):
+        # Asked straight away, since it isn't shaped like anything on the lists: still, nothing happens on its say-so.
+        thread = self.typed(lists_alone=False)
+        with mock.patch.object(self.brain, "_close_project") as closing:
+            self.answered(thread, {"actions": [{"type": "close_project", "project": "gudang"}]})
+        closing.assert_not_called()
+        self.assertEqual(self.brain.guess["actions"], [{"type": "close_project", "project": "gudang"}])
+
+    def test_with_claude_it_just_does_it(self):
+        self.brain.llm.backend = "claude-cli"
+        thread = self.typed(lists_alone=False)
+        with mock.patch.object(self.brain, "_close_project") as closing:
+            self.answered(thread, {"actions": [{"type": "close_project", "project": "gudang"}]})
+        closing.assert_called_once_with("gudang")
+
+    def test_without_ai_it_can_only_be_taught(self):
+        self.brain.llm.available = False
+        self.typed()
+        card = self.brain.cards[-1]
+        self.assertIn("butuh AI", card["title"] + card["text"])
+        self.assertEqual([action["id"] for action in card["actions"]], ["command:teach"])
+
+    def test_teaching_opens_my_presets_with_your_words(self):
+        self.typed()
+        with mock.patch.object(deskaid.subprocess, "Popen") as popen:
+            self.brain.on_card_action("command", "command:teach")
+        self.assertEqual(popen.call_args.args[0][-2:], ["--keyword", self.TEXT])
+        self.assertIsNone(self.brain.unclear)
+
+    def test_an_old_card_answers_nothing(self):
+        self.typed()
+        self.typed("lain lagi")  # a new request: the card about the last one is gone
+        with mock.patch.object(deskaid.threading, "Thread") as thread:
+            self.brain.on_card_action("command", "command:guess-yes")
+        thread.assert_not_called()

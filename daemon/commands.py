@@ -119,7 +119,8 @@ ASKS_WHY = re.compile(r"\b(kenapa|why|status|gimana|what's wrong|mati)\b", re.I)
 SERVER_FIRST = re.compile(r"^([\w.:]+?)(?:-?nya)?\b", re.I)
 SERVER_DOWN = re.compile(r"\bserver\w*\b.*\b(?:mati|down|crash\w*)\b|\b(?:mati|down|crash\w*)\b.*\bserver\w*\b", re.I)
 FILLER_START = re.compile(r"^(?:tolong|please|coba|bro|gua|gue|gw|aku|saya|i|i'm|im|kita|kayaknya|sepertinya|let's|lets|ayo|gas|"
-                          r"jangan lupa|jgn lupa|don'?t forget(?: to)?|remember to|(?:capek|cape|ok|oke),?)\s+", re.I)
+                          r"jangan lupa|jgn lupa|don'?t forget(?: to)?|remember to|capek|cape|ok|oke|eh|hei|hey|woi|halo|hai|oi|yo|sis|bang|"
+                          r"guys|deskai)[,!]?\s+", re.I)
 FILLER_END = re.compile(r"[\s,]+(?:dong|deh|ya|yah|yuk|bro|please|pls|sekarang|aja|lagi|nih|tuh)$", re.I)
 # Telling it about the window in front of you, which is how it learns.
 CLOSE_PROJECT = re.compile(r"^(?:(?:udah|sudah|dah)\s+)?(?:tutup|close|beresin|selesaiin|selesai|kelar|beres|matiin|matikan|stop|stopin|"
@@ -558,15 +559,82 @@ def _quick_action(words, modes, watch, known_projects):
 
 def quick(text, modes, watch, known_projects=()):
     """What needs no AI, because the words are plain: a mode, a server, setting up or closing a project, opening
-    something, how long you've focused, editing a mode's lists, or saying what the window in front of you is.
-    It's instant, and does the same thing every time. None if it's not one of these."""
+    something, how long you've focused, editing a mode's lists, or saying what the window in front of you is, or
+    several of these one after another. It's instant, and does the same thing every time. None if it's not one of these."""
     if DANGEROUS.search(text):
         return None
     words = _trimmed(text)
     if TOLD_NOT_TO.search(words):
         return _told_not_to(words, modes, watch, known_projects)
+    # Several first: "matiin toko dan buka terminal" read as one would be a project called "toko dan buka terminal".
+    done, missed = steps(text, modes, watch, known_projects)
+    if done and not missed:
+        return {"say": "", "actions": done}
     action = _quick_action(words, modes, watch, known_projects)
     return {"say": "", "actions": [action]} if action else None
+
+
+# What joins the steps of a request: "matiin toko dan buka terminal", "siapin toko terus pindah ke building".
+THEN = re.compile(r"\s*(?:[,;]|\b(?:dan|terus|trus|kemudian|lalu|habis itu|abis itu|setelah itu|sesudah itu|"
+                  r"and then|then|and|after that)\b)\s*", re.I)
+# What can be one step among others. The rest have a card of their own to answer, or only make sense by themselves.
+STEPS = {"mode", "open_app", "open_url", "open_folder", "server", "close_project", "setup_project"}
+WAITED_FOR = {"close_project", "setup_project"}  # the next step starts once these have finished
+# What only works as the last step, since it answers on a card of its own that what came after would cover.
+LAST_ONLY = {"compose", "dev_service", "restore_desk", "system", "git_report", "docker_images", "compose_list", "ports",
+             "servers_list", "focus_today"}
+MAX_STEPS = 5
+
+
+def a_step(action):
+    """Whether an action can be one step of several, or be kept for a request you taught DeskAI."""
+    kind = action.get("type") if isinstance(action, dict) else None
+    return kind in STEPS and (kind != "server" or action.get("op") in ("stop", "restart"))
+
+
+def steps(text, modes, watch, known_projects=()):
+    """A request of several things one after another: ([the actions for the parts understood], [the parts that weren't]),
+    or ([], []) if it isn't one. A part with no verb of its own takes the one before it: "matiin vite dan postgres"."""
+    if DANGEROUS.search(text) or TOLD_NOT_TO.search(text):
+        return [], []
+    parts = [part.strip() for part in THEN.split(_trimmed(text)) if part and part.strip()]
+    if len(parts) < 2:
+        return [], []
+    done, missed, verb = [], [], []
+    for at, part in enumerate(parts):
+        words = _trimmed(part)
+        last = at == len(parts) - 1
+
+        def fits(action):
+            return bool(action) and (a_step(action) or (last and action.get("type") in LAST_ONLY))
+        action = _quick_action(words, modes, watch, known_projects)
+        if fits(action):
+            verb = words.split()
+        else:
+            # The verb can be more than a word: "set up deskai and agent", "turn off vite and php".
+            for size in range(1, min(4, len(verb))):
+                action = _quick_action(" ".join([*verb[:size], words]), modes, watch, known_projects)
+                if fits(action):
+                    break
+        if fits(action):
+            done.append(action)
+        else:
+            missed.append(part)
+    # The same thing twice is one name with "and" in it: "buka passwords and keys".
+    if any(done.count(action) > 1 for action in done):
+        return [], []
+    return done[:MAX_STEPS], missed
+
+
+def only_for_the_lists(missed):
+    """Whether what wasn't understood of a request is all shaped like what the lists know, and so nothing the AI could do
+    either: "tutup claude desktop" is, "gua mau tidur" isn't, and the whole request goes to the AI."""
+    return bool(missed) and all(for_the_lists_alone(part) for part in missed)
+
+
+def plain(text):
+    """A request as it's kept, once you've told DeskAI what it means: the same words always come out the same."""
+    return re.sub(r"\s+", " ", _trimmed(text)).lower()
 
 
 def _told_not_to(words, modes, watch, known_projects):
@@ -589,6 +657,8 @@ ASKS_MODE = re.compile(r"\b(mode|pindah|ganti|switch)\b", re.I)
 ASKS_RESTORE = re.compile(r"\b(sesi|session|balik\w*|restore|lanjut\w*|kembali\w*)\b", re.I)
 DANGEROUS = re.compile(r"\b(rm|sudo|mkfs|dd|chmod|chown|shutdown|reboot)\b|\brm\s+-", re.I)
 IS_QUESTION = re.compile(r"\?|^(berapa|apa|apakah|kenapa|mengapa|gimana|bagaimana|siapa|kapan|dimana|how|what|why|when|where|who|which|is|are|do|does|did)\b", re.I)
+# A question about something, which a small model can still answer with an action: "kenapa gudang mati?" isn't "matiin gudang".
+ASKS_ABOUT = re.compile(r"^(berapa|apa|apakah|kenapa|knp|mengapa|gimana|bagaimana|siapa|kapan|dimana|how|what|why|when|where|who|which)\b", re.I)
 
 
 def asked_for(action, text, known_projects):
@@ -596,7 +666,7 @@ def asked_for(action, text, known_projects):
     kind = action.get("type")
     changes_something = kind in ("close_project", "setup_project", "restore_desk", "mode") or \
         (kind == "server" and action.get("op") in ("stop", "restart"))
-    if changes_something and (TOLD_NOT_TO.search(text) or NOT_A_REQUEST.search(text)):
+    if changes_something and (TOLD_NOT_TO.search(text) or NOT_A_REQUEST.search(text) or ASKS_ABOUT.search(_trimmed(text))):
         return False
     if kind == "server" and action.get("op") == "stop":
         return bool(ASKS_STOP.search(text)) and _names_server(action, text)
@@ -816,10 +886,26 @@ def desk(config, mode, watch, can_restore, known_projects=None, focus=None, apps
             f"{listing}")
 
 
-def interpret(llm, language, text, desk_text):
+def interpret(llm, language, text, desk_text, taught=""):
+    """`taught`: requests the owner has said what they mean, as examples for a local model, which needs showing."""
     words = brain.LANGUAGE_RULES[language]["language"]
+    examples = COMMAND_EXAMPLES.format(language=words) + (f"\n\nWhat the owner has told you their own words mean:\n{taught}" if taught else "")
     return llm.ask(COMMAND_SYSTEM.format(language=words), f"The desk:\n{desk_text}\n\nThe owner's request: {text}",
-                   COMMAND_SCHEMA, effort="low", max_tokens=1024, timeout=90, examples=COMMAND_EXAMPLES.format(language=words))
+                   COMMAND_SCHEMA, effort="low", max_tokens=1024, timeout=90, examples=examples)
+
+
+def guessed(result, text):
+    """What a model's answer could do, to put to you before it does it: only what can be one step, and nothing at all
+    for a request that's dangerous on its face, says not to, or isn't a request."""
+    if DANGEROUS.search(text) or TOLD_NOT_TO.search(text) or NOT_A_REQUEST.search(text):
+        return []
+    return [action for action in result.get("actions", []) if a_step(action)][:MAX_STEPS]
+
+
+def worth_a_guess(kept, text):
+    """Whether a small model's answer, as only_what_was_asked() left it, should be put to you as a guess instead of done:
+    it wanted to do more than the words say. A question keeps its answer."""
+    return not IS_QUESTION.search(_trimmed(text)) and bool(kept.get("dropped") or kept.get("unsure"))
 
 
 def edit_modes(llm, language, request):

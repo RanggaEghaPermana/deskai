@@ -70,6 +70,8 @@ def command_right(result, kind, fields):
     actions = result.get("actions", [])
     if kind == "nothing":
         return not actions
+    if kind == "steps":  # several, in this order: fields is [(kind, fields)] for each
+        return len(actions) == len(fields) and all(command_right({"actions": [action]}, *wanted) for action, wanted in zip(actions, fields))
     if kind == "answer":
         return all(value in result.get("say", "") for value in fields.values())
     for action in actions:

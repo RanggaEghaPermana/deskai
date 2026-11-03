@@ -226,7 +226,11 @@ class Instant(unittest.TestCase):
 
     def test_more_than_a_mode_goes_to_the_model(self):
         self.assertIsNone(self.action("gua mau belajar react dari youtube"))
-        self.assertIsNone(self.action("mau nulis, terus buka youtube"))
+
+    def test_a_mode_and_then_something_else_is_two_steps(self):
+        result = commands.quick("mau nulis, terus buka youtube", self.MODES, watch_with(), self.PROJECTS)
+        self.assertEqual([action["type"] for action in result["actions"]], ["mode", "open_url"])
+        self.assertEqual(result["actions"][0]["mode"], "writing")
 
     def test_wanting_to_do_what_a_mode_is_for(self):
         for text, mode in (("lagi pengen nulis skripsi", "writing"), ("lanjut nulis bab 3", "writing"), ("kayaknya gua mau belajar dulu", "studying"),
@@ -712,3 +716,140 @@ class Guide(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeveralSteps(unittest.TestCase):
+    """"Matiin toko dan buka terminal": what the lists know, several in a row."""
+
+    MODES = [("writing", "Writing"), ("building", "Building"), ("studying", "Studying")]
+    PROJECTS = {"toko-online": "/w/toko-online", "sistem-gudang": "/w/sistem-gudang"}
+    APPS = {"terminal": "org.gnome.Ptyxis.desktop", "ptyxis": "org.gnome.Ptyxis.desktop", "firefox": "firefox.desktop"}
+
+    def setUp(self):
+        # The terminal is looked up by the ids it might have, the rest by name.
+        found = lambda name: next((app for word, app in self.APPS.items() if word in (name or "").lower()), None)  # noqa: E731
+        patcher = mock.patch.object(commands, "find_app", side_effect=found)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def steps(self, text, watch=None):
+        return commands.steps(text, self.MODES, watch or watch_with(), self.PROJECTS)
+
+    def kinds(self, text, watch=None):
+        result = commands.quick(text, self.MODES, watch or watch_with(), self.PROJECTS)
+        return [action["type"] for action in result["actions"]] if result else None
+
+    def test_every_way_of_joining_them(self):
+        for joined in ("dan", "terus", "trus", "kemudian", "lalu", "habis itu", "abis itu", "setelah itu", "then", "and then", "and"):
+            self.assertEqual(self.kinds(f"tutup gudang {joined} buka terminal"), ["close_project", "open_app"], joined)
+        self.assertEqual(self.kinds("tutup gudang, buka terminal"), ["close_project", "open_app"])
+
+    def test_in_the_order_they_were_said(self):
+        self.assertEqual(self.kinds("pindah ke building terus siapin toko online"), ["mode", "setup_project"])
+        self.assertEqual(self.kinds("siapin toko online terus pindah ke building"), ["setup_project", "mode"])
+
+    def test_a_part_with_no_verb_takes_the_one_before(self):
+        result = commands.quick("buka firefox dan terminal", self.MODES, watch_with(), self.PROJECTS)
+        self.assertEqual([action.get("app") for action in result["actions"]], ["firefox.desktop", "org.gnome.Ptyxis.desktop"])
+        watch = watch_with(("vite :5173", 5173), ("php :8000", 8000))
+        self.assertEqual(self.kinds("matiin vite dan php", watch), ["server", "server"])
+        # "The server" on its own says no more than which one to ask about, and that's a card, not a step.
+        self.assertEqual(self.steps("matiin vite dan server", watch)[1], ["server"])
+
+    def test_one_part_not_understood_is_said_and_nothing_is_done(self):
+        self.assertIsNone(commands.quick("matiin gudang dan tutup claude desktop kemudian buka terminal", self.MODES, watch_with(), self.PROJECTS))
+        done, missed = self.steps("matiin gudang dan tutup claude desktop kemudian buka terminal")
+        self.assertEqual([action["type"] for action in done], ["close_project", "open_app"])
+        self.assertEqual(missed, ["tutup claude desktop"])
+
+    def test_only_what_can_be_a_step(self):
+        done, missed = self.steps("tandai ini kerjaan dan buka terminal")
+        self.assertEqual(([action["type"] for action in done], missed), (["open_app"], ["tandai ini kerjaan"]))
+        self.assertFalse(commands.a_step({"type": "server", "op": "log", "target": "vite"}))
+        self.assertTrue(commands.a_step({"type": "server", "op": "restart", "target": "vite"}))
+        self.assertFalse(commands.a_step({"type": "edit_modes", "request": "x"}))
+        self.assertFalse(commands.a_step("close_project"))
+
+    def test_one_thing_isnt_several(self):
+        self.assertEqual(self.steps("buka terminal"), ([], []))
+        self.assertEqual(self.kinds("buka terminal"), ["open_app"])
+
+    def test_being_told_not_to_isnt_split(self):
+        self.assertEqual(self.steps("jangan matiin gudang terus buka terminal"), ([], []))
+
+    def test_nor_anything_dangerous(self):
+        self.assertEqual(self.steps("buka terminal dan sudo rm -rf /"), ([], []))
+
+    def test_not_more_than_five(self):
+        done, _missed = self.steps(" dan ".join(["buka terminal", "buka firefox", "pindah ke writing", "pindah ke building",
+                                                  "pindah ke studying", "tutup gudang", "siapin toko online"]))
+        self.assertEqual(len(done), commands.MAX_STEPS)
+
+    def test_the_whole_isnt_read_as_one_name(self):
+        # Read as one, it would close a project called "gudang dan buka terminal", or the nearest to it.
+        self.assertEqual(self.kinds("matiin gudang dan buka terminal"), ["close_project", "open_app"])
+
+    def test_a_verb_of_more_than_a_word(self):
+        self.assertEqual(self.kinds("set up toko online and sistem gudang"), ["setup_project", "setup_project"])
+        watch = watch_with(("vite :5173", 5173), ("php :8000", 8000))
+        self.assertEqual(self.kinds("nyalain ulang vite dan php", watch), ["server", "server"])
+
+    def test_one_name_with_and_in_it_isnt_two(self):
+        self.APPS = {"passwords": "org.gnome.seahorse.Application.desktop", "keys": "org.gnome.seahorse.Application.desktop"}
+        self.assertEqual(self.steps("buka passwords and keys"), ([], []))
+
+    def test_whats_left_is_only_for_the_lists_if_its_shaped_like_them(self):
+        self.assertTrue(commands.only_for_the_lists(["tutup claude desktop"]))
+        self.assertFalse(commands.only_for_the_lists(["gua mau tidur"]))
+        self.assertFalse(commands.only_for_the_lists(["tutup claude desktop", "bantuin gua bikin function sorting"]))
+        self.assertFalse(commands.only_for_the_lists([]))
+
+    def test_calling_it_by_name_isnt_a_step(self):
+        self.assertEqual(self.kinds("deskai, buka terminal"), ["open_app"])
+
+    def test_what_answers_on_its_own_card_can_come_last(self):
+        self.assertEqual(self.kinds("buka terminal dan cek ram"), ["open_app", "system"])
+        done, missed = self.steps("cek ram dan buka terminal")
+        self.assertEqual(missed, ["cek ram"], "a card of its own, which the terminal would cover")
+
+    def test_calling_out_isnt_a_step(self):
+        self.assertEqual(self.kinds("bro, tutup gudang terus buka terminal"), ["close_project", "open_app"])
+        self.assertEqual(self.kinds("eh, pindah ke writing"), ["mode"])
+
+    def test_a_word_that_only_looks_like_joining(self):
+        self.assertEqual(self.steps("buka folder pandangan"), ([], []))
+        self.assertEqual(self.steps("siapin toko-online"), ([], []))
+
+
+class Guessing(unittest.TestCase):
+    def test_kept_the_same_way_however_its_typed(self):
+        self.assertEqual(commands.plain("  Gas   Kerja!  "), commands.plain("gas kerja"))
+
+    def test_a_guess_only_has_what_can_be_a_step(self):
+        result = {"actions": [{"type": "mode", "mode": "building"}, {"type": "edit_modes", "request": "x"}, {"type": "server", "op": "log", "target": "v"}]}
+        self.assertEqual(commands.guessed(result, "gas kerja"), [{"type": "mode", "mode": "building"}])
+
+    def test_and_nothing_for_a_dangerous_request(self):
+        self.assertEqual(commands.guessed({"actions": [{"type": "mode", "mode": "building"}]}, "sudo gas kerja"), [])
+
+    def test_nor_for_one_that_says_not_to(self):
+        self.assertEqual(commands.guessed({"actions": [{"type": "server", "op": "stop", "target": "vite"}]}, "jangan matiin vite, matiin php aja"), [])
+
+    def test_a_question_about_something_doesnt_change_it(self):
+        self.assertEqual(commands.only_what_was_asked({"actions": [{"type": "close_project", "project": "gudang"}]}, "kenapa gudang mati?",
+                                                      {"gudang": "/w/gudang"})["actions"], [])
+        self.assertEqual(len(commands.only_what_was_asked({"actions": [{"type": "close_project", "project": "gudang"}]}, "bisa matiin gudang?",
+                                                          {"gudang": "/w/gudang"})["actions"]), 1)
+
+    def test_a_question_keeps_its_answer_instead_of_a_guess(self):
+        self.assertFalse(commands.worth_a_guess({"dropped": 1, "unsure": False}, "kenapa vite mati?"))
+        self.assertTrue(commands.worth_a_guess({"dropped": 1, "unsure": False}, "gas pulang"))
+        self.assertTrue(commands.worth_a_guess({"dropped": 0, "unsure": True}, "gas pulang"))
+        self.assertFalse(commands.worth_a_guess({"dropped": 0, "unsure": False}, "gas pulang"))
+
+    def test_your_words_go_to_the_model_as_examples(self):
+        llm = mock.Mock()
+        commands.interpret(llm, "id", "gas kerja", "desk", taught='"gas ngoding" -> []')
+        self.assertIn('"gas ngoding"', llm.ask.call_args.kwargs["examples"])
+        commands.interpret(llm, "id", "gas kerja", "desk")
+        self.assertNotIn("own words", llm.ask.call_args.kwargs["examples"])

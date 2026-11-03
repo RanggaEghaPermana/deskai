@@ -69,7 +69,7 @@ def apps_installed():
 
 
 class PresetsWindow(Adw.ApplicationWindow):
-    def __init__(self, app):
+    def __init__(self, app, keyword=""):
         super().__init__(application=app, default_width=880, default_height=640)
         self.set_size_request(720, 460)
         self.config = brain.Config()
@@ -81,6 +81,8 @@ class PresetsWindow(Adw.ApplicationWindow):
         self.set_title(self.t("presets_title"))
         self.build(broken)
         self.show_preset(0 if self.items else None)
+        if keyword:  # from a request the command bar didn't understand: a new preset that starts from those words
+            self.new_preset(keyword)
         self.connect("close-request", self.on_close)
 
     def remember_names(self):
@@ -259,8 +261,8 @@ class PresetsWindow(Adw.ApplicationWindow):
 
     # ---- presets and steps --------------------------------------------------
 
-    def new_preset(self):
-        self.items.append({"name": "", "keywords": [""], "steps": []})
+    def new_preset(self, keyword=""):
+        self.items.append({"name": "", "keywords": [keyword], "steps": []})
         self.show_preset(len(self.items) - 1)
         self.name_row.grab_focus()
 
@@ -423,14 +425,33 @@ class PresetsWindow(Adw.ApplicationWindow):
             self.save(then=self.destroy)  # a problem to put right keeps it open, with a toast saying what it is
 
 
-class PresetsApp(Adw.Application):
-    def __init__(self):
-        super().__init__(application_id=f"{BUS_NAME}.Presets")
-        self.connect("activate", self.on_activate)
+KEYWORD_GIVEN = 80  # characters of a request a new preset starts from: more is a paragraph, not a keyword
 
-    def on_activate(self, _app):
-        window = self.get_active_window() or PresetsWindow(self)
+
+class PresetsApp(Adw.Application):
+    """One window: opened again, with --keyword or without, it's the one already open that comes up."""
+
+    def __init__(self):
+        super().__init__(application_id=f"{BUS_NAME}.Presets", flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.connect("command-line", self.on_command_line)
+
+    def on_command_line(self, _app, command_line):
+        keyword, _rest = keyword_given(list(command_line.get_arguments()))
+        window = self.get_active_window()
+        if not window:
+            window = PresetsWindow(self, keyword)
+        elif keyword:
+            window.new_preset(keyword)
         window.present()
+        return 0
+
+
+def keyword_given(argv):
+    """(--keyword's words, or "", and the rest of argv): GTK would take them for files to open."""
+    if "--keyword" in argv[:-1]:
+        at = argv.index("--keyword")
+        return argv[at + 1].strip()[:KEYWORD_GIVEN], argv[:at] + argv[at + 2:]
+    return "", argv
 
 
 if __name__ == "__main__":

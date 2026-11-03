@@ -194,4 +194,13 @@ COMMANDS = [  # (what's typed, what a right answer does: the action's type and w
     ("buka youtube di chrome", ("open_url", {"url": "youtube"})),
     ("buka folder download", ("open_folder", {})),
     ("setup blabla", ("nothing", {})),
+    # Several in one go, one after another.
+    ("matiin gudang dan buka terminal", ("steps", [("close_project", {"project": "/projects/sistem-gudang"}), ("open_app", {"app": "ptyxis"})])),
+    ("pindah ke building terus siapin toko online", ("steps", [("mode", {"mode": "building"}), ("setup_project", {"project": "/projects/toko-online"})])),
+    ("buka firefox dan terminal", ("steps", [("open_app", {"app": "firefox"}), ("open_app", {"app": "ptyxis"})])),
+    ("siapin toko online, kemudian buka youtube", ("steps", [("setup_project", {"project": "/projects/toko-online"}), ("open_url", {"url": "youtube"})])),
+    ("restart vite lalu buka terminal", ("steps", [("server", {"op": "restart", "target": "vite"}), ("open_app", {"app": "ptyxis"})])),
+    ("tutup gudang habis itu pindah ke studying", ("steps", [("close_project", {"project": "/projects/sistem-gudang"}), ("mode", {"mode": "studying"})])),
+    # One part that can't be done: none of it is, without asking first.
+    ("matiin gudang dan tutup claude desktop kemudian buka terminal", ("nothing", {})),
 ]
