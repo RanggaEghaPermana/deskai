@@ -237,6 +237,11 @@ How the dock looks is in the `appearance` key, or in **Appearance…** in DeskAI
 `scheme` (`auto` follows GNOME, `light` or `dark`), `glass` (`clear` or `tinted`), and `blur_windows`, `rim` and
 `reduce_transparency` (true or false). Leave out what you don't care about.
 
+Glass shows what's behind it, and what's written on it is one color, so it holds the view to what that reads against: a
+dark dock stays dark over a white page, and a light one stays light over a dark window. DeskAI's menus, its menu in the
+top bar and its dialogs are the same glass, thicker. It's made to look like Liquid Glass, not to be it: the windows of
+DeskAI Setup and My Presets are ordinary windows, and the light on the edge follows the pointer, not how you hold a device.
+
 ## Remove
 
 Uninstall the package in App Center, or run `sudo apt remove deskai`: that removes DeskAI for everyone logged in, and your

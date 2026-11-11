@@ -438,6 +438,103 @@ class OneSizeInOnePlace(unittest.TestCase):
             self.assertLess(step, face, f"{look}: the ones behind still show")
 
 
+class GlassStaysReadable(unittest.TestCase):
+    """Glass shows what's behind it, and the ink on it is one color. Every see-through material says how dark and how bright
+    the view through it may get (glass_adapt in glass.js). These are the shader's own sums, done here for each material over
+    white, black, gray and strong colors: what's written on it has the contrast small text needs, 4.5 to 1."""
+
+    EXTENSION = ROOT / "extension" / "deskai@ranggaeghapermana.github.io"
+    WEIGHTS = (0.2126, 0.7152, 0.0722)
+    BEHIND = {"white": (1, 1, 1), "black": (0, 0, 0), "gray": (0.5, 0.5, 0.5), "magenta": (0.875, 0.125, 0.875), "green": (0.1, 0.9, 0.2),
+              "yellow": (1, 0.9, 0.1), "blue": (0.1, 0.2, 1), "red": (0.95, 0.1, 0.1)}
+
+    @classmethod
+    def luminance(cls, color):
+        linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in color]
+        return sum(weight * v for weight, v in zip(cls.WEIGHTS, linear))
+
+    @classmethod
+    def contrast(cls, one, other):
+        high, low = sorted((cls.luminance(one), cls.luminance(other)), reverse=True)
+        return (high + 0.05) / (low + 0.05)
+
+    @classmethod
+    def through(cls, behind, tint, alpha, saturation, brightness, low, high):
+        """The color of the glass over `behind`, as CODE in glass.js works it out for the flat of the glass."""
+        luma = sum(weight * v for weight, v in zip(cls.WEIGHTS, behind))
+        c = [min(1, max(0, (luma + (v - luma) * saturation) * brightness)) for v in behind]
+        m = sum(weight * v ** 2.2 for weight, v in zip(cls.WEIGHTS, c)) ** (1 / 2.2)
+        if m > high:
+            c = [v * ((high + (m - high) * 0.2) / m) for v in c]
+        elif m < low:
+            c = [1 - (1 - v) * ((1 - low + (low - m) * 0.2) / (1 - m)) for v in c]
+        return [min(1, max(0, v)) * (1 - alpha) + t * alpha for v, t in zip(c, tint)]
+
+    def materials(self):
+        """{(scheme, name): what through() takes}, with the cards' and command bar's "float" worked out as theme.js does."""
+        block = (self.EXTENSION / "theme.js").read_text().split("const MATERIAL = {")[1].split("\n};")[0]
+        scheme, found = None, {}
+        for line in block.splitlines():
+            named = re.match(r"\s*(light|dark): \{$", line)
+            scheme = named.group(1) if named else scheme
+            material = re.match(r"\s*(clear|tinted|sheet): \{tint: rgb\((\d+), (\d+), (\d+), ([\d.]+)\).*saturation: ([\d.]+), "
+                                r"brightness: ([\d.]+).*adapt: \[([\d.]+), ([\d.]+)\]", line)
+            if material:
+                r, g, b, alpha, saturation, brightness, low, high = map(float, material.groups()[1:])
+                found[(scheme, material.group(1))] = {"tint": (r / 255, g / 255, b / 255), "alpha": alpha, "saturation": saturation,
+                                                      "brightness": brightness, "low": low, "high": high}
+            floating = re.match(r"\s*float: ([\d.]+)", line)
+            if floating:
+                edge = float(floating.group(1))
+                found[(scheme, "float")] = {**found[(scheme, "clear")], "alpha": found[(scheme, "clear")]["alpha"] + 0.16,
+                                            "low": 0 if scheme == "dark" else edge, "high": edge if scheme == "dark" else 1}
+        return found
+
+    def ink(self, selector):
+        css = (self.EXTENSION / "stylesheet.css").read_text()
+        color = re.search(rf"^{re.escape(selector)} \{{ color: (#[0-9a-f]{{6}}); \}}", css, re.M).group(1)
+        return tuple(int(color[at:at + 2], 16) / 255 for at in (1, 3, 5))
+
+    def worst(self, material, ink):
+        return min((self.contrast(ink, self.through(behind, **material)), name) for name, behind in self.BEHIND.items())
+
+    def test_every_material_is_there(self):
+        self.assertEqual(sorted(self.materials()), sorted((scheme, name) for scheme in ("dark", "light") for name in ("clear", "float", "sheet", "tinted")))
+
+    def test_whats_written_on_it_reads_over_anything(self):
+        for (scheme, name), material in self.materials().items():
+            ratio, behind = self.worst(material, self.ink(f".deskai-lg-{scheme}"))
+            self.assertGreaterEqual(ratio, 4.5, f"{scheme} {name} over {behind}")
+
+    def test_so_do_the_smaller_words(self):
+        # On the dock's clear glass they're a shade further from it than on a menu's or a card's.
+        for (scheme, name), material in self.materials().items():
+            selector = f".deskai-lg-{scheme} .deskai-mode-time" if name == "clear" else f".deskai-lg-{scheme} .deskai-inbox-item-meta"
+            ratio, behind = self.worst(material, self.ink(selector))
+            self.assertGreaterEqual(ratio, 4.5, f"{scheme} {name} over {behind}")
+
+    def test_it_would_notice(self):
+        # With nothing holding the view, white ink on dark glass over a white page is what was reported: about 1.5 to 1.
+        material = {**self.materials()[("dark", "clear")], "low": 0, "high": 1}
+        self.assertLess(self.worst(material, self.ink(".deskai-lg-dark"))[0], 2)
+
+    def test_menus_are_glass_of_their_own_and_not_nearly_solid(self):
+        for (scheme, name), material in self.materials().items():
+            if name == "sheet":
+                self.assertLessEqual(material["alpha"], 0.6, f"{scheme}: a menu this solid is a panel, beside a dock you can see through")
+
+    def test_the_shader_does_these_sums(self):
+        source = (self.EXTENSION / "glass.js").read_text()
+        for line in ("return pow(dot(pow(c, vec3(2.2)), vec3(0.2126, 0.7152, 0.0722)), 1.0 / 2.2);",
+                     "return c * ((adapt.y + (m - adapt.y) * 0.2) / m);",
+                     "return vec3(1.0) - (vec3(1.0) - c) * ((1.0 - adapt.x + (adapt.x - m) * 0.2) / (1.0 - m));",
+                     "c = clamp(glass_adapt(c), 0.0, 1.0);", "uniform vec2 adapt;", "this._set('adapt', look.adapt ?? [0, 1]);"):
+            self.assertIn(line, source)
+        # Both ways of drawing the glass send every uniform on these two lists, and a new one starts out set.
+        self.assertIn("'adapt'", source.split("const UNIFORMS = [")[1].split("];")[0])
+        self.assertIn("adapt: [0, 1]", source.split("const STARTING = {")[1].split("};")[0])
+
+
 class PythonVersions(unittest.TestCase):
     def test_everything_parses_on_the_oldest_python(self):
         # Ubuntu 24.04's.

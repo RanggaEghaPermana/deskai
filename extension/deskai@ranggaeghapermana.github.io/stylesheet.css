@@ -820,10 +820,11 @@
 .deskai-lg .deskai-mode-icon { icon-size: 18px; }
 .deskai-lg .deskai-mode-labels { padding: 0 3px 0 8px; spacing: 7px; }
 .deskai-lg .deskai-mode-label { font-size: 14px; font-weight: 600; }
-.deskai-lg-light .deskai-mode-time { color: #48484d; }
+/* The smaller words on the dock, on its clear glass: a shade further from it than on a menu's thicker glass. */
+.deskai-lg-light .deskai-mode-time { color: #3a3a3c; }
 /* Counting down, the mode's color fills in behind it: gray on that is hard to read. */
 .deskai-lg-light .deskai-mode.pending .deskai-mode-time { color: #1c1c1e; }
-.deskai-lg-dark .deskai-mode-time { color: #c7c7cc; }
+.deskai-lg-dark .deskai-mode-time { color: #d1d1d6; }
 .deskai-lg .deskai-mode-progress { border-radius: 23px; }
 .deskai-lg-light .deskai-badge { background-color: rgba(60, 60, 67, 0.12); }
 .deskai-lg-dark .deskai-badge { background-color: rgba(255, 255, 255, 0.16); }
@@ -899,8 +900,8 @@
 .deskai-lg .deskai-inbox-count { font-size: 14px; }
 .deskai-lg .deskai-music-title { font-size: 13px; font-weight: 600; }
 .deskai-lg .deskai-music-artist { font-size: 12px; }
-.deskai-lg-light .deskai-music-artist { color: #48484d; }
-.deskai-lg-dark .deskai-music-artist { color: #c7c7cc; }
+.deskai-lg-light .deskai-music-artist { color: #3a3a3c; }
+.deskai-lg-dark .deskai-music-artist { color: #d1d1d6; }
 .deskai-lg-light .deskai-music-track:hover .deskai-music-artist { color: #1c1c1e; }
 .deskai-lg .deskai-music-control { min-width: 30px; min-height: 30px; border-radius: 15px; }
 .deskai-lg-light .deskai-music-control { color: #1c1c1e; }
@@ -1027,6 +1028,44 @@
 .modal-dialog.deskai-lg-light .modal-dialog-button-box .modal-dialog-button:default { background-color: #0066cc; color: #ffffff; }
 .modal-dialog.deskai-lg-dark .modal-dialog-button-box .modal-dialog-button:default { background-color: #0a6cd6; color: #ffffff; }
 .modal-dialog.deskai-lg .modal-dialog-button-box .modal-dialog-button:focus { box-shadow: inset 0 0 0 2px rgba(10, 108, 214, 0.6) !important; }
+/* What's typed in: GNOME's own entries follow GNOME's scheme, which needn't be the glass's. */
+.deskai-lg .deskai-dialog-entry,
+.deskai-lg .deskai-break-entry,
+.deskai-lg .deskai-picker-search {
+  border-width: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  selected-color: #ffffff;
+}
+.deskai-lg-light .deskai-dialog-entry,
+.deskai-lg-light .deskai-break-entry,
+.deskai-lg-light .deskai-picker-search {
+  background-color: rgba(60, 60, 67, 0.1);
+  color: #1c1c1e;
+  caret-color: #1c1c1e;
+  selection-background-color: #0066cc;
+}
+.deskai-lg-dark .deskai-dialog-entry,
+.deskai-lg-dark .deskai-break-entry,
+.deskai-lg-dark .deskai-picker-search {
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #f5f5f7;
+  caret-color: #f5f5f7;
+  selection-background-color: #0a6cd6;
+}
+.deskai-lg .deskai-dialog-entry:focus,
+.deskai-lg .deskai-break-entry:focus,
+.deskai-lg .deskai-picker-search:focus { box-shadow: inset 0 0 0 2px rgba(10, 108, 214, 0.6); }
+.deskai-lg-light .deskai-dialog-entry StLabel.hint-text,
+.deskai-lg-light .deskai-picker-search StLabel.hint-text { color: #48484d; }
+.deskai-lg-dark .deskai-dialog-entry StLabel.hint-text,
+.deskai-lg-dark .deskai-picker-search StLabel.hint-text { color: #d1d1d6; }
+.deskai-lg-light .deskai-icon-choice { color: #1c1c1e; }
+.deskai-lg-dark .deskai-icon-choice { color: #f5f5f7; }
+.deskai-lg-light .deskai-icon-choice:hover { background-color: rgba(60, 60, 67, 0.1); }
+.deskai-lg-light .deskai-icon-choice.selected { background-color: rgba(60, 60, 67, 0.2); }
+.deskai-lg-dark .deskai-icon-choice:hover { background-color: rgba(255, 255, 255, 0.12); }
+.deskai-lg-dark .deskai-icon-choice.selected { background-color: rgba(255, 255, 255, 0.24); }
 .deskai-lg-light .deskai-dialog-label,
 .deskai-lg-light .deskai-appearance-tile-label { color: #48484d; }
 .deskai-lg-dark .deskai-dialog-label,

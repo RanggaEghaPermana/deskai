@@ -329,6 +329,73 @@ expect "a label isn't cut short after changing the look twice" "$(val "(() => {
   return Math.round(entry.labelClip.width) === Math.round(entry.labelBox.get_preferred_width(-1)[1]);
 })()")" true
 expect "the look it already has isn't applied again" "$(val "_T.ext._theme.set({theme: 'glass'})")" false
+
+# The active mode's capsule is in the mode's own color: "#3b82f6" was once read as "#3b8", and blue came out green.
+expect "the capsule on glass is in the mode's color" "$(val "(() => {
+  const want = _T.ext._modeColor(_T.ext._modes[_T.ext._mode]).slice(1, 7);
+  const has = _T.ext._theme._surfaces.get(_T.ext._dock).layer._selection.color.slice(0, 3);
+  return has.map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('') === want.toLowerCase();
+})()")" true
+
+# Glass takes on what's behind it, and the ink on it doesn't change: the view is held to what the ink reads against.
+# The contrast of an ink (#rrggbb) with the dock's glass, at an empty spot beside its first separator: 4.5 is what small text needs.
+ink_contrast() {
+  ev "(() => {
+    const dock = _T.ext._dock.get_transformed_extents();
+    const sep = _T.ext._dock.get_children().find(c => (c.style_class ?? '').includes('deskai-sep')).get_transformed_extents();
+    const linear = v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const bright = ([r, g, b]) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    const ink = bright([1, 3, 5].map(i => parseInt('$1'.slice(i, i + 2), 16) / 255));
+    const shot = new imports.gi.Shell.Screenshot();
+    _T.picked = null;
+    shot.pick_color(Math.round(sep.origin.x - 3), Math.round(dock.origin.y + dock.size.height / 2), (_o, result) => {
+      const [, c] = shot.pick_color_finish(result);
+      const glass = bright(['red', 'green', 'blue'].map(name => (c['get_' + name] ? c['get_' + name]() : c[name] / 255)));
+      _T.picked = ((Math.max(ink, glass) + 0.05) / (Math.min(ink, glass) + 0.05)).toFixed(1);
+    });
+  })()" >/dev/null
+  sleep 0.6
+  val "_T.picked ?? 'nothing'"
+}
+at_most() { python3 -c "import sys; print('yes' if float(sys.argv[1]) <= float(sys.argv[2]) else 'no: ' + sys.argv[1])" "$1" "$2" 2>/dev/null || echo "no: $1"; }
+at_least() { python3 -c "import sys; print('yes' if float(sys.argv[1]) >= float(sys.argv[2]) else 'no: ' + sys.argv[1])" "$1" "$2" 2>/dev/null || echo "no: $1"; }
+ev "_T.ext._applyAppearance({theme: 'glass', scheme: 'light'}); _T.ext._peek(60000); 'ok'" >/dev/null
+sleep 1.2
+if [ "$(val "_T.ext._theme._glass.live")" = true ]; then
+  if [ "$windows" = "2" ]; then
+    # A text editor's window is white unless the desktop is dark, and a white page under a dark dock is where its ink got lost.
+    ev "_T.ext._applyAppearance({theme: 'glass', scheme: 'dark'}); _T.wins()[0].maximize(3); Main.activateWindow(_T.wins()[0]); _T.ext._peek(60000); 'ok'" >/dev/null
+    sleep 1.5
+    behind() {
+      ev "(() => { const s = new imports.gi.Shell.Screenshot(); _T.behind = null; s.pick_color(200, 300, (_o, r) => { const [, c] = s.pick_color_finish(r); _T.behind = (c.get_green ? c.get_green() : c.green / 255).toFixed(2); }); })()" >/dev/null
+      sleep 0.6
+      val "_T.behind ?? 'nothing'"
+    }
+    if [ "$(at_least "$(behind)" 0.85)" = yes ]; then
+      expect "white ink reads on dark glass over a white window" "$(at_least "$(ink_contrast '#f5f5f7')" 4.5)" yes
+      expect "and so do the smaller words" "$(at_least "$(ink_contrast '#d1d1d6')" 4.5)" yes
+    else
+      skipped "dark glass over a white window: the window here isn't white"
+    fi
+    # The same window, dark, under a light dock.
+    ev "_T.desktop = imports.gi.Gio.Settings.new('org.gnome.desktop.interface'); _T.scheme = _T.desktop.get_string('color-scheme'); _T.desktop.set_string('color-scheme', 'prefer-dark'); _T.ext._applyAppearance({theme: 'glass', scheme: 'light'}); _T.ext._peek(60000); 'ok'" >/dev/null
+    sleep 2
+    if [ "$(at_most "$(behind)" 0.3)" = yes ]; then
+      expect "dark ink reads on light glass over a dark window" "$(at_least "$(ink_contrast '#1c1c1e')" 4.5)" yes
+      expect "and so do the smaller words" "$(at_least "$(ink_contrast '#3a3a3c')" 4.5)" yes
+    else
+      skipped "light glass over a dark window: the window here doesn't go dark"
+    fi
+    ev "_T.desktop.set_string('color-scheme', _T.scheme); _T.wins()[0].unmaximize(3); 'ok'" >/dev/null
+    sleep 0.8
+  else
+    skipped "glass over a white window: no window to put behind it"
+  fi
+else
+  skipped "what glass does over a window: this shell can't read the screen back, so it shows the wallpaper"
+fi
+ev "_T.ext._applyAppearance(); 'ok'" >/dev/null
+sleep 0.5
 ev "for (const item of _T.ext._inbox.list()) _T.ext._inbox.remove(item.key); _T.ext._inbox._looking = _T.looking; _T.ext._closeCard(); _T.ext._applyAppearance(); 'ok'" >/dev/null
 sleep 0.5
 

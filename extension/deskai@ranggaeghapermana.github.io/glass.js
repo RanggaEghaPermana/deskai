@@ -2,9 +2,9 @@
 //
 // Each surface gets a layer of its own, behind it, that draws the glass in full: what's on the screen
 // behind it, then one shader that rounds the shape, bends the view through a bevel along the edge like
-// a lens, frosts the middle, lifts the color, tints, lights the rim from the top left in the colors
-// around it, and casts the shadow. The surface itself stays an ordinary St widget with a clear
-// background, painted on top of its layer.
+// a lens, frosts the middle, lifts the color, holds the view to a brightness the ink on it can be read
+// against, tints, lights the rim from the top left in the colors around it, and casts the shadow. The
+// surface itself stays an ordinary St widget with a clear background, painted on top of its layer.
 //
 // What's behind comes from the screen itself ("live"): while the layer is painted, everything under it
 // already is, so the layer copies those pixels out of the frame being drawn, only where something
@@ -57,6 +57,7 @@ uniform float rim;
 uniform float sheen;
 uniform float bend;
 uniform float clarity;
+uniform vec2 adapt;
 uniform float shadow;
 uniform vec4 line;
 uniform vec4 valid;
@@ -89,6 +90,27 @@ float glass_field(vec2 at) {
     vec2 hs = shape.zw * 0.5;
     float d = glass_box(at - (shape.xy + hs), hs, min(radius, min(hs.x, hs.y)));
     return sat_k > 0.5 ? glass_smin(d, glass_sat(at), sat_k) : d;
+}
+
+// How bright a color is to the eye, as the gray that's as bright: its luminance in linear light, back in
+// the screen's own scale. Weighing the screen's values as they are calls a strong purple or green darker
+// than it is, and ink is read against what the eye sees.
+float glass_light(vec3 c) {
+    return pow(dot(pow(c, vec3(2.2)), vec3(0.2126, 0.7152, 0.0722)), 1.0 / 2.2);
+}
+
+// Glass takes on what's behind it, and what's written on it doesn't change: white ink on a dark dock is
+// lost once a white page is under it. So the view is held to a range the ink reads against: adapt is the
+// darkest and the brightest it may be. It's measured at each point as it's drawn, the sharp view through
+// the bevel included, so a white line behind the edge is held too. Past the range it's pressed back toward
+// it and not cut off, so a white window behind still shows as the lighter part.
+vec3 glass_adapt(vec3 c) {
+    float m = glass_light(c);
+    if (m > adapt.y)
+        return c * ((adapt.y + (m - adapt.y) * 0.2) / m);
+    if (m < adapt.x)
+        return vec3(1.0) - (vec3(1.0) - c) * ((1.0 - adapt.x + (adapt.x - m) * 0.2) / (1.0 - m));
+    return c;
 }
 
 vec2 glass_normal(vec2 p, vec2 b, float r) {
@@ -202,6 +224,7 @@ if (backdrop > 0.5 && inside > 0.0) {
     vec3 c = mix(glass_soft(base), bent, clamp(lens * 1.8, 0.0, 1.0) * clarity);
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = clamp(mix(vec3(l), c, saturation) * brightness, 0.0, 1.0);
+    c = clamp(glass_adapt(c), 0.0, 1.0);
     col = mix(c, tint.rgb, tint.a * (1.0 - 0.35 * lens));
     around = glass_soft(px + n * (b + 8.0)); // what the rim catches: the light just outside it
 }
@@ -225,6 +248,8 @@ if (pill.z > 0.5) {
     if (pill_power > 0.001 && backdrop > 0.5 && pin > 0.0) {
         vec3 sc = glass_sharp(pill.xy + ph + pp / (1.0 + 0.25 * pill_power));
         sc = clamp(mix(vec3(dot(sc, vec3(0.2126, 0.7152, 0.0722))), sc, saturation) * brightness, 0.0, 1.0);
+        // Tinted like the glass around it, or the ink on the capsule would fade for as long as it moves.
+        sc = mix(clamp(glass_adapt(sc), 0.0, 1.0), tint.rgb, tint.a);
         col = mix(col, sc, pin * pill_power);
     }
     col = mix(col, pill_color.rgb, pill_color.a * pin);
@@ -250,12 +275,12 @@ vec4 glass = vec4(clamp(col, 0.0, 1.0), 1.0) * inside;
 cogl_color_out = (glass + vec4(0.0, 0.0, 0.0, shade * (1.0 - inside))) * cogl_color_in.a;
 `;
 
-const UNIFORMS = ['size', 'shape', 'radius', 'tint', 'saturation', 'brightness', 'backdrop', 'rim', 'sheen', 'bend', 'clarity',
+const UNIFORMS = ['size', 'shape', 'radius', 'tint', 'saturation', 'brightness', 'backdrop', 'rim', 'sheen', 'bend', 'clarity', 'adapt',
     'shadow', 'line', 'valid', 'pill', 'pill_color', 'pill_power', 'pointer', 'sat', 'sat_r', 'sat_k'];
 
 // Every uniform starts out set: GNOME shares one pipeline among all effects of a class, and a new one
 // would start with whatever the first had (the dock's selection showing in every card).
-const STARTING = {pill: [0, 0, 0, 0], pill_color: [0, 0, 0, 0], pill_power: [0], pointer: [0, 0, 0], line: [0, 0, 0, 0], clarity: [1],
+const STARTING = {pill: [0, 0, 0, 0], pill_color: [0, 0, 0, 0], pill_power: [0], pointer: [0, 0, 0], line: [0, 0, 0, 0], clarity: [1], adapt: [0, 1],
     sat: [0, 0, 0, 0], sat_r: [0], sat_k: [0]};
 
 // How far apart (in pixels) a satellite and the dock still melt together while it's budding off.
@@ -357,7 +382,8 @@ class DeskAIGlassLensEffect extends Shell.GLSLEffect {
 
 // "#rrggbb" or "rgb(a)(…)" as GLSL wants it: 0–1, alpha left out.
 function parseColor(color) {
-    const hex = color?.match(/^#([0-9a-f]{3}|[0-9a-f]{6})/i)?.[1];
+    // Six digits first: tried the other way round, #3b82f6 is taken for #3b8, and a blue mode gets a green capsule.
+    const hex = color?.match(/^#([0-9a-f]{6}|[0-9a-f]{3})/i)?.[1];
     if (hex) {
         const full = hex.length === 3 ? [...hex].map(c => c + c).join('') : hex;
         return [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16) / 255);
@@ -553,6 +579,7 @@ class DeskAIGlassLayer extends Clutter.Actor {
         this._set('sheen', [look.sheen]);
         this._set('bend', [look.bend]);
         this._set('clarity', [look.clarity ?? 1]);
+        this._set('adapt', look.adapt ?? [0, 1]);
         this._set('shadow', [look.shadow]);
         this._set('line', look.line);
         this.sync();

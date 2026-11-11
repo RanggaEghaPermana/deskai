@@ -966,7 +966,9 @@ export default class DeskAIExtension extends Extension {
             entry.button.style_class = `deskai-mode${active ? ' active' : ''}${pending ? ' pending' : ''}`;
             if (this._theme?.isGlass) {
                 // On glass the active mode's pill is part of the glass (theme.select below), so it can
-                // slide and stretch to the next mode. Its color draws the icon; the label stays ink.
+                // slide and stretch to the next mode. The pill carries the mode's color, and what's on it is
+                // ink, icon and label alike: an icon in that same color is lost on it. The other modes' icons
+                // are in their colors.
                 if (active)
                     entry.button.set_style(null);
                 else if (pending)
@@ -974,7 +976,7 @@ export default class DeskAIExtension extends Extension {
                 else
                     entry.button.set_style(null);
                 // A mode counting down has its icon on the fill, which is that same color: white there, as on Classic.
-                entry.icon.set_style(`color: ${pending ? '#ffffff' : color};`);
+                entry.icon.set_style(active ? null : `color: ${pending ? '#ffffff' : color};`);
             } else {
                 if (active)
                     entry.button.set_style(`background-color: ${color};`);
@@ -2818,6 +2820,10 @@ export default class DeskAIExtension extends Extension {
         box.add_child(this._indicatorLabel);
         this._indicator.add_child(box);
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
+        // DeskAI's own menu in the top bar is glass like the dock's menus. GNOME's other menus stay GNOME's.
+        const menu = this._indicator.menu;
+        menu.actor.add_style_class_name('deskai-menu');
+        this._theme.add(menu.actor, {kind: 'sheet', radius: 16, shapeOf: () => menu.box});
     }
 
     _updateIndicator() {

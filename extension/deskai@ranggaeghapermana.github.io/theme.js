@@ -15,26 +15,33 @@ export const APPEARANCE_DEFAULTS = {
     reduce_transparency: false,
 };
 
-const CLASSES = ['deskai-lg', 'deskai-lg-light', 'deskai-lg-dark', 'deskai-lg-tinted', 'deskai-lg-solid'];
+const CLASSES = ['deskai-lg', 'deskai-lg-light', 'deskai-lg-dark', 'deskai-lg-tinted', 'deskai-lg-sheet', 'deskai-lg-solid'];
 
 const rgb = (r, g, b, a) => [r / 255, g / 255, b / 255, a];
 
 // The material, as the design's spec sheet has it. blur: the frost's sigma in pixels, like a CSS blur;
-// bend: how many pixels from past the edge the rim shows; clarity: how sharp the view is through it.
+// bend: how many pixels from past the edge the rim shows; clarity: how sharp the view is through it;
+// adapt: the darkest and the brightest the view through it may get, so the ink on it stays readable
+// whatever is behind (glass_adapt in glass.js). Dark ink needs a light view, and light ink a dark one.
+// sheet is for menus and dialogs: thicker glass of the same kind, since they're all text.
 const MATERIAL = {
     light: {
-        clear: {tint: rgb(255, 255, 255, 0.18), blur: 6, saturation: 1.6, brightness: 1.06, rim: 0.85, sheen: 0.16, bend: 22, clarity: 1},
-        tinted: {tint: rgb(246, 246, 249, 0.74), blur: 18, saturation: 1.6, brightness: 1, rim: 0.85, sheen: 0.12, bend: 14, clarity: 0.6},
+        clear: {tint: rgb(255, 255, 255, 0.18), blur: 6, saturation: 1.6, brightness: 1.06, rim: 0.85, sheen: 0.16, bend: 22, clarity: 1, adapt: [0.74, 1]},
+        tinted: {tint: rgb(246, 246, 249, 0.74), blur: 18, saturation: 1.6, brightness: 1, rim: 0.85, sheen: 0.12, bend: 14, clarity: 0.6, adapt: [0.5, 1]},
+        sheet: {tint: rgb(246, 246, 249, 0.5), blur: 20, saturation: 1.6, brightness: 1, rim: 0.85, sheen: 0.12, bend: 14, clarity: 0.6, adapt: [0.82, 1]},
         solid: {tint: rgb(242, 242, 246, 1), blur: 0, saturation: 1, brightness: 1, rim: 0, sheen: 0, bend: 0},
         shadow: 0.2,
         line: rgb(60, 60, 67, 0.18),
+        float: 0.76, // the least a card's or the command bar's view may be: their text is smaller than the dock's
     },
     dark: {
-        clear: {tint: rgb(22, 22, 26, 0.2), blur: 6, saturation: 1.5, brightness: 0.92, rim: 0.6, sheen: 0.06, bend: 22, clarity: 1},
-        tinted: {tint: rgb(32, 32, 37, 0.78), blur: 18, saturation: 1.5, brightness: 1, rim: 0.55, sheen: 0.05, bend: 14, clarity: 0.6},
+        clear: {tint: rgb(22, 22, 26, 0.2), blur: 6, saturation: 1.5, brightness: 0.92, rim: 0.6, sheen: 0.06, bend: 22, clarity: 1, adapt: [0, 0.28]},
+        tinted: {tint: rgb(32, 32, 37, 0.78), blur: 18, saturation: 1.5, brightness: 1, rim: 0.55, sheen: 0.05, bend: 14, clarity: 0.6, adapt: [0, 0.5]},
+        sheet: {tint: rgb(30, 30, 35, 0.5), blur: 20, saturation: 1.5, brightness: 1, rim: 0.55, sheen: 0.05, bend: 14, clarity: 0.6, adapt: [0, 0.24]},
         solid: {tint: rgb(44, 44, 49, 1), blur: 0, saturation: 1, brightness: 1, rim: 0, sheen: 0, bend: 0},
         shadow: 0.45,
         line: rgb(235, 235, 245, 0.16),
+        float: 0.26, // the most
     },
 };
 
@@ -147,7 +154,9 @@ export class Theme {
         const {glass, reduce_transparency: solid} = this._appearance;
         if (solid)
             return 'solid';
-        return kind === 'sheet' || glass === 'tinted' ? 'tinted' : 'clear';
+        if (glass === 'tinted')
+            return 'tinted';
+        return kind === 'sheet' ? 'sheet' : 'clear';
     }
 
     _restyle(actor) {
@@ -182,6 +191,7 @@ export class Theme {
         if (variant === 'clear' && kind === 'float') {
             look.tint = [...look.tint.slice(0, 3), look.tint[3] + 0.16];
             look.blur = 10;
+            look.adapt = scheme === 'dark' ? [0, material.float] : [material.float, 1];
         }
         if (!rim || variant === 'solid') {
             look.rim = 0;
