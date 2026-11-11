@@ -149,6 +149,12 @@ const INBOX_COLORS = {attention: '#f59e0b', done: '#10b981', message: '#e5484d'}
 const SERVER_COLORS = {up: '#10b981', starting: '#f59e0b', down: '#e5484d'};
 const MESSAGE_COLORS = {whatsapp: '#25d366', telegram: '#2aabee', signal: '#3a76f0'};
 const MUSIC_COVER_SIZE = 24;
+// The icons stacked in the inbox pill. They're placed by hand, so their size is said here and nowhere else:
+// a size in the stylesheet that this didn't know about left them hanging out of the pill.
+const INBOX_FACES = {
+    classic: {face: 22, step: 13, icon: 16},
+    glass: {face: 34, step: 20, icon: 22},
+};
 // A preview that plays for a moment doesn't bring the music pill up, and the gap between two songs doesn't fold it.
 const MUSIC_SHOW_MS = 1000;
 const MUSIC_HIDE_MS = 3000;
@@ -650,7 +656,7 @@ export default class DeskAIExtension extends Extension {
         this._pending = {target, start: now, deadline: now + seconds * 1000};
         this._peek(seconds * 1000 + 1500);
         const entry = this._modeEntries.get(target);
-        const height = entry.button.height || 34;
+        const height = entry.button.height || this._pillHeight();
         entry.progress.set_size(height, height);
         this._tickPending(); // fill in the time first, so the label opens to its full width
         this._syncModeButtons(true);
@@ -674,7 +680,7 @@ export default class DeskAIExtension extends Extension {
         }
         const entry = this._modeEntries.get(pending.target);
         const fraction = Math.min(1, (now - pending.start) / (pending.deadline - pending.start));
-        const height = entry.button.height || 34;
+        const height = entry.button.height || this._pillHeight();
         entry.progress.set_size(Math.max(height, Math.round(fraction * entry.button.width)), height);
         const seconds = Math.ceil(remaining / 1000);
         const text = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -967,7 +973,8 @@ export default class DeskAIExtension extends Extension {
                     entry.button.set_style(`background-color: ${withAlpha(color, 0.14)};`);
                 else
                     entry.button.set_style(null);
-                entry.icon.set_style(`color: ${color};`);
+                // A mode counting down has its icon on the fill, which is that same color: white there, as on Classic.
+                entry.icon.set_style(`color: ${pending ? '#ffffff' : color};`);
             } else {
                 if (active)
                     entry.button.set_style(`background-color: ${color};`);
@@ -1809,16 +1816,38 @@ export default class DeskAIExtension extends Extension {
         if (!this._theme)
             return;
         const wasGlass = this._theme.isGlass;
-        this._theme.set(draft ?? this._config.appearance);
-        this._onThemeChanged(wasGlass !== this._theme.isGlass);
+        if (this._theme.set(draft ?? this._config.appearance))
+            this._onThemeChanged(wasGlass !== this._theme.isGlass);
     }
 
-    // What CSS alone can't restyle: inline colors, the card's tail, and app icons, which are larger on glass.
+    // What CSS alone can't restyle: inline colors, the card's tail, and app icons and the inbox pill's, which are
+    // larger on glass.
     _onThemeChanged(iconsChanged) {
         this._card?.setGlass(this._theme.isGlass);
         this._syncModeButtons(false);
-        if (iconsChanged)
+        if (iconsChanged) {
             this._rebuildApps(false);
+            this._syncInbox();
+        }
+        this._debounce('theme-layout', 80, () => this._measureAgain());
+    }
+
+    // A new look changes fonts and paddings, and St takes those in as it lays the dock out, when asking for
+    // another layout is ignored. Two changes in a row (trying a look, then saving it) could leave a label cut
+    // short at the width it had before. Once the styles have settled, everything is measured again.
+    _measureAgain() {
+        const measure = actor => {
+            actor.queue_relayout();
+            actor.get_children().forEach(measure);
+        };
+        if (this._dock)
+            measure(this._dock);
+        this._queueVisibility();
+    }
+
+    // A pill's height before it's been laid out, as the stylesheet has it for each look.
+    _pillHeight() {
+        return this._theme?.isGlass ? 46 : 34;
     }
 
     _iconSize() {
@@ -2397,14 +2426,17 @@ export default class DeskAIExtension extends Extension {
         if (shown?.kind === 'inbox' && !this._inbox.get(shown.inbox_key))
             this._closeCard();
 
-        const FACE = 22, STEP = 13;
+        const {face: FACE, step: STEP, icon: ICON} = INBOX_FACES[this._theme?.isGlass ? 'glass' : 'classic'];
         const faces = items.slice(0, 3);
         this._inboxFaces.destroy_all_children();
         // The most pressing one on top, at the left.
         faces.reverse().forEach((item, i) => {
             const face = new St.Bin({
                 style_class: 'deskai-inbox-face',
-                child: new St.Icon({gicon: item.gicon, fallback_icon_name: 'mail-unread-symbolic', icon_size: 16}),
+                style: `border-radius: ${FACE / 2}px;`,
+                width: FACE,
+                height: FACE,
+                child: new St.Icon({gicon: item.gicon, fallback_icon_name: 'mail-unread-symbolic', icon_size: ICON}),
             });
             face.set_position((faces.length - 1 - i) * STEP, 0);
             this._inboxFaces.add_child(face);

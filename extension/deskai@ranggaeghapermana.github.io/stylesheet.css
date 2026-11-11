@@ -473,10 +473,8 @@
   spacing: 7px;
 }
 
+/* Its size is set where the faces are placed (INBOX_FACES in extension.js). */
 .deskai-inbox-face {
-  width: 22px;
-  height: 22px;
-  border-radius: 11px;
   background-color: rgba(28, 27, 31, 0.95);
 }
 
@@ -823,6 +821,8 @@
 .deskai-lg .deskai-mode-labels { padding: 0 3px 0 8px; spacing: 7px; }
 .deskai-lg .deskai-mode-label { font-size: 14px; font-weight: 600; }
 .deskai-lg-light .deskai-mode-time { color: #48484d; }
+/* Counting down, the mode's color fills in behind it: gray on that is hard to read. */
+.deskai-lg-light .deskai-mode.pending .deskai-mode-time { color: #1c1c1e; }
 .deskai-lg-dark .deskai-mode-time { color: #c7c7cc; }
 .deskai-lg .deskai-mode-progress { border-radius: 23px; }
 .deskai-lg-light .deskai-badge { background-color: rgba(60, 60, 67, 0.12); }
@@ -896,7 +896,6 @@
 .deskai-lg .deskai-next-icon { icon-size: 18px; }
 .deskai-lg .deskai-next-box { spacing: 8px; }
 .deskai-lg .deskai-next-label { font-size: 13px; font-weight: 600; }
-.deskai-lg .deskai-inbox-face { width: 34px; height: 34px; border-radius: 17px; }
 .deskai-lg .deskai-inbox-count { font-size: 14px; }
 .deskai-lg .deskai-music-title { font-size: 13px; font-weight: 600; }
 .deskai-lg .deskai-music-artist { font-size: 12px; }

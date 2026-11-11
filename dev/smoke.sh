@@ -290,6 +290,48 @@ else
   fi
 fi
 
+# Each look draws the same dock at its own sizes and in its own colors. What's placed by hand has to fit in both.
+ev "_T.looking = _T.ext._inbox._looking; _T.ext._inbox._looking = () => false; 'ok'" >/dev/null
+for look in classic glass; do
+  ev "_T.ext._applyAppearance({theme: '$look'}); _T.ext._setMode('building'); 'ok'" >/dev/null
+  tell_inbox '{"source":"claude-code","event":"done","session":"look-a","cwd":"/w/a","text":"selesai"}'
+  tell_inbox '{"source":"codex","event":"attention","session":"look-b","cwd":"/w/b","text":"izin"}'
+  sleep 1
+  expect "$look: the inbox pill's icons fit in it" "$(val "(() => {
+    const pill = _T.ext._inboxButton.get_transformed_extents(), holder = _T.ext._inboxFaces;
+    const faces = holder.get_children();
+    return faces.length === 2 && faces.every(face => {
+      const box = face.get_transformed_extents();
+      return face.height === holder.height && box.origin.y >= pill.origin.y && box.origin.x >= pill.origin.x &&
+        box.origin.y + box.size.height <= pill.origin.y + pill.size.height &&
+        box.origin.x + box.size.width <= pill.origin.x + pill.size.width;
+    });
+  })()")" true
+  expect "$look: and sit in the middle of it" "$(val "(() => {
+    const pill = _T.ext._inboxButton.get_transformed_extents(), box = _T.ext._inboxFaces.get_transformed_extents();
+    return Math.abs((box.origin.y - pill.origin.y) - (pill.origin.y + pill.size.height - box.origin.y - box.size.height)) <= 1;
+  })()")" true
+  ev "_T.ext._closeCard(); _T.ext._requestMode('social'); 'ok'" >/dev/null
+  sleep 0.6
+  expect "$look: a mode counting down shows its icon on the fill" "$(val "(() => {
+    const entry = _T.ext._modeEntries.get('social');
+    const icon = entry.icon.get_theme_node().get_foreground_color(), fill = entry.progress.get_theme_node().get_background_color();
+    return entry.progress.visible && !icon.equal(fill);
+  })()")" true
+  ev "_T.ext._cancelPending(); 'ok'" >/dev/null
+  sleep 0.4
+done
+# Trying a look and then saving it changes the look twice in a row: the labels are still measured for the last one.
+ev "_T.ext._applyAppearance({theme: 'classic'}); _T.ext._applyAppearance({theme: 'glass'}); 'ok'" >/dev/null
+sleep 0.8
+expect "a label isn't cut short after changing the look twice" "$(val "(() => {
+  const entry = _T.ext._modeEntries.get(_T.ext._mode);
+  return Math.round(entry.labelClip.width) === Math.round(entry.labelBox.get_preferred_width(-1)[1]);
+})()")" true
+expect "the look it already has isn't applied again" "$(val "_T.ext._theme.set({theme: 'glass'})")" false
+ev "for (const item of _T.ext._inbox.list()) _T.ext._inbox.remove(item.key); _T.ext._inbox._looking = _T.looking; _T.ext._closeCard(); _T.ext._applyAppearance(); 'ok'" >/dev/null
+sleep 0.5
+
 # modes.json, as the dock takes it: what it can't go by doesn't change anything, and saving over it keeps a copy first.
 modes="$(val "_T.ext._modesFile.get_path()")"
 cp "$modes" "$modes.smoke"

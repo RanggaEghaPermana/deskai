@@ -414,6 +414,30 @@ class SetupInPlainWords(unittest.TestCase):
                 self.assertLessEqual(fields(table[key]), {"package", "model", "path"}, f"{language} {key}: no room for a raw error")
 
 
+class OneSizeInOnePlace(unittest.TestCase):
+    """What the dock places by hand is sized where it's placed. A second size in the stylesheet, for one look only, is
+    how the inbox pill's icons came to hang out of it on Liquid Glass."""
+
+    PLACED_BY_HAND = ("deskai-inbox-face", "deskai-mode-progress")
+
+    def test_the_stylesheet_doesnt_size_them_too(self):
+        css = (ROOT / "extension" / "deskai@ranggaeghapermana.github.io" / "stylesheet.css").read_text()
+        found = []
+        for selector, body in re.findall(r"([^{}]+)\{([^}]*)\}", css):
+            for name in self.PLACED_BY_HAND:
+                if re.search(rf"\.{name}\b", selector) and re.search(r"(?<![-\w])(?:min-|max-)?(?:width|height)\s*:", body):
+                    found.append(" ".join(selector.split()))
+        self.assertEqual(found, [], "set the size in extension.js, where it's placed")
+
+    def test_each_look_has_its_sizes(self):
+        source = (ROOT / "extension" / "deskai@ranggaeghapermana.github.io" / "extension.js").read_text()
+        sizes = source.split("const INBOX_FACES = {")[1].split("};")[0]
+        for look in ("classic", "glass"):
+            face, step, icon = map(int, re.search(rf"{look}: \{{face: (\d+), step: (\d+), icon: (\d+)\}}", sizes).groups())
+            self.assertLess(icon, face, look)
+            self.assertLess(step, face, f"{look}: the ones behind still show")
+
+
 class PythonVersions(unittest.TestCase):
     def test_everything_parses_on_the_oldest_python(self):
         # Ubuntu 24.04's.

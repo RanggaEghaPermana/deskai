@@ -68,10 +68,18 @@ export class Theme {
         return scheme === 'dark';
     }
 
-    // appearance: modes.json's "appearance", whole or in part; what's missing is the default.
+    // appearance: modes.json's "appearance", whole or in part; what's missing is the default. Returns whether
+    // anything changed: modes.json is read again on every save of anything in it, and restyling every surface
+    // for the look it already has is work for nothing.
     set(appearance) {
-        this._appearance = {...APPEARANCE_DEFAULTS, ...(appearance ?? {})};
+        const wanted = {...APPEARANCE_DEFAULTS, ...(appearance ?? {})};
+        if (this._applied && Object.keys(wanted).length === Object.keys(this._appearance).length &&
+            Object.entries(wanted).every(([key, value]) => this._appearance[key] === value))
+            return false;
+        this._applied = true; // the first one always goes through: it's what turns the live glass on or off
+        this._appearance = wanted;
         this._restyleAll();
+        return true;
     }
 
     // kind: "bar" for the dock, "float" for what pops over the desktop (cards, the tooltip, the command
